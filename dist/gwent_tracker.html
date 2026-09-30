@@ -1814,22 +1814,39 @@ function rDeck(){let d=deckById(ui.deckSel);let h=`<div class="btns" style="marg
   $("#dT").onchange=e=>{let v=e.target.value;if(v==="__new"){v=(prompt("战术名称")||"").trim();if(!v){rDeck();return;}db.tactics=[...new Set([...(db.tactics||[]),v])];}d.tactic=v;persist();rDeck();toast("战术已改为 "+(v||"未选"));};
   bindSearch("#dQ",v=>ui.deckQ=v,()=>{$("#deckRes").innerHTML=deckRes(d);});}
 
-function collList(){const f=ui.collF;let list=C.filter(c=>c.f===f&&!isTactic(c)&&!isLeader(c)&&!c.token);const q=ui.collQ.trim().toLowerCase();
+// 牌库筛选：同一组内“或”，组之间“且”；不存盘
+const PVB=[["4","≤4",c=>c.pv<=4],["5","5",c=>c.pv===5],["6","6",c=>c.pv===6],["7","7",c=>c.pv===7],["8","8",c=>c.pv===8],["9","9",c=>c.pv===9],["10","10",c=>c.pv===10],["11","11–13",c=>c.pv>=11&&c.pv<=13],["14","14+",c=>c.pv>=14]];
+const RARS=["普通","稀有","史诗","传奇"],COLS=["金","铜"];
+const SERS=[...new Set(C.filter(c=>!c.token&&c.ser&&c.ser!=="basic").map(c=>c.ser))];
+ui.cfil={pv:[],rar:[],col:[],ser:[]};
+const collBase=()=>C.filter(c=>(ui.collF==="ALL"||c.f===ui.collF)&&!isTactic(c)&&!isLeader(c)&&!c.token);
+function collFilter(list){const F=ui.cfil;
+  if(F.pv.length)list=list.filter(c=>PVB.some(([k,,t])=>F.pv.includes(k)&&t(c)));
+  if(F.rar.length)list=list.filter(c=>F.rar.includes(c.rar));
+  if(F.col.length)list=list.filter(c=>F.col.includes(c.col));
+  if(F.ser.length)list=list.filter(c=>F.ser.includes(c.ser));
+  return list;}
+function collList(){let list=collFilter(collBase());const q=ui.collQ.trim().toLowerCase();
   if(q)list=list.filter(c=>c.n.toLowerCase().includes(q)||c.en.toLowerCase().includes(q)||(c.alias||"").toLowerCase().includes(q));if(ui.collOwned)list=list.filter(c=>db.owned[c.n]>0);
   list=list.slice().sort((a,b)=>((b.col==="金")-(a.col==="金"))||(b.pv-a.pv));
   const info=ui.collMode==="info";
   return (list.length?`<div class="grid">${list.map(c=>{const k=db.owned[c.n]||0;return tile(c.n,k?"×"+k:"",(k?"":"gone")+(db.edits[c.n]?" edited":""),info?`data-cardb="${c.i}"`:`data-own="${c.i}"`);}).join("")}</div>`:`<p class="note">没有符合的牌。</p>`);}
-function rColl(){const f=ui.collF;const all=C.filter(c=>c.f===f&&!isTactic(c)&&!isLeader(c)&&!c.token);const own=all.filter(c=>db.owned[c.n]>0).length;
+function rColl(){const f=ui.collF;const all=collBase();const own=all.filter(c=>db.owned[c.n]>0).length;
   const cp=all.filter(c=>c.ser!=="unmillable");const copies=cp.reduce((s,c)=>s+Math.min(db.owned[c.n]||0,maxCopy(c)),0),copTot=cp.reduce((s,c)=>s+maxCopy(c),0);
-  let h=`<div class="chips" style="margin-bottom:10px">${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
-   <div class="sheet"><div class="sum"><span>${FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
+  const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length;
+  const grp=(lab,key,items)=>`<div class="row"><div class="lab">${lab}</div><div class="chips">${items.map(([v,t])=>`<button class="chip ${F[key].includes(v)?"on":""}" data-cfil="${key}|${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
+  let h=`<div class="chips" style="margin-bottom:10px"><button class="chip ${f==="ALL"?"on":""}" data-cf="ALL">全部</button>${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
+   <details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(all).length}</b> 张）`:""}</summary>
+    ${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,x]))}
+    ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details>
+   <div class="sheet"><div class="sum"><span>${f==="ALL"?"全部阵营":FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
    <p class="note">「按游戏算法」：铜卡算 2 份，不算初始卡、领袖和战术。数据库总数会比游戏多约 9，拥有数应该和游戏一致。</p>
    <div class="btns" style="align-items:center"><input id="cQ" placeholder="搜牌名" value="${esc(ui.collQ)}" style="flex:1" autocomplete="off"><button class="chip ${ui.collOwned?"on":""}" data-do="collOwned">只看已拥有</button></div>
    <div class="seg" style="margin:8px 0"><button class="${ui.collMode!=="info"?"on":""}" data-do="collCount">点牌：登记张数</button><button class="${ui.collMode==="info"?"on":""}" data-do="collInfo">点牌：看详情/改数值</button></div>
    <p class="note">铜卡最多 2 张，金卡最多 1 张，没有的牌显示为灰色。领袖默认全部解锁，不用登记。</p>
    <div class="btns"><button class="ghost" data-do="exColl">导出牌库代码</button><button class="ghost" data-do="impColl">批量导入</button><button class="ghost" data-do="addCard">新增卡牌</button></div></div>
    <div id="collList">${collList()}</div>`;
-  $("#tab-coll").innerHTML=h;bindSearch("#cQ",v=>ui.collQ=v,()=>{$("#collList").innerHTML=collList();});}
+  $("#tab-coll").innerHTML=h;const fb=$("#cfilBox");if(fb)fb.ontoggle=()=>{ui.cfilOpen=fb.open;};bindSearch("#cQ",v=>ui.collQ=v,()=>{$("#collList").innerHTML=collList();});}
 
 // ---------- actions ----------
 let suppressClick=false;
@@ -1847,6 +1864,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
   if(D.delg){if(!confirm("删除这局记录？"))return;db.games=db.games.filter(x=>x.id!=D.delg);persist();render();return;}
   if(D.own){const c=C[+D.own];const k=((db.owned[c.n]||0)+1)%(maxCopy(c)+1);if(k)db.owned[c.n]=k;else delete db.owned[c.n];persist();rColl();return;}
   if(D.cf){ui.collF=D.cf;ui.collQ="";rColl();return;}
+  if(D.cfil){const [k,v]=D.cfil.split("|");const a=ui.cfil[k];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);rColl();return;}
   if(D.cardb){openCard(C[+D.cardb]);return;}
   if(D.dp||D.dm){const d=deckById(ui.deckSel),n=D.dp||D.dm,c=BY[n];let k=d.cards[n]||0;
     if(D.dp){if(c&&k>=maxCopy(c))return toast(c.col==="铜"?"铜卡最多 2 张":"金卡最多 1 张");k++;}else k--;
@@ -1884,9 +1902,10 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
+    cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[]};rColl();},
     collCount(){ui.collMode="count";rColl();},collInfo(){ui.collMode="info";rColl();},
     exColl(){copyOut("牌库代码",collCode());},
-    addCard(){openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{
+    addCard(){if(ui.collF==="ALL")return toast("先选一个阵营");openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{
       let ok=0;const bad=[];txt.split("\n").map(s=>s.trim()).filter(Boolean).forEach(l=>{const p=l.split(/\s*[|｜]\s*/);const [n,col,tp,pv,pw,...tx]=p;
         if(!n||!["金","铜"].includes(col)||!["单位","特殊","神器"].includes(tp)||isNaN(+pv)){bad.push(l);return;}if(BY[n]){bad.push(n+"（已存在）");return;}
         (db.custom=db.custom||[]).push({n,f:ui.collF,col,t:tp,pv:+pv,pw:pw||"-",tx:tx.join(" | ")});ok++;});
