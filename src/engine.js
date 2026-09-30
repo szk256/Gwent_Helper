@@ -17,10 +17,10 @@ const DEFAULT_RULES = {
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
   reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
-  spawnBanished: true,        // 生成的牌离场时一律放逐（未确认；卡面写“佚亡”的一定放逐）
-  purifyKeepsDoomed: true,    // 净化是否保留佚亡（未确认）
-  resilienceKeepsDamage: true,// 坚韧留场时保留受到的伤害，只去掉增益（未确认）
-  knightSummonSelf: true,     // 骑士册封“己方每控制 1 名骑士”是否算被拉出的骑士自己（未确认）
+  spawnBanished: false,       // 生成的牌离场时一律放逐（未确认；衍生牌卡面都写了“佚亡”，按状态放逐）
+  purifyKeepsDoomed: false,   // 净化会移除佚亡，之后离场进墓场（用户查证）
+  resilienceKeepsDamage: false,// 坚韧留场时回到基础战力（资料有分歧，暂按 NamuWiki：伤害也恢复）
+  knightSummonSelf: false,    // 骑士册封“己方每控制 1 名骑士”不算被拉出的骑士自己（已确认）
   timerRepeats: true,         // 计时归零触发后重新计时（未确认）
   dragonDreamOnLast: true,    // 龙之梦在最后一个回合开始时爆炸（未确认）
 };

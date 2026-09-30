@@ -84,8 +84,14 @@ function sim(g,r,excl){
       case "leader":case "tactic":{const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true});else warns.push({id:x.id,m:"领袖未指定"});break;}
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
       case "kill":{const u=unitByKey(x.uid);if(u)E.destroy(u);break;}
-      case "adj":{const u=unitByKey(x.uid);if(u){const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));
-        if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else if(!isNaN(n)){E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}
+      case "adj":{const u=unitByKey(x.uid);if(u){
+        // 可以多项，逗号分隔：+2 / -3 / 7（战力），+盾 -盾 +锁 -锁 +坚 -坚 +遮 -遮（状态），甲3（护甲），活2 伤2（回合数，0 = 去掉）
+        for(const v of String(x.v).split(/[,，\s]+/).filter(Boolean)){let m;
+          if((m=v.match(/^([+-])(盾|锁|坚|遮)$/))){const k={盾:"shield",锁:"lock",坚:"resilience",遮:"veil"}[m[2]];u.status[k]=m[1]==="+";E.log("手动状态",{name:u.name,key:k,val:u.status[k]});}
+          else if((m=v.match(/^甲(\d+)$/)))u.armor=+m[1];
+          else if((m=v.match(/^(活|伤)(\d+)$/))){u.status[m[1]==="活"?"vitality":"bleed"]=+m[2];}
+          else{const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的修正「"+v+"」"});continue;}
+            if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}}}
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "pass":{E.s.sides[side].passed=true;E.log("停牌",{side});E.endTurn();break;}
       case "fx":{if(!HZ[x.c])warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});
@@ -221,7 +227,7 @@ function logText(x){const w=x.who==="me"?"我":"对";
     case "move":return `${w}：${x.fix?"修正位置":"移位"} ${sideN(x.side)}的 ${x.c} → ${ROWN[x.row]}${x.pos!=null?"·第"+(x.pos+1)+"位":""}`;
     case "kill":return `${w}：摧毁 ${sideN(x.side)}的 ${x.c}`;
     case "note":return `${w}：备注 ${x.c}`;
-    case "adj":return `${w}：修正 ${sideN(x.side)}的 ${x.c} ${/^[+-]/.test(x.v)?x.v:"= "+x.v}`;
+    case "adj":return `${w}：修正 ${sideN(x.side)}的 ${x.c} ${/^\d+$/.test(x.v)?"= "+x.v:x.v}`;
     default:return `${w}：${ACT[x.a]||x.a}${x.c?" "+x.c:""}${tg}`;}}
 // give every entry a stable id; convert old index-based references
 function ensureIds(g){if(!g||g.log.every(x=>x.id))return;const idOf=i=>g.log[i]&&g.log[i].id;g.nextE=g.nextE||1;
@@ -295,7 +301,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){const eu=u.eu;const last=g.log.filter(x=>x.r===VR()).pop();
-      openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+"）。输入 +n / -n 或目标战力：",eu?String(eu.power):"","记录",v=>{v=(v||"").trim();if(!v)return;$("#dlg").close();
+      const st=eu?eu.status:{};const has=[st.shield?"盾":"",st.lock?"锁":"",st.resilience?"坚":"",st.veil?"遮":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:""].filter(Boolean).join(" ");
+      openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+(has?"，"+has:"")+"）。战力：+n / -n / 目标值；状态：-盾 +盾 -锁 +坚，甲3 设护甲，活2 伤2 设回合（0 去掉）。多项用逗号隔开。",st.shield?"-盾":(eu?String(eu.power):""),"记录",v=>{v=(v||"").trim().replace(/[，\s]+/g,",");if(!v)return;$("#dlg").close();
         if(last&&last.id===u.uid&&last.a==="play"&&/^\d+$/.test(v)){last.pw=+v;persist();toast("落地战力 "+v);}
         else{const i=pushLog({who:ui.who,a:"adj",c:u.n,uid:u.uid,side:u.side,v});toast(logText(g.log[i]));}rMatch();});return true;}
     if(ui.act==="kill"){const i=pushLog({who:ui.who,a:"kill",c:u.n,uid:u.uid,side:u.side});toast(logText(g.log[i]));rMatch();return true;}
@@ -495,7 +502,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
          <div class="row"><div class="lab">持续回合（卡面写的回合数）</div><div class="step"><button data-fxdur="-1">−</button><output>${f.dur}</output><button data-fxdur="1">+</button></div></div>
          <button class="primary" data-do="fxRec">记录：${(f.who||ui.who)==="me"?"我":"对方"}施加 ${f.k} → ${sideN(f.side)}${ROWN[f.row]}</button>`;}
       else if(ui.act==="move"){h+=`<p class="note" style="margin:10px 0 4px">点要移动的单位（同排换位或换排都行）：</p>${lanes("pick")}`;}
-      else if(ui.act==="adj"){h+=`<p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
+      else if(ui.act==="adj"){h+=`<p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7；-盾 去掉护盾，+盾 加上，甲3 设护甲。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
       else if(ui.act==="kill"){h+=`<p class="note" style="margin:10px 0 4px">点被摧毁的单位：</p>${lanes("pick")}`;}
       else if(ui.act==="note"){h+=`<div class="row"><input id="noteIn" placeholder="例如：对方洗回 2 张牌 / 我方被锁定" autocomplete="off"></div><button class="primary" data-do="noteRec">记录备注</button>`;}
       else h+=`<div class="row"><button class="primary" data-do="${ui.act}">${ui.who==="me"?"记录：我停牌":"记录：对方停牌"}</button></div>`;

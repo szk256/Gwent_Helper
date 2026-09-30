@@ -55,6 +55,7 @@ ok(g.score('me').total===0,'非坚韧单位清场');
   ok(q.targetable(q.units('op'),'op').length===2, '己方指定己方不受卫士限制（免疫仍排除）');
   const sh = q.play('me','盾兵','m'); sh.infused.push({on:'x',run:()=>{}}); q.addStatus(sh,'vitality',2);
   q.purify(sh); ok(!sh.status.shield&&!sh.status.vitality&&sh.infused.length===0, '净化：移除护盾、活力、灌注');
+  const pd = q.play('me','佚亡遗愿','m'); q.purify(pd); q.destroy(pd); ok(q.s.sides.me.grave.includes('佚亡遗愿'), '净化去掉佚亡：离场进墓场，触发遗愿');
   const dw = q.play('me','佚亡遗愿','m'); const n0=q.trace.filter(x=>x.type==='遗愿触发').length;
   q.destroy(dw); ok(q.trace.filter(x=>x.type==='遗愿触发').length===n0 && q.s.sides.me.banished.includes('佚亡遗愿'), '佚亡：放逐，不触发遗愿');
   const dw2 = q.play('me','遗愿兵','m'); q.destroy(dw2); ok(q.trace.filter(x=>x.type==='遗愿触发').length===n0+1, '遗愿：被摧毁进墓场时触发');
