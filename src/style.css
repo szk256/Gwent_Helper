@@ -422,3 +422,4 @@ html[data-theme="black"] .fxtag{box-shadow:none}
 button.endturn{flex:1;font-weight:600;border-color:var(--gold)}
 button.cur{outline:2px solid var(--gold)}
 .lab.gl{margin-top:8px}
+.optac{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:8px 0 2px}.optac .ghost{padding:4px 8px;font-size:13px}
