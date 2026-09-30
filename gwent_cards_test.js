@@ -360,5 +360,10 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); const d = P(g, 'op', '科德温骑士', 'm'); d.status.defender = true; g.lock(d); const o = P(g, 'op', '科德温骑士', 'm');
   ok(g.targetable([d, o], 'me').length === 1 && g.targetable([d, o], 'me')[0] === d, '锁定的卫士：仍然只能选卫士');
 }
+{ // 坚韧留场：护甲（含卡面自带的）清零
+  const g = game(); const k = P(g, 'me', '瑞达尼亚骑士', 'm'); k.status.resilience = true; g.addArmor(k, 3);
+  const g2 = game(); const v = g2.carryIn(k, 'me', 'm');
+  ok(k.def.armor > 0 && v.armor === 0, '坚韧留场：护甲清零（resilienceKeepsArmor=false）');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
