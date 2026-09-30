@@ -33,7 +33,7 @@ const DEFAULT_RULES = {
   specialTargetEach: true,    // 特殊牌一次指定多个单位时，每个都算“以其为目标”（棱镜吊坠、精灵先知；未确认）
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
-  passedTurnsTick: false,     // 停牌之后停牌方的回合开始/结束效果是否照常结算（NamuWiki 说会，是测试版时期的例子；2026-10-01 第二场第二局按 false 对上 46:55）
+  passedTurnsTick: true,      // 停牌之后停牌方的回合开始/结束效果照常结算（NamuWiki；用户确认对方停牌后数值还会涨）。另一方出完最后一张牌强制停牌时没有这个回合（对局簿 deferPassedTick）
   passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
@@ -451,7 +451,10 @@ class Game {
     this._enter(u, true, Object.assign({}, opts, { player }));
     if (opts.power != null && this.find(u.uid) && opts.power !== u.power) {
       this.log('录入战力', { uid: u.uid, name: u.name, from: u.power, to: opts.power });
+      const up = opts.power > u.power;
       u.power = opts.power;                 // 对面手牌里的隐藏增益：以落地时看到的战力为准
+      // 落地已达到神赐阈值：进场就触发（自身战力仍以看到的为准）
+      if (up) { this.checkBless(u); if (this.find(u.uid)) u.power = opts.power; }
     }
     return u;
   }
@@ -986,13 +989,21 @@ class Game {
     if (this.s.sides.me.passed && this.s.sides.op.passed) return this.manualRounds ? undefined : this.endRound();
     if (!this.s.sides[nxt].passed) this.s.active = nxt;
     else if (this.rules.passedTurnsTick) {
-      // 已停牌一方的回合只是跳过行动，回合照常推进：回合开始（整排效果）、回合结束效果都结算（NamuWiki）
-      this.s.active = nxt; this.log('停牌方回合（跳过行动）', { side: nxt });
-      this.startTurn(); this._turnEndEffects(nxt);
-      this.s.turn++; this.s.active = side;
+      // 已停牌一方的回合只是跳过行动，回合照常推进：回合开始（整排效果）、回合结束效果都结算（NamuWiki；用户确认对方停牌后数值还会涨）
+      // deferPassedTick（对局簿）：先挂起，等另一方真的接着行动再结算；另一方出完最后一张牌被强制停牌时，这个回合不存在
+      if (this.deferPassedTick) { this.pendingTick = { side: nxt, back: side }; this.s.active = side; return; }
+      this._tickPassed(nxt, side);
     }
     this.startTurn();
   }
+  _tickPassed(nxt, side) {
+    this.s.active = nxt; this.log('停牌方回合（跳过行动）', { side: nxt });
+    this.startTurn(); this._turnEndEffects(nxt);
+    this.s.turn++; this.s.active = side;
+  }
+  // 挂起的停牌方回合：另一方接着行动时结算（随后开始另一方的回合）；另一方停牌时丢掉
+  flushPassedTick() { const p = this.pendingTick; if (!p) return; this.pendingTick = null; this._tickPassed(p.side, p.back); this.startTurn(); }
+  dropPassedTick() { if (this.pendingTick) this.log('停牌方回合不结算（另一方随即停牌）', { side: this.pendingTick.side }); this.pendingTick = null; }
 
   pass(side) {
     side = side || this.s.active;

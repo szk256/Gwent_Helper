@@ -17,7 +17,7 @@ function sim(g,r,excl,ov){
   if(simCache.has(key))return simCache.get(key);
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
   const E=new ENG.Game({manualRounds:true,rules,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
-  E.loadData(rawFor(g));E.loadBehaviors(GwentCards.behaviors);
+  E.loadData(rawFor(g));E.loadBehaviors(GwentCards.behaviors);E.deferPassedTick=true;
   E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
@@ -105,6 +105,8 @@ function sim(g,r,excl,ov){
   const pinned=new Map();
   for(let i=0;i<log.length;i++){const x=log[i];if(consumed.has(x.id))continue;
     if(!["adj","note","real"].includes(x.a))pinned.clear();
+    // 挂起的停牌方回合：另一方接着有动作 → 结算；另一方停牌 → 这个回合不存在（出完最后一张牌强制停牌）
+    if(E.pendingTick){if(x.a==="pass")E.dropPassedTick();else if(!["note","real"].includes(x.a))E.flushPassedTick();}
     let side=x.who;const def0=x.c?E.def(x.c):null;
     // 领袖记错方（记录时停在“对方”）：目标是另一方单位且另一方领袖同名时，按另一方推算
     if(x.a==="leader"&&x.tgts&&x.tgts[0]&&x.tgts[0].uid!=null){const tu=unitByKey(x.tgts[0].uid);const other=side==="me"?"op":"me";const otherLeader=other==="me"?g.leader:g.opLeader;
@@ -115,10 +117,12 @@ function sim(g,r,excl,ov){
     if(turnAct)for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];if(y.a==="effect"&&HZ[y.c]&&!consumed.has(y.id))pushHz(y);}
     // 另一方已停牌时同一方连续出牌：每回合只能从手牌打出 1 张，再打出一张 = 新回合（指令、领袖留在打出的那一回合；要分开就记“结束回合”）
     const handPlay=x.a==="play"&&!x.via&&!(def0&&(def0.type==="tactic"||def0.type==="leader"));
-    if(handPlay&&side===E.s.active&&E.s.sides[ENG.OTHER[side]].passed&&lastHand&&lastHand.side===side&&lastHand.turn===E.s.turn){E.endTurn();acted=false;}
+    if(handPlay&&side===E.s.active&&E.s.sides[ENG.OTHER[side]].passed&&lastHand&&lastHand.side===side&&lastHand.turn===E.s.turn){E.endTurn();E.flushPassedTick();acted=false;}
     if(turnAct&&side!==E.s.active&&justEnded){E.s.active=side;acted=false;}
     else if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
     else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
+    // 试验：界面切到另一方后记的修正，先结算上一方回合结束
+    if(E.rules.autoEndOnSwitch&&!turnAct&&["adj","kill","move"].includes(x.a)&&x.who!==E.s.active&&acted&&!justEnded&&!E.s.sides[E.s.active].passed&&!E.s.sides[x.who].passed){E.log("自动结束回合",{side:E.s.active,by:x.id});E.endTurn();acted=false;justEnded=true;}
     if(turnAct){effQ={};
       // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
       for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];
@@ -197,7 +201,9 @@ function sim(g,r,excl,ov){
     fresh.forEach((u,k)=>bind(x.id+"/"+k,u));
     // 落地战力：以整步结算完后看到的为准（包括牌组拉出的牌）
     for(const y of [x,...subs]){if(y.pw==null)continue;const u=unitByKey(y.id);
-      if(u&&u.power!==y.pw){E.log("录入战力",{uid:u.uid,name:u.name,from:u.power,to:y.pw});u.power=y.pw;}}
+      if(u&&u.power!==y.pw){E.log("录入战力",{uid:u.uid,name:u.name,from:u.power,to:y.pw});const up=y.pw>u.power;u.power=y.pw;
+        // 落地时已达到神赐阈值：游戏里进场就触发（引擎“进场已满足立即触发”），自身战力仍以填的为准
+        if(up&&E.find(u.uid)){E.checkBless(u);if(E.find(u.uid))u.power=y.pw;}}}
     // 提示：未建模、待选
     for(const t of E.trace.slice(t0)){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
@@ -212,6 +218,7 @@ function sim(g,r,excl,ov){
       if(t.type==="金币不足")warns.push({id:x.id,m:t.data.name+" 需要 "+t.data.need+" 金币，推算只有 "+t.data.coins+"（用“金币”修正）"});
       if(t.data&&t.data.unmodeled){unmod[t.data.name]=(unmod[t.data.name]||0)+1;}}
   }
+  E.dropPassedTick();
   // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
   if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn({pass:true});}
   {const R1=g.rounds&&g.rounds[r];if(R1&&log.length)for(const sd of["me","op"]){const rec=R1[sd==="me"?"hm":"ho"];
@@ -220,7 +227,7 @@ function sim(g,r,excl,ov){
   simCache.set(key,res);if(simCache.size>16)simCache.delete(simCache.keys().next().value);return res;}
 // ---------- 偏差报告：真实比分（录屏核对的 C 记录、R 行局末比分）和推算逐步对比 ----------
 // 规则对比里逐个反过来试的未确认规则
-const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"]];
+const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["autoEndOnSwitch","切到另一方后的修正先结算回合结束"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"]];
 const NOTE_PRESETS=["失误","关键回合","该停牌","没算到","对面读牌","卡手","好操作","节奏亏"];
 function parseScore(v){const m=String(v||"").match(/(\d+)\s*[:：\s]\s*(\d+)/);return m?{me:+m[1],op:+m[2]}:null;}
 function stepLabel(st){return st?(st.who==="me"?"我":"对")+"第"+st.n+"手":"";}

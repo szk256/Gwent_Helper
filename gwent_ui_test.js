@@ -78,9 +78,9 @@ setTimeout(() => {
     // 偏差报告的规则对比：对方停牌后安娜·斯特伦格（回合结束 +1）不再推进才对得上 → 标“更准”
     live([{ id: 'e1', who: 'op', a: 'play', c: '科德温骑士', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '安娜·斯特伦格', row: 'm', pos: 0, side: 'op' },
       { id: 'e3', who: 'op', a: 'pass' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
-      { id: 'e6', who: 'me', a: 'pass' }], { rounds: [{ res: 'L', me: '10', op: '11' }] });
+      { id: 'e6', who: 'me', a: 'pass' }], { rounds: [{ res: 'D', me: '10', op: '10' }] });
     const rep2 = w.document.querySelector('details.sheet'); const ro = rep2 && rep2.textContent;
-    ok(/规则对比/.test(ro) && /「停牌方回合照常推进」改成开：核对点一致 1\/1.*（更准）/.test(ro), '偏差报告：规则对比标出更准的写法');
+    ok(/规则对比/.test(ro) && /「停牌方回合照常推进」改成关：核对点一致 1\/1.*（更准）/.test(ro), '偏差报告：规则对比标出更准的写法');
     // 指令指示器：进场当回合虚线“令”，下回合金色；列阵在近战排当回合就能用
     live([{ id: 'e1', who: 'me', a: 'play', c: '安赛斯王子', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' }]);
     const ord = () => [...w.document.querySelectorAll('.brow.me [data-u]')].map(e => e.title + ':' + (e.querySelector('.uord') ? e.querySelector('.uord').className : ''));

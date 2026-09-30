@@ -348,8 +348,8 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   g.endTurn(); g.pass('op');                                   // 我方回合结束 → 对方停牌（停牌那一下不结算回合结束）
   const p0 = v.power; g.endTurn();                              // 我方再出一回合 → 对方跳过行动的回合：风暴 -1，活力 +1
   ok(v.power === p0 && g.s.active === 'me', '停牌方回合：风暴 -1、活力 +1 都结算，随后回到我方');
-  const g2 = game({});  const w2 = P(g2, 'op', '科德温骑士', 'm'); g2.addStatus(w2, 'vitality', 3);
-  g2.endTurn(); g2.pass('op'); const q0 = w2.power; g2.endTurn(); ok(w2.power === q0, 'passedTurnsTick 默认关：停牌方不再结算');
+  const g2 = game({});  g2.rules.passedTurnsTick = false; const w2 = P(g2, 'op', '科德温骑士', 'm'); g2.addStatus(w2, 'vitality', 3);
+  g2.endTurn(); g2.pass('op'); const q0 = w2.power; g2.endTurn(); ok(w2.power === q0, 'passedTurnsTick=false：停牌方不再结算');
 }
 { // 整排效果在单位的回合开始效果之后结算，几排按放置先后
   const g = game(); const seen = []; g.on('turnStart', e => e.side === 'me' && seen.push('单位')); g.on('damaged', d => seen.push('整排:' + d.unit.row));
