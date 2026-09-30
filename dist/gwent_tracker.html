@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="8efd6ed";</script>
+<script>window.GWENT_BUILD="38354a5";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -343,6 +343,16 @@ html[data-theme="navy"]{--bg0:#081021;--bg:linear-gradient(180deg,#0d1a33,#08102
   --ink:#E4ECF7;--ink2:#A6B8D0;--dim:#8FA3BF;--txt:#E4ECF7;--edge:#33558c;--line:#274372;--btn:#182a52;--btn2:#152448;--btnEdge:#33558c;
   --on1:#F2B650;--on2:#C98C2C;--onInk:#0a1224;--field:#0a1530;--sheetLine:#274372;--rule:#1c2f55;--gold:#5CC8EE;--gold2:#2c7fa6;--h2:#9EE3FA;
   --glowA:rgba(92,200,238,.35);--boardBg:#0c1832;--unitEdge:#3a5c94;--lab:#B6CCE6;--bad:#FF8C7F;--night:#081021;--night2:#122041;--parch:#122041;--parch2:#182a52}
+/* 纯黑：背景 #000，文字降亮度（不用白），强调色也调暗，整体最不刺眼 */
+html[data-theme="pure"]{--bg0:#000;--bg:#000;--panel:#000;--panel2:#000;--navBg:#000;--navOn:rgba(190,160,100,.10);
+  --ink:#C9CDD3;--ink2:#9095A0;--dim:#80858F;--txt:#C9CDD3;--edge:#2a2e35;--line:#1c1f24;--btn:#0d0f12;--btn2:#0a0b0e;--btnEdge:#2a2e35;
+  --on1:#B89A5A;--on2:#9A7F45;--onInk:#000;--field:#050607;--sheetLine:#1c1f24;--rule:#15171b;--gold:#B39556;--gold2:#5c4c2c;--h2:#D8C9A4;
+  --glowA:transparent;--boardBg:#000;--unitEdge:#2e333b;--lab:#A9AEB6;--bad:#D9776C;--night:#000;--night2:#000;--parch:#000;--parch2:#0d0f12}
+html[data-theme="pure"] *{text-shadow:none!important}
+html[data-theme="pure"] .chip.unit,html[data-theme="pure"] .tile,html[data-theme="pure"] .sheet{box-shadow:inset 0 0 0 1px var(--sheetLine)}
+html[data-theme="pure"] .fxtag{box-shadow:none}
+html[data-theme="pure"] .who button.on,html[data-theme="pure"] .chip.fac.on{filter:brightness(.75)}
+html[data-theme="pure"] .chip.unit img,html[data-theme="pure"] .tile img{filter:brightness(.8)}
 html[data-theme]{background:var(--bg0)}
 html[data-theme] body{background:var(--bg);background-attachment:fixed;color:var(--txt)}
 html[data-theme] header{border-bottom-color:var(--rule)}
@@ -4744,7 +4754,7 @@ $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText(
 // 版本：构建号（打包时按内容生成，调试页面是“开发版”）+ 卡牌数据版本（patches.js 最新一条，没有则基线）
 const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
 // 外观（每台设备各自记住，存 localStorage，不进对局簿数据）：主题 + 字号缩放
-const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["navy","午夜蓝"]];
+const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["pure","纯黑（最暗）"],["navy","午夜蓝"]];
 const ZOOMS=[1,1.15,1.3,1.5];
 function loadPref(){try{return JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}")||{};}catch(e){return {};}}
 function savePref(p){try{localStorage.setItem("gwent-ui-pref",JSON.stringify(p));}catch(e){}}
