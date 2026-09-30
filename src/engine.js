@@ -32,6 +32,7 @@ const DEFAULT_RULES = {
   specialTargetEach: true,    // 特殊牌一次指定多个单位时，每个都算“以其为目标”（棱镜吊坠、精灵先知；未确认）
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
+  passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
 // ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
@@ -193,6 +194,17 @@ class Game {
         for (const ab of d.graveAbilities || []) if (ab.on === evt && (!ab.when || ab.when(c, data))) ab.run(c, data);
       }
     }
+    // 墓场里的单位的能力（graveUnit，例如没完没了的朗维德）：在墓场里就生效，每个牌名结算一次
+    for (const sd of ['me', 'op']) {
+      const S = this.s.sides[sd];
+      for (const name of [...new Set(S.grave)]) {
+        const d = this.def(name);
+        if (!d.graveUnit || !S.grave.includes(name)) continue;
+        const c = this.graveCtx({ side: sd, name, vars: {} });
+        c.leaveGrave = () => { const i = S.grave.lastIndexOf(name); if (i >= 0) S.grave.splice(i, 1); };
+        for (const ab of d.graveUnit) if (ab.on === evt && S.grave.includes(name) && (!ab.when || ab.when(c, data))) ab.run(c, data);
+      }
+    }
   }
   // 墓场里的牌用的上下文：self 是一个伪单位，vars 保存计数
   graveCtx(w) {
@@ -318,7 +330,7 @@ class Game {
     // 只有 1 个候选时不用问（牌组里拉的牌除外）
     if (pick == null && req.kind !== 'deck' && req.from.length === 1 && !req.optional) pick = req.from[0];
     if (pick == null) {
-      this.log('待选', { prompt: req.prompt, from: req.from.map(u => u.uid || u) }, true);
+      this.log('待选', { prompt: req.prompt, from: req.from.map(u => u.uid || u), source: req.source }, true);
       return [];
     }
     const out = Array.isArray(pick) ? pick : [pick];
@@ -903,8 +915,10 @@ class Game {
     this.emit('turnStart', { side });
   }
 
-  endTurn() {
+  // opts.pass：停牌引起的回合结束（rules.passTurnEnd 为 false 时不结算回合结束效果，只换人）
+  endTurn(opts = {}) {
     const side = this.s.active;
+    if (opts.pass && !this.rules.passTurnEnd) { this.log('停牌不结算回合结束', { side }); return this._nextTurn(side); }
     // 计时：己方回合结束前 -1，归零触发
     for (const u of this.allUnits(side).slice()) {
       if (u.timer == null || u.status.lock || !this.find(u.uid)) continue;
@@ -937,6 +951,9 @@ class Game {
       // 破裂：受到等同基础战力的伤害，随后移除
       if (u.status.rupture && this.find(u.uid)) { u.status.rupture = false; this.damage(u, u.base, { name: '破裂' }); }
     }
+    return this._nextTurn(side);
+  }
+  _nextTurn(side) {
     this.s.turn++;
     const nxt = OTHER[side];
     if (this.s.sides.me.passed && this.s.sides.op.passed) return this.manualRounds ? undefined : this.endRound();
@@ -949,7 +966,7 @@ class Game {
     this.s.sides[side].passed = true;
     this.log('停牌', { side });
     this.emit('passed', { side });
-    this.endTurn();
+    this.endTurn({ pass: true });
   }
 
   // ---------- 小局 ----------

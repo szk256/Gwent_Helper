@@ -6,7 +6,7 @@
   'use strict';
   const ACTKEY = { p: 'play', o: 'order', l: 'leader', t: 'tactic', e: 'effect', j: 'adj', y: 'spawn', s: 'summon', f: 'fx', v: 'move', k: 'kill', x: 'mull', d: 'draw', n: 'note', '-': 'pass' };
   const HELP = '快捷键：P 打出 · O 指令 · L 领袖 · T 战术 · E 效果 · J 改战力 · Y 生成 · S 召唤 · F 整排 · V 移位 · K 摧毁 · X 换牌 · D 抽牌 · N 备注 · - 停牌\n' +
-    'A 我方 · B 对方 · Tab 切换 · / 搜牌（↑↓ 选、回车确认）· 放牌时 1 近战 2 远程 · 回车 = 主按钮 · Esc 跳过/关闭 · Ctrl+Z 撤销 · C 真实比分 · R 录屏时间';
+    'A 我方 · B 对方 · Tab 切换 · Z 结束回合 · / 搜牌（↑↓ 选、回车确认）· 放牌时 1 近战 2 远程 · 回车 = 主按钮 · Esc 跳过/关闭 · Ctrl+Z 撤销 · C 真实比分 · R 录屏时间';
   const q = sel => document.querySelector(sel);
   const visible = el => el && el.offsetParent !== null;
   const click = sel => { const el = typeof sel === 'string' ? q(sel) : sel; if (el && !el.disabled) { el.click(); return true; } return false; };
@@ -52,6 +52,7 @@
     if (k === '/') { const s = q('#q'); if (s) { e.preventDefault(); s.focus(); s.select(); kb = 0; mark(); } return; }
     if (k === 'r') { const s = q('#vtIn'); if (s) { e.preventDefault(); s.focus(); s.select(); } return; }
     if (k === 'c') { e.preventDefault(); click('[data-do="realScore"]'); return; }
+    if (k === 'z') { e.preventDefault(); click('[data-do="endTurn"]') || click('[data-do="adjEnd"]'); return; }
     if (k === 'a' || k === 'b') { e.preventDefault(); click(`[data-who="${k === 'a' ? 'me' : 'op'}"]`); return; }
     if (k === 'Tab') { const other = ui.who === 'me' ? 'op' : 'me'; if (click(`[data-who="${other}"]`)) e.preventDefault(); return; }
     if (ACTKEY[k] && !step) {

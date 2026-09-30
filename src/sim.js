@@ -18,7 +18,10 @@ function sim(g,r,excl){
   E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
-  const unitByKey=k=>{const u=key2u[k];return u&&E.find(u.uid)?u:null;};
+  // 正在结算的这一步打出的单位还没对应上记录时（打出过程中连带的效果选它，例如落难的少女第二章的疯狂的冲锋），按“这一步新出现的同名单位”找
+  let curBefore=null;
+  const unitByKey=k=>{const u=key2u[k];if(u&&E.find(u.uid))return u;
+    if(curX&&k===curX.id&&curBefore)return E.allUnits().find(v=>!curBefore.has(v)&&v.name===curX.c)||null;return null;};
   let tq=[],dq=[],effQ={},hzQ={};
   const HZ=ENG.HAZARDS||{};
   // 目标来源：先用这一步自己的 tgts，再用“触发效果”记录里对应来源的目标（例如法利波的随机伤害）
@@ -39,6 +42,8 @@ function sim(g,r,excl){
     if(req.kind==="tribute")return curPay;      // 献金：记录里的“付了/没付”，没记则按规则默认
     if(req.kind==="frenzy")return frenzyOf(req);
     if(req.kind==="deckCount")return curX&&curX.c===req.source&&curX.dn!=null?curX.dn:null;
+    // 随机排（朗维德从墓场回来）：看这一手后面有没有记它的召唤，有就用那条的排，那条记录随后对应到这个单位
+    if(req.kind==="row"){const y=laterSummon(req.source,req.side);return y&&y.row?y.row:"m";}
     const n=req.n||1,out=[];
     // 整排效果的随机结果只从“效果”记录（来源 = 效果名）里取
     if(HZ[req.source]){if(hzQ[req.source])takeFrom(hzQ[req.source],req,n,out);return out.length?out:null;}
@@ -47,10 +52,18 @@ function sim(g,r,excl){
     return out.length?out:null;};
   const TURN=["play","leader","tactic","order","pass","spawn","summon"];
   const isTurnAct=y=>TURN.includes(y.a)&&!y.via;
+  // 这一手后面手动记的召唤/生成（不带 via）：引擎自动产生了同名单位时，那条记录就对应到这个单位，不再重复放
+  const laterSummon=(name,sd)=>{const i=log.indexOf(curX);for(let j=i+1;j<log.length;j++){const y=log[j];if(consumed.has(y.id))continue;
+    if((y.a==="summon"||y.a==="spawn")&&!y.via&&y.c===name&&(!sd||(y.side||y.who)===sd))return y;
+    if(isTurnAct(y)&&y.a!=="summon"&&y.a!=="spawn")break;}return null;};
   // 已建模的来源：它的“触发效果”记录只提供目标，效果由引擎结算
   const modeled=nm=>{const d=nm&&E.def(nm);return !!(d&&!d.unmodeled);};
   // 只在回合结束时触发的来源：记录到它的效果 = 该方回合已经结束
   const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
+  // 手动记的召唤/生成（不带 via）晚于引擎自动产生的同名单位（例如朗维德回场后隔了几步才记）：对应到那个单位，不重复放
+  const claimed=new Set();
+  const claimAuto=x=>{if(x.via)return false;const sd=x.side||x.who;const u=E.allUnits(sd).find(v=>v.name===x.c&&!claimed.has(v)&&/\/\d+$/.test(u2key.get(v)||""));
+    if(!u)return false;claimed.add(u);bind(x.id,u);relocate(u,x.row,x.pos);return true;};
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
   // 上一局的坚韧单位留场（老兵在小局开始时 +1）
   let Pprev=null;
@@ -64,6 +77,10 @@ function sim(g,r,excl){
       B.graveWatch=JSON.parse(JSON.stringify(A.graveWatch||[]));B.deckBuff=JSON.parse(JSON.stringify(A.deckBuff||{}));if(A.vars.maxPat)B.vars.maxPat=Object.assign({},A.vars.maxPat);
       for(const[nm,h]of Object.entries(A.abilities||{})){const h2=E.addAbility(sd,nm,h.charges);h2.vars=JSON.parse(JSON.stringify(h.vars||{}));}}}
   E.s.round=r;
+  // 领袖先登记（还没用过时泰莫利亚步兵等也能读到充能层数）；对方领袖以记录里实际用过的为准
+  for(const sd of["me","op"]){const L=g.log.filter(x=>x.a==="leader"&&x.who===sd&&x.c).map(x=>x.c);
+    const nm=sd==="me"?g.leader:(L.find(n=>n!==g.leader)||L[0]||g.opLeader);
+    if(nm&&!(E.s.sides[sd].abilities||{})[nm]&&BY[nm]&&isLeader(BY[nm]))E.addAbility(sd,nm);}
   E.startRound();
   // 战术牌：只在第一局，先手方近战排最左边（新对局才有 g.tacCard，旧记录的位置不受影响）
   let tacU=null;if(r===0&&g.tacCard&&(g.coin==="先"||g.coin==="后")){const fs=g.coin==="先"?"me":"op";tacU=E.placeTactic(fs,fs==="me"?(deckById(g.deck)?.tactic||"战术"):"战术");bind("tac",tacU);}
@@ -74,7 +91,7 @@ function sim(g,r,excl){
       if((rec==null||rec==="")&&P&&R0){const lost=R0.res==="D"||(R0.res==="L")===(sd==="me");const A=P.E.s.sides[sd];
         if(lost&&(A.grave.includes("希里")||P.E.allUnits(sd).some(u=>u.name==="希里")))prev=Math.min(E.rules.handLimit,prev+1);}
       const S=E.s.sides[sd];S.handCount=r===0?E.rules.draws[0]:Math.min(E.rules.handLimit,(prev==null?Math.max(0,E.rules.draws[0]-4*r):prev)+E.rules.draws[r]);S.handKnown=true;}}
-  const consumed=new Set();let acted=false;
+  const consumed=new Set();let acted=false,justEnded=false;
   // 逐步记录：第几手（每方各自计数，换人行动算新的一手）和这一步结算后的比分，偏差报告用
   const steps={},turnCnt={me:0,op:0};let lastTurn=null;
   const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
@@ -88,7 +105,8 @@ function sim(g,r,excl){
     const turnAct=isTurnAct(x);
     // 整排效果的命中记录可能记在回合行动前后：换回合结算整排效果前先备好
     if(turnAct)for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];if(y.a==="effect"&&HZ[y.c]&&!consumed.has(y.id))pushHz(y);}
-    if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
+    if(turnAct&&side!==E.s.active&&justEnded){E.s.active=side;acted=false;}
+    else if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
     else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
     if(turnAct){effQ={};
       // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
@@ -98,7 +116,7 @@ function sim(g,r,excl){
     // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
     dq=subs.map(y=>y.c);
-    const before=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
+    const before=curBefore=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
     const def=x.c?E.def(x.c):null;
     try{
     switch(x.a){
@@ -107,9 +125,9 @@ function sim(g,r,excl){
 }
         else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场",fromGrave:x.via==="墓场",player:side});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
-      case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
+      case "summon":{if(x.row){if(claimAuto(x))break;const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
       case "spawn":{if(def&&def.type==="special"){E.play(side,x.c,null,null,{spawned:true});}
-        else if(x.row){const u=E.spawn(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
+        else if(x.row){if(claimAuto(x))break;const u=E.spawn(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
       case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
@@ -124,11 +142,16 @@ function sim(g,r,excl){
           else if((m=v.match(/^甲(\d+)$/)))u.armor=+m[1];
           else if((m=v.match(/^(活|伤)(\d+)$/))){u.status[m[1]==="活"?"vitality":"bleed"]=+m[2];}
           else{const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的修正「"+v+"」"});continue;}
-            if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}}}
+            if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});const up=n>u.power;u.power=n;if(u.power<=0)E.destroy(u);
+              // 设到神赐阈值以上：神赐照样触发（生成布朗温、刷新领袖等），它自己的战力仍以填的为准
+              else if(up){E.checkBless(u);if(E.find(u.uid))u.power=n;}}}}
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "coin":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的金币修正「"+v+"」"});break;}
         const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
       case "pass":{E.pass(side);break;}
+      // 结束回合：在这里结算回合结束效果（之后记的改战力就是回合结束之后看到的值）
+      case "end":{if(E.s.sides[side].passed)break;if(E.s.active!==side)E.s.active=side;E.endTurn();acted=false;justEnded=true;break;}
+      case "draw":{if(x.set&&x.who==="me"&&x.cards&&x.cards.length)E.s.sides.me.handCount=x.cards.length;break;}
       case "hand":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的手牌修正「"+v+"」"});break;}
         const before=S2.handCount;S2.handCount=Math.max(0,Math.min(E.rules.handLimit,/^\+/.test(v)?S2.handCount+n:/^-/.test(v)?S2.handCount+n:n));E.log("手动手牌",{side:x.side||side,from:before,to:S2.handCount});break;}
       case "fx":{if(!HZ[x.c])warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});
@@ -144,23 +167,26 @@ function sim(g,r,excl){
     }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
     // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排
     if(x.a==="play"&&def&&def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」生成的整排效果没记在哪排（用“整排效果”补上）",fix:true});}
-    if(turnAct)acted=true;
+    if(turnAct){acted=true;justEnded=false;}
     if(turnAct&&side!==lastTurn){turnCnt[side]++;lastTurn=side;}
-    {const who=lastTurn||side;const cards=new Set();let wn=0;
-      for(const t of E.trace.slice(t0)){const d=t.data||{};if(d.by&&d.by!=="手动")cards.add(d.by);if(t.type==="打出"||t.type==="生成"||t.type==="召唤")cards.add(d.name);if(t.warn)wn++;}
+    {const who=lastTurn||side;const cards=new Set(),boosted=new Set();let wn=0;
+      for(const t of E.trace.slice(t0)){const d=t.data||{};if(d.by&&d.by!=="手动")cards.add(d.by);if(t.type==="打出"||t.type==="生成"||t.type==="召唤")cards.add(d.name);if(t.type==="增益"&&d.uid)boosted.add(d.uid);if(t.warn)wn++;}
       if(x.c&&BY[x.c])cards.add(x.c);
-      steps[x.id]={who,n:turnCnt[who]||1,me:E.score("me").total,op:E.score("op").total,cards:[...cards].filter(Boolean),wn};}
+      steps[x.id]={who,n:turnCnt[who]||1,me:E.score("me").total,op:E.score("op").total,cards:[...cards].filter(Boolean),wn,boosted:[...boosted]};}
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
     for(const y of subs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
         if(y.row&&(y.side||y.who)===u.side&&(u.row!==y.row||(y.pos!=null&&E.s.sides[u.side].rows[u.row].indexOf(u)!==y.pos)))relocate(u,y.row,y.pos);}}
+    // 引擎自动产生的单位（朗维德回场、神赐生成等），后面又手动记了同名的召唤/生成：对应起来，不重复放
+    for(const u of fresh.slice()){curX=x;const y=laterSummon(u.name,u.side);if(!y)continue;bind(y.id,u);consumed.add(y.id);fresh.splice(fresh.indexOf(u),1);
+      if(y.row&&(u.row!==y.row||(y.pos!=null&&E.s.sides[u.side].rows[u.row].indexOf(u)!==y.pos)))relocate(u,y.row,y.pos);}
     fresh.forEach((u,k)=>bind(x.id+"/"+k,u));
     // 落地战力：以整步结算完后看到的为准（包括牌组拉出的牌）
     for(const y of [x,...subs]){if(y.pw==null)continue;const u=unitByKey(y.id);
       if(u&&u.power!==y.pw){E.log("录入战力",{uid:u.uid,name:u.name,from:u.power,to:y.pw});u.power=y.pw;}}
     // 提示：未建模、待选
     for(const t of E.trace.slice(t0)){
-      if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true});
+      if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+" 本回合不能用指令"});
       if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
       if((t.type==="献金"||t.type==="费用")&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 的"+t.type+"效果未建模（用改战力修正）"});
@@ -170,7 +196,7 @@ function sim(g,r,excl){
       if(t.data&&t.data.unmodeled){unmod[t.data.name]=(unmod[t.data.name]||0)+1;}}
   }
   // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
-  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn();}
+  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn({pass:true});}
   {const R1=g.rounds&&g.rounds[r];if(R1&&log.length)for(const sd of["me","op"]){const rec=R1[sd==="me"?"hm":"ho"];
     if(rec!=null&&rec!==""&&+rec!==E.s.sides[sd].handCount)warns.push({id:log[log.length-1].id,m:"推算"+sideN(sd)+"局末手牌 "+E.s.sides[sd].handCount+" 张，记录是 "+rec+" 张（中途抽牌、回手没记，用“修正手牌”补上）"});}}
   const res={E,key2u,u2key,warns,unmod,steps,score:{me:E.score("me"),op:E.score("op")}};
