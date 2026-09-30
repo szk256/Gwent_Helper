@@ -288,5 +288,16 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); g.s.sides.op.handCount = 4; P(g, 'me', '蒂博尔·艾格布拉杰', 'm'); ok(g.s.sides.op.handCount === 5, '蒂博尔：进场对方抽 1 张');
   const g2 = game(); g2.s.sides.op.passed = true; const b = P(g2, 'me', '蒂博尔·艾格布拉杰', 'm'); ok(b.power === Math.max(0, b.base - 12) || !g2.find(b.uid), '蒂博尔：对方已停牌 → 自伤 12');
 }
+
+// ---------- 亢奋（按推算手牌数） ----------
+{ const g = game(); g.s.sides.me.handKnown = true; g.s.sides.me.handCount = 3; const e = P(g, 'op', '寒冰巨人', 'm'); g.chooser = req => req.kind === 'frenzy' ? null : [e];
+  P(g, 'me', '伊瓦‧邪眼', 'm'); ok(e.power === e.base - 4, '伊瓦：亢奋 2（打出后手牌 2）→ 改为 4 点伤害');
+  g.s.sides.me.handCount = 6; const e2 = P(g, 'op', '班阿德的学生', 'm'); g.chooser = req => req.kind === 'frenzy' ? null : [e2]; const y = P(g, 'me', '伊瓦‧邪眼', 'm');
+  ok(y.power === e2.base && e2.power === y.base, '伊瓦：手牌多 → 交换战力'); }
+{ const g = game(); g.s.sides.me.handKnown = true; g.s.sides.me.handCount = 3; const a = P(g, 'op', '寒冰巨人', 'm');
+  P(g, 'me', '格德', 'm'); ok(a.power === a.base, '格德：亢奋 3 → 只伤女海妖');
+  const g2 = game(); g2.s.sides.me.handKnown = true; g2.s.sides.me.handCount = 8; const b = P(g2, 'op', '寒冰巨人', 'm'); P(g2, 'me', '格德', 'm'); ok(b.power === b.base - 1, '格德：手牌多 → 整排 1 伤害'); }
+{ const g = game(); g.s.sides.me.handKnown = true; g.s.sides.me.handCount = 2; const k = P(g, 'me', '凯尔达', 'm'); g.endTurn();
+  ok(g.units('me').filter(u => u.name === '猎魔人学徒').length === 1, '凯尔达：亢奋 4 → 回合结束生成学徒'); }
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
