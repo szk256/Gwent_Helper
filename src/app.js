@@ -238,6 +238,10 @@ function leaderToast(sd){const g=db.live;let S=null;try{S=sim(g,VR());}catch(e){
   toast(L.nm+(L.left>0?"：还能用 "+L.left+" 次"+(L.next!=null?"（下次 +"+L.next+"）":""):"：已用完"));}
 function pendingEnd(g){const TA=["play","leader","tactic","order","spawn","summon"];let sd=null;
   for(const x of g.log){if(x.r!==VR())continue;if(TA.includes(x.a)&&!x.via)sd=x.who;else if(x.a==="end"||x.a==="pass")sd=null;}return sd;}
+// 改战力前要不要问“回合结束了吗”：pendingEnd 那一方的回合结束会让场面变化（活力、壁垒、鼓手……），且这一回合还没回答过“还没结束”
+function lastTurnActId(g){const TA=["play","leader","tactic","order","spawn","summon"];let id=null;for(const x of g.log)if(x.r===VR()&&TA.includes(x.a)&&!x.via)id=x.id;return id;}
+function endAsk(g,pe){if(ui.endAsked&&ui.endAsked===lastTurnActId(g))return "";try{const r=VR();const A=sim(g,r);const B=sim(Object.assign({},g,{id:g.id+"~end",log:[...g.log,{id:"__end",r,who:pe,a:"end"}]}),r);if(!A||!B)return "";
+  const ch=[];for(const [k,u] of Object.entries(B.key2u)){const v=A.key2u[k];if(v&&A.E.find(v.uid)&&B.E.find(u.uid)&&u.power!==v.power)ch.push(u.name+" "+(u.power>v.power?"+":"")+(u.power-v.power));}return ch.slice(0,6).join("、");}catch(e){return "";}}
 function nextStep(){ui.flow=(ui.flow||[]).slice(1);if(!ui.flow.length){ui.flow=null;if(!flowDone()){doSwitch();if(["leader","pass","fx","note","summon"].includes(ui.act))ui.act="play";}}ui.q="";ui.sel=[];rMatch();}
 function startCard(name,a,who,via){const c=BY[name];
   if(c&&(c.t==="特殊"||c.t==="战术")){const idx=pushLog({who,a,c:name,via:via||undefined});afterCard(idx,name,a,who);return;}
@@ -350,6 +354,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     tacticOp(){recTactic("op");},
     endTurn(){const sd=pendingEnd(g)||ui.who;const i=pushLog({who:sd,a:"end"});ui.recent=[];const other=sd==="me"?"op":"me";
       if(!g.log.some(x=>x.r===VR()&&x.a==="pass"&&x.who===other))ui.who=other;ui.act="play";ui.flow=null;toast(logText(g.log[i]));rMatch();},
+    adjNotEnd(){ui.endAsked=lastTurnActId(g);rMatch();},
     adjEnd(){const sd=pendingEnd(g);if(!sd)return;pushLog({who:sd,a:"end"});ui.recent=[];toast(sideN(sd)+"回合结束");rMatch();},   // 面板按回合结束后的新值显示
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},
     fxRec(){const f=ui.fx;const i=pushLog({who:f.who||ui.who,a:"fx",c:f.k,side:f.side,row:f.row,dur:f.dur||null});ui.fx=null;ui.act="play";toast(logText(g.log[i]));rMatch();},
@@ -496,7 +501,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         const bump=(id,d)=>`<button class="ghost" data-adjbump="${id}|${d}">${d>0?"+"+d:"−"+(-d)}</button>`;
         const numRow=(id,val,pre,label)=>`${bump(id,-1)}${numIn(id,val,pre)}${bump(id,1)}${b("?#"+id+":"+pre,label)}`;
         h+=`<h2>修正 ${esc(sideN(step.side))}的 ${esc(step.card)}</h2><p class="note">推算 <b>${P}</b>（基础 ${eu?eu.base:"?"}，护甲 ${eu?eu.armor:0}${has?"，"+has:""}）。点游戏里看到的数值；增益/伤害会过护盾、护甲并触发效果。</p>
-        ${pe?`<div class="btns" style="margin-top:6px"><button class="ghost" data-do="adjEnd">${sideN(pe)}回合已结束？先结算回合结束效果</button></div>`:""}
+        ${pe?(endAsk(g,pe)?`<div class="askend"><p>你看到的是<b>${sideN(pe)}回合结束之后</b>的数值吗？回合结束会结算：${esc(endAsk(g,pe))}</p><div class="btns"><button class="primary" data-do="adjEnd">是，先结算${sideN(pe)}回合结束</button><button class="ghost" data-do="adjNotEnd">还没结束</button></div></div>`:`<div class="btns" style="margin-top:6px"><button class="ghost" data-do="adjEnd">${sideN(pe)}回合已结束？先结算回合结束效果</button></div>`):""}
         <div class="lab gl">设为</div><div class="btns adjrow">${numRow("adjSet",P,"","设为")}</div>
         <div class="lab gl">增益 / 伤害</div><div class="btns" style="flex-wrap:wrap">${[1,2,3,4,5,6].map(n=>b("+"+n)).join("")}${[1,2,3,4,5,6].map(n=>b("-"+n)).join("")}</div>
         <div class="btns adjrow">${bump("adjN",-1)}${numIn("adjN",7)}${bump("adjN",1)}${b("?#adjN:+","增益")}${b("?#adjN:-","伤害")}</div>
@@ -515,7 +520,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         <div class="btns" style="margin-top:8px"><button class="primary" data-trib="1" style="flex:1">付了</button><button class="ghost" data-trib="0" style="flex:1">没付</button></div>`;}
       else if(step.t==="pw"){const e=entry(step.id);const S0=sim(g,VR());const u=S0&&S0.key2u[step.id];const n=u?u.power:(BY[e.c]&&+BY[e.c].pw)||0;const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
         const vals=[];for(let v=Math.max(0,n-3);v<=n+3;v++)vals.push(v);
-        h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。</p>
+        h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。<br>填<b>刚放下时</b>的数值：回合结束时的成长（壁垒、活力、灌注等）推算会自己加，别算进去。</p>
         <div class="btns" style="margin-top:8px;flex-wrap:wrap">${vals.map(v=>`<button class="${v===n?"primary":"ghost"}" data-pwset="${v}">${v}</button>`).join("")}</div>
         <div class="btns" style="margin-top:8px"><input id="pwIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="ghost" data-pwset="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="frenzy"){const e=entry(step.id);
