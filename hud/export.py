@@ -10,6 +10,7 @@ python hud/export.py 帧目录 [日期YYYYMMDD] [--jobs=4] [--deck=卡组代码�
 - 每一手之后稳定的总分 → 真实比分核对点（偏差报告用）
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -22,6 +23,17 @@ import timeline  # noqa: E402
 from matcher import Matcher  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+TGT_WORDS = re.compile(r'伤害|增益|锁定|摧毁|重置')
+
+
+def target_text(card):
+    """这张牌打出时要指定目标的那段效果文字（特殊牌第一段、单位的“部署”段），没有返回 ''。"""
+    text = card.get('text') or ''
+    segs = [s.strip() for s in text.split('/')]
+    seg = segs[0] if card.get('type') == '特殊' else next((s for s in segs if s.startswith('部署')), '')
+    if not re.search(r'(对|使|摧毁|锁定|重置|放逐)\s*\d+\s*(个|名)', seg) or '所有' in seg or '每' in seg:
+        return ''
+    return seg
 ROW = {'对方远程': 'r', '对方近战': 'm', '我方近战': 'm', '我方远程': 'r'}
 
 
@@ -84,8 +96,33 @@ def infer_passes(log, runs):
     return out
 
 
+def depart_reason(states, t, side):
+    """离场原因：离场前后各看几秒——墓场张数的字形图案变了 = 摧毁（进墓场）；否则手牌数 +1 = 回手；都没变 = 放逐。
+    数据不够返回 None。side：'对方' / '我方'。"""
+    import digits
+    k = 0 if side == '对方' else 1
+
+    def mode(vals):
+        vals = [v for v in vals if v is not None]
+        return Counter(vals).most_common(1)[0][0] if vals else None
+    before = [e.get('cnt') for tt, e in states if t - 8 <= tt <= t - 0.5 and e.get('cnt')]
+    after = [e.get('cnt') for tt, e in states if t + 1.5 <= tt <= t + 10 and e.get('cnt')]
+    if not before or not after:
+        return None
+    gb, ga = mode(c['gsig'][k] for c in before), mode(c['gsig'][k] for c in after)
+    hb, ha = mode(c['hand'][k] for c in before), mode(c['hand'][k] for c in after)
+    d = digits.sig_diff(gb, ga)
+    if d is not None and d > 8:
+        return '摧毁'
+    if hb is not None and ha is not None and ha > hb:
+        return '回手'
+    if d is not None and hb is not None and ha is not None:
+        return '放逐'
+    return None
+
+
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
-               runs=None, extra=None, sync_states=None):
+               runs=None, extra=None, sync_states=None, states=None):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
     sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
@@ -106,6 +143,62 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     step_t = [0.0]   # 最近一手（打出 / 领袖）的时间
 
     units = {}   # 排 -> [[记录 id, 牌名, 上次的战力]]，按排内位置
+    pend_tgt = []  # [(打出记录, 时间, 打出前的 units 快照)]
+    st_t = [s[0] for s in states] if states else []
+
+    def row_at(t, rk):
+        import bisect
+        i = bisect.bisect_right(st_t, t) - 1
+        if i < 0:
+            return None, None
+        ent = states[i][1]
+        names = ent.get('rows', {}).get(rk, [])
+        pws = (ent.get('pw') or {}).get(rk, [])
+        keep = [j for j, nm in enumerate(names) if cards_by_name.get(nm, {}).get('type') != '战术']
+        return [names[j] for j in keep], [pws[j] if j < len(pws) else None for j in keep]
+
+    def resolve_targets(t_after):
+        """比较打出前后每个单位的战力：伤害 → 对方掉了的，增益 → 己方涨了的，摧毁 → 没了的；按卡面数值挑最匹配的。"""
+        while pend_tgt:
+            x, t, snap = pend_tgt.pop(0)
+            text = target_text(cards_by_name.get(x['c'], {}))
+            nums = [int(v) for v in re.findall(r'(\d+)\s*点', text)]
+            want = int(m.group(1)) if (m := re.search(r'(\d+)\s*个', text)) else 1
+            cands = []
+
+            def find(names, nm, k):  # 第 k 个叫 nm 的在 names 里的位置
+                idx = [j for j, v in enumerate(names) if v == nm]
+                return idx[k] if k < len(idx) else None
+            for rk, us in snap.items():
+                if not us:
+                    continue
+                n0, p0 = row_at(t - 0.5, rk)
+                n1, p1 = row_at(t_after, rk)
+                if n0 is None or n1 is None:
+                    continue
+                enemy = rk.startswith('对方') == (x['who'] == 'me')
+                seen = Counter()
+                for u in us:  # 按牌名逐张对齐（同名按第几张），别的牌没认出来也不影响
+                    k = seen[u[1]]
+                    seen[u[1]] += 1
+                    j0 = find(n0, u[1], k)
+                    if j0 is None:
+                        continue
+                    j1 = find(n1, u[1], k)
+                    if j1 is None:
+                        if enemy and ('摧毁' in text or '伤害' in text) and n0.count(u[1]) > n1.count(u[1]):
+                            cands.append((0, -99, u[0]))  # 没了：被摧毁
+                        continue
+                    a_, b_ = p0[j0] if j0 < len(p0) else None, p1[j1] if j1 < len(p1) else None
+                    if a_ is None or b_ is None or a_ == b_:
+                        continue
+                    d = b_ - a_
+                    if ('伤害' in text and enemy and d < 0) or ('增益' in text and not enemy and d > 0) or                             ('重置' in text and d != 0) or ('锁定' in text and enemy):
+                        fit = min((abs(abs(d) - kk) for kk in nums), default=0)
+                        cands.append((fit, -abs(d), u[0]))
+            if cands:
+                x['tgts'] = [{'uid': c[2]} for c in sorted(cands)[:want]]
+                x['hud'] = (x.get('hud', '') + ' 目标由战力变化推出').strip()
     sync_t = [s[0] for s in sync_states] if sync_states else []
 
     def rowkey(who, rr):
@@ -148,7 +241,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         log.append(x)
         if x['a'] in ('play', 'leader'):
             step_t[0] = t
-        if sync_states and x['a'] in ('play', 'summon') and x.get('row'):
+        if x['a'] == 'play' and target_text(cards_by_name.get(x.get('c'), {})) and states:
+            # 有目标的牌：记下打出前的场面，等下一个核对点再比较前后战力推目标
+            pend_tgt.append((x, t, {k: [u[:2] for u in v] for k, v in units.items()}))
+        if x['a'] in ('play', 'summon') and x.get('row'):
             us = units.setdefault(rowkey(x['who'], x['row']), [])
             us.insert(min(x.get('pos', len(us)), len(us)), [x['id'], x['c'], x.get('pw')])
         if x['a'] in ('play', 'summon') and x.get('row'):
@@ -165,6 +261,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         if best:
             round_score = best[1]
             if pending_step and best[1] != last_real:
+                resolve_targets(best[0])
                 if sync_states:
                     sync_powers(best[0])
                 push({'who': 'me', 'a': 'real', 'v': f'{best[1][0]}:{best[1][1]}'}, best[0])
@@ -244,7 +341,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             push(x, t)
             pending_step = True
         elif kind in ('离场', '移动', '回手'):
-            push({'who': who, 'a': 'note', 'c': f'画面：{name} {kind}（{row}）'}, t)
+            why = depart_reason(states, t, side) if kind == '离场' and states else None
+            push({'who': who, 'a': 'note', 'c': f'画面：{name} {why or kind}（{row}）'}, t)
             src = row.split('→')[0]
             u = next((u for u in units.get(src, []) if u[1] == name), None)
             if u:
@@ -270,6 +368,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     for x in log:
         if x.get('uid') in remap:
             x['uid'] = remap[x['uid']]
+        for tg in x.get('tgts') or []:
+            if tg.get('uid') in remap:
+                tg['uid'] = remap[tg['uid']]
     facs = Counter(cards_by_name[x['c']]['fac'] for x in log
                    if x['who'] == 'op' and x.get('c') in cards_by_name and cards_by_name[x['c']]['fac'] != 'NE')
     return {
@@ -301,7 +402,7 @@ def main():
     my_deck = deck.load(spec, m.cards)
     sync = '--sync-power' in sys.argv
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
-                      runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None)
+                      runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)

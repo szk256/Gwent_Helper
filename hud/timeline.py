@@ -52,11 +52,45 @@ def reader():
     return _READER
 
 
+def joint_powers(cands, score):
+    """每张牌的战力候选 + 右侧总分 → 每张牌的战力。
+    一方所有单位战力之和应该等于这一方的总分：从每张牌的候选里各选一个、加起来等于总分、总误差最小（动态规划）。
+    凑得上的一方标 ok（整方战力可信）；凑不上（有牌没认出、总分读错）就用各自误差最小的候选。
+    返回 ({排: [战力或 None]}, {'对方': bool, '我方': bool})。"""
+    pws, ok = {}, {}
+    for side, total in (('对方', score[0] if score else None), ('我方', score[1] if score else None)):
+        rows = [r for r in cands if r.startswith(side)]
+        items = [(r, i, cl) for r in rows for i, cl in enumerate(cands[r])]
+        for r in rows:
+            pws[r] = [cl[0][0] if cl else None for cl in cands[r]]
+        ok[side] = False
+        if total is None or not items or any(not cl for _r, _i, cl in items) or total > 400:
+            continue
+        # dp: 和 -> (误差, 选择)
+        dp = {0: (0.0, [])}
+        for _r, _i, cl in items:
+            nd = {}
+            for s, (e, ch) in dp.items():
+                for v, ev in cl:
+                    s2 = s + v
+                    if s2 > total:
+                        continue
+                    if s2 not in nd or e + ev < nd[s2][0]:
+                        nd[s2] = (e + ev, ch + [v])
+            dp = nd
+        if total in dp:
+            for (r, i, _cl), v in zip(items, dp[total][1]):
+                pws[r][i] = v
+            ok[side] = True
+    return pws, ok
+
+
 def scan_frame(m, im):
     import layout
     det = board.scan(m, im, detail=True)
     rows = board.names(m, {r: [c[:3] for c in cs] for r, cs in det.items()})
-    pws = {}
+    score = reader().scores(im)
+    cands = {}
     for r, cs in det.items():
         if r == '手牌':
             continue
@@ -64,11 +98,12 @@ def scan_frame(m, im):
         for x, art, _v, y, h in cs:
             c = m.by_art[art][0]
             base = int(c['power']) if str(c['power']).isdigit() else None
-            out.append(reader().power(im, x, y, h, base) if c['type'] == '单位' else None)
-        pws[r] = out
-    ent = {'rows': rows, 'pw': pws, 'sharp': sharpness(im), 'show': None,
-           'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'lead': reader().leader(im),
-           'turn': reader().turn(im)}
+            out.append(reader().power_cands(im, x, y, h, base) if c['type'] == '单位' else [(0, 0.0)])
+        cands[r] = out
+    pws, ok = joint_powers(cands, score)
+    ent = {'rows': rows, 'pw': pws, 'pw_ok': ok, 'sharp': sharpness(im), 'show': None,
+           'score': score, 'smin': layout.get(im)['sharp_min'], 'lead': reader().leader(im),
+           'turn': reader().turn(im), 'cnt': reader().counts(im)}
     sc = detect.showcase(im)
     if sc is not None:
         res = m.match(sc)
@@ -105,7 +140,7 @@ def scan_dir(m, d, jobs=1):
             done = json.load(f)
     frames = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=frame_time)
     t0 = time.time()
-    todo = [p for p in frames if 'pw' not in (done.get(os.path.basename(p)) or {})]
+    todo = [p for p in frames if 'pw_ok' not in (done.get(os.path.basename(p)) or {})]
     if jobs > 1 and len(todo) > 20:
         import multiprocessing as mp
         with mp.Pool(jobs, _init_worker) as pool:
@@ -117,9 +152,11 @@ def scan_dir(m, d, jobs=1):
     for i, p in enumerate(frames):
         k = os.path.basename(p)
         ent = done.get(k)
-        if ent is not None and 'pw' in ent:
-            if 'score' not in ent or 'lead' not in ent or 'turn' not in ent:  # 旧缓存：补读总分、领袖、回合（很快）
+        if ent is not None and 'pw_ok' in ent:
+            if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
+                # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+                ent['cnt'] = reader().counts(im)
                 ent['score'] = reader().scores(im)
                 ent['lead'] = reader().leader(im)
                 ent['turn'] = reader().turn(im)

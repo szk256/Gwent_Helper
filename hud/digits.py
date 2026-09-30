@@ -47,6 +47,32 @@ def mask_score(bgr):
     return ((v > 150) & ((s < 70) | ((h >= 17) & (h <= 32) & (s < 200)))).astype(np.uint8)
 
 
+def sig(g):
+    """字形图案：缩到 8×12 二值化，存成 24 位十六进制。"""
+    b = cv2.resize(g, (8, 12), interpolation=cv2.INTER_AREA) > 0.5
+    return f'{int("".join("1" if x else "0" for x in b.flatten()), 2):024x}'
+
+
+def sig_diff(a, b):
+    """两个字形图案串的差别（不同的位数；字形个数不同算很大）。"""
+    if not a or not b:
+        return None
+    pa, pb = a.split('-'), b.split('-')
+    if len(pa) != len(pb):
+        return 99
+    return sum(bin(int(x, 16) ^ int(y, 16)).count('1') for x, y in zip(pa, pb))
+
+
+def mask_white(bgr, red=False):
+    """白色数字（墓场张数、手牌数）；red=True 时红色也算（满手时“10/10”是红的）。"""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    m = (s < 60) & (v > 170)
+    if red:
+        m |= ((h <= 8) | (h >= 172)) & (s > 120) & (v > 120)
+    return m.astype(np.uint8)
+
+
 def mask_lead(bgr):
     """领袖剩余次数：灰白（不能用时）或金色 / 橙色（可以用时）。"""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
@@ -228,6 +254,39 @@ class Reader:
         blue = ((h >= 100) & (h <= 125) & (s > 120) & (v > 50)).mean()
         return 'me' if blue > 0.05 else 'op'
 
+    def counts(self, frame):
+        """{'grave': (对方, 我方) 墓场张数, 'hand': (对方, 我方) 手牌数}，读不出为 None。"""
+        import layout
+        L = layout.get(frame)
+        out = {}
+        sigs = []
+        for key in ('grave', 'hand'):
+            vals = []
+            for side in ('op', 'me'):
+                box = L.get(f'{key}_{side}')
+                if not box:
+                    vals.append(None)
+                    continue
+                c = crop(frame, box)
+                H = frame.shape[0]
+                if key == 'grave':  # 大框里找白色数字（高约 0.02 屏高），骷髅是金色的不会混进来
+                    m = mask_white(c)
+                    v = self.number(m, power=True, min_h=int(0.012 * H), min_rel_h=0.8)
+                    # 斜体数字认不准，另存字形图案：离场前后图案变了 = 墓场张数变了
+                    gs = glyphs(m, min_h=int(0.012 * H), min_rel_h=0.8)
+                    sigs.append('-'.join(sig(g) for _x, g, _b in gs[:2]) if gs and len(gs) <= 2 else None)
+                else:
+                    v = self.number(mask_white(c, red=True), power=True, min_h=int(0.3 * c.shape[0]))
+                if key == 'hand' and v is not None:
+                    s = str(v)  # “8/10”：斜杠被当成碎片去掉，剩 810 / 1010；分母固定是 10
+                    v = int(s[:-2]) if len(s) > 2 and s.endswith('10') else None
+                    if v is not None and v > 10:
+                        v = None
+                vals.append(v)
+            out[key] = tuple(vals)
+        out['gsig'] = tuple(sigs) if len(sigs) == 2 else (None, None)
+        return out
+
     def leader(self, frame):
         """(对方, 我方) 领袖剩余次数；标牌不在（用完了）或读不出为 None。"""
         import layout
@@ -236,6 +295,34 @@ class Reader:
             return (None, None)
         return tuple(self.number(mask_lead(crop(frame, L[k])), min_h=int(0.2 * crop(frame, L[k]).shape[0]))
                      if L.get(k) else None for k in ('lead_op', 'lead_me'))
+
+    def power_cands(self, frame, cx, cy, h, base=None, k=3):
+        """战力的几个候选 [(值, 误差)]，按误差从小到大；白色直接 [(基础, 0)]；绿 / 红只留符合大小约束的。读不出返回 []。"""
+        b = power_crop(frame, cx, cy, h)
+        if b.size == 0:
+            return []
+        b = diamond(b)
+        col = badge_color(b)
+        if col == 'white' and base is not None:
+            return [(base, 0.0)]
+        gs = glyphs(rhombus(mask_power(b)), min_h=max(4, int(b.shape[0] * 0.3)))
+        if gs:  # 和 number() 一样按基线去掉碎片
+            ref = min(gs, key=lambda g: self.classify(g[1], True)[1])[2]
+            tol = 0.2 * ref[3]
+            gs = [g for g in gs if abs(g[2][1] - ref[1]) <= tol and abs(g[2][1] + g[2][3] - ref[1] - ref[3]) <= tol]
+        if not 1 <= len(gs) <= 2:
+            return []
+        cands = [[(1, 0.02)] if bb[2] < 0.36 * bb[3] else self.ranked(g, True, k) for _x, g, bb in gs]
+        out = []
+        if len(cands) == 1:
+            out = [(d, e) for d, e in cands[0]]
+        else:
+            out = [(a * 10 + b2, ea + eb) for a, ea in cands[0] for b2, eb in cands[1] if a > 0]
+        if base is not None and col == 'green':
+            out = [c for c in out if c[0] > base]
+        elif base is not None and col == 'red':
+            out = [c for c in out if c[0] < base]
+        return sorted(out, key=lambda c: c[1])[:6]
 
     def power(self, frame, cx, cy, h, base=None):
         """场上一张牌的战力：cx, cy, h 为画面比例（board.scan(detail=True) 给的中心和高度）。特殊牌 / 神器没有数字，返回 None。
