@@ -5,7 +5,8 @@ const path = require('path');
 
 const SRC = path.join(__dirname, 'src');
 const OUT = path.join(__dirname, 'dist', 'gwent_tracker.html');
-const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8');
+// 统一成 LF：Windows 检出（autocrlf）也和 CI 打出一样的内容和构建号
+const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8').replace(/\r\n/g, '\n');
 
 function inline(tag, file, text) {
   // 内容里出现结束标签会提前截断，打包前拒绝

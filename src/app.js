@@ -440,7 +440,11 @@ const unitFaceU=u=>{const e=u.eu;if(!e)return unitFace(u.n);const c=BY[u.n];cons
       const cls=e.power>e.base?"up":e.power<e.base?"dn":"";
       const marks=[st.shield?"盾":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:"",st.lock?"锁":"",st.poison?"毒":"",st.veil?"遮":"",st.resilience?"坚":"",
         st.spying?"潜":"",st.ambush?"伏":"",st.bounty?"赏":"",e.timer!=null?"计"+e.timer:"",e.def.cooldown!=null&&e.cd>0?"冷"+e.cd:"",e.def.order&&e.def.cooldown==null&&((e.def.charges!=null?e.def.charges:1)+(e.bonusCharges||0))!==1?"充"+Math.max(0,(e.def.charges!=null?e.def.charges:1)+(e.bonusCharges||0)-e.orderUsed):"",e.pat!=null?"耐"+e.pat:"",e.vars&&e.vars.count!=null?"倒"+e.vars.count:"",st.immune&&!e.def.status?.immune?"免":""].filter(Boolean).join(" ");
-      return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"&&!e.isTactic?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled&&!e.isTactic?`<span class="unm">?</span>`:""}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
+      return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"&&!e.isTactic?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled&&!e.isTactic?`<span class="unm">?</span>`:""}${ordMark(u)}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
+// 指令指示器：金色“令”= 现在能用；虚线“令”= 进场当回合，下回合才能用（列阵在近战排、狂热的当回合就能用）
+const ordMark=u=>{const e=u.eu;if(!e||u.ob==null&&!e.def.order)return "";const zeal=e.zeal&&e.def.formation&&e.row==="m"?"列阵狂热，":e.zeal?"狂热，":"";
+  if(u.ob===null)return `<span class="uord" title="${zeal}指令现在可用">令</span>`;
+  if(u.ob==="new")return `<span class="uord wait" title="进场当回合，下回合才能用指令">令</span>`;return "";};
 const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small class="upw">${c.pw}</small>`:"";};
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{
       const us=RR[s][r];let inner="";
@@ -448,7 +452,9 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else inner=us.map(u=>{const on=mode==="multi"&&(ui.sel||[]).some(t=>t.uid===u.uid);return `<button class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} ${on?"on":""}" data-u="${u.uid}" data-umode="${mode}" title="${esc(u.n)}">${unitFaceU(u)}</button>`;}).join("")||`<span class="note">空</span>`;
       const lab=mode==="multi"?`<button class="bl rowpick ${(ui.sel||[]).some(t=>t.row===s+r)?"on":""}" data-rowpick="${s}${r}">${s==="me"?"我":"对"}·${ROWN[r]}</button>`:`<span class="bl">${s==="me"?"我":"对"}·${ROWN[r]}</span>`;
       const rsum=us.reduce((a,u)=>a+(u.eu?u.eu.power:0),0);
-      return `<div class="brow ${s}" data-side="${s}" data-row="${r}">${lab}${us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:""}${fxTags(s,r)}${inner}</div>`;}).join("")}</div>`;};
+      const meta=(us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:"")+fxTags(s,r);
+      // 单位不换行：多了按比例缩小，手机上再放不下就在这一排里横向滑动
+      return `<div class="brow ${s}" data-side="${s}" data-row="${r}">${lab}${meta?`<span class="bmeta">${meta}</span>`:""}<div class="bu${mode==="slots"?" slots":""}">${inner}</div></div>`;}).join("")}</div>`;};
     const hand=g.hand?myHand(g):[];
     const deckGrid=(opts)=>{opts=opts||{};if(!d)return"";const used={};const dev=devotionOf(d);const setSel=opts.sel&&opts.sel.set?opts.sel:null;
       g.log.forEach(x=>{if(x===opts.sel)return;if(x.who==="me"&&(x.a==="play"||x.a==="summon")&&x.via!=="墓场"&&!(setSel&&x.r>=setSel.r))used[baseOf(x.c)]=(used[baseOf(x.c)]||0)+1;if(x.who==="me"&&x.a==="draw"&&opts.forHand&&!setSel)(x.cards||[]).forEach(n=>used[baseOf(n)]=(used[baseOf(n)]||0)+1);});

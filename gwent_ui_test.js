@@ -53,6 +53,20 @@ setTimeout(() => {
     S = w.eval('sim(db.live,1)'); ok(!S.E.s.sides.me.rows.m.some(u => u.isTactic) && !S.E.s.sides.me.grave.includes('战术'), '战术牌：第二局没有，也不进墓场');
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
     ok(!w.eval('sim(db.live,0)').E.s.sides.me.rows.m.some(u => u.isTactic), '战术牌：旧对局（没有 tacCard）不放');
+    // 指令指示器：进场当回合虚线“令”，下回合金色；列阵在近战排当回合就能用
+    live([{ id: 'e1', who: 'me', a: 'play', c: '安赛斯王子', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' }]);
+    const ord = () => [...w.document.querySelectorAll('.brow.me [data-u]')].map(e => e.title + ':' + (e.querySelector('.uord') ? e.querySelector('.uord').className : ''));
+    let om = ord();
+    ok(om.some(x => /安赛斯王子:uord$/.test(x)) && om.some(x => /赤红男爵:uord wait/.test(x)), '指令指示器：列阵近战当回合可用、其他单位虚线');
+    live([{ id: 'e1', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
+    ok(ord().some(x => /赤红男爵:uord$/.test(x)), '指令指示器：下回合变为可用');
+    // 对方停牌后，我方每从手牌打出一张就是新回合（进场当回合的限制、回合结束效果照常）
+    live([{ id: 'e1', who: 'op', a: 'pass' }, { id: 'e2', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' },
+      { id: 'e3', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e4', who: 'me', a: 'order', c: '赤红男爵', uid: 'e2', tgts: [{ uid: 'e3' }] }]);
+    S = w.eval('sim(db.live,0)');
+    ok(S.E.s.turn === 2 && !S.warns.some(x => /不能用指令/.test(x.m)), '对方停牌后连续出牌：分成两个回合，指令可用');
+    live([{ id: 'e1', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' }, { id: 'e2', who: 'me', a: 'order', c: '赤红男爵', uid: 'e1' }]);
+    ok(w.eval('sim(db.live,0)').warns.some(x => /进场当回合不能用指令/.test(x.m)), '进场当回合记了指令：提示');
     // 月度补丁：对局按日期用当时的版本
     w.eval(`GwentPatches.PATCHES.push({date:'2099-01-01',title:'测试补丁',cards:[{n:'科德温骑士',pw:[5,6]}]});GwentPatches.applyAll(RAW);`);
     live([{ id: 'e1', who: 'me', a: 'play', c: '寒冰巨人', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }], { date: '2098-12-31' });

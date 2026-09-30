@@ -11,7 +11,7 @@
 用户卡组：北方王国“北境赤诚骑士少女改”，领袖皇家激励，战术战术优势，25 张，无中立牌（赤诚成立）。
 
 ## 文件
-源文件在 `src/`，改完运行 `node build.js` 打包成单文件 `dist/gwent_tracker.html`（用户主要在**电脑网页**上用，也兼容手机）。`src/index.html` 可直接在浏览器打开调试。
+源文件在 `src/`，改完运行 `node build.js` 打包成单文件 `dist/gwent_tracker.html`（读源文件时统一成 LF，Windows 检出的 CRLF 也和 CI 构建号一致）（用户主要在**电脑网页**上用，也兼容手机）。`src/index.html` 可直接在浏览器打开调试。
 - `src/engine.js`：底层引擎，不含任何具体卡牌。浏览器里是 `window.GwentEngine`，Node 里 `require`。
 - `src/cards.js`：卡牌行为（只写“做什么”），`window.GwentCards.behaviors`。数值来自 `RAW`。
 - `src/data.js`：卡牌数据 `const RAW=[...]`（单行，很大）。
@@ -70,7 +70,8 @@
 ## 对局簿接入（gwent_tracker.html 里的 sim / simBoard）
 - `sim(g, r)` 把第 r 局的记录逐条喂给引擎：换人行动即回合切换；由某张牌带出的后续记录（`via` 为该牌名的 spawn / summon / play）作为这张牌的选择输入，并对应到引擎自动产生的单位。
 - 记录里的 `tgts` 按顺序作为这一步所有选择的输入（包括随机结果）。
-- 回合切换只看 play / leader / tactic / order / pass / spawn / summon（不带 via）；`effect`、`fx` 不切换回合。
+- 回合切换只看 play / leader / tactic / order / pass / spawn / summon（不带 via）；`effect`、`fx` 不切换回合。另一方已停牌时，同一方再从手牌打出一张牌（不带 via）= 新回合（指令、领袖算在前一张牌那回合，要分开就记“结束回合”）。
+- 指令指示器：棋盘格子右侧金色“令”= 现在能用，虚线“令”= 进场当回合（下回合可用；列阵近战/狂热当回合就是金色）；用完、冷却、锁定不显示（冷/充/锁另有标记）。引擎 `orderBlock(u)` 返回 null / new / used / cd / lock / none，`simBoard` 放在 `ob`。推算里记指令用 `force` 照样结算，但不可用时仍提示原因；`move` 不改 `enteredTurn`。
 - `effect`（E）记录：来源已建模时只提供目标（按来源名进 `effQ`，引擎对应来源的选择会用到），不再报“未建模”；来源只有回合结束能力（如安娜）时，记到它表示该方回合已结束，当场 `endTurn()`。
 - 领袖记录的目标是另一方单位、且另一方领袖同名时，按另一方推算并提示（旧数据兼容）。
 - 落地战力 `pw` 在整步结算完后覆盖（包括牌组拉出的牌）。
@@ -186,6 +187,7 @@ R1 W 46:24 4:5
 ## 界面约定
 - 暗色主题：面板深色、文字浅色；按钮一律是“有底色 + 边框”的块（`--btn` `--btnEdge`），选中用金色底深色字（`--on1` `--on2` `--onInk`），和正文文字区分开。改颜色时保证文字对比度 ≥ 4.5:1。
 - 主题（用户在 mini LED HDR 电视上用）：`THEMES` 经典（木纹金，默认，不设属性）/ 石板冷灰 `slate` / 昆特牌桌 `table` / 极简黑 `black`（防光晕：不用纯黑 #0b0d11、不用纯白字、去掉发光和文字阴影）/ 午夜蓝 `navy` / 纯黑 `pure`（背景 #000，文字、强调色、卡图、选中按钮都压暗，用户觉得刺眼时用）；`html[data-theme]` 只换变量（`--bg --panel --panel2 --navBg --h2 --gold --on1/2 --onInk --btn* --boardBg --unitEdge --lab --glowA` 等），通用覆盖规则在 style.css 末尾。字号缩放 `ZOOMS` 100/115/130/150%（`html` 的 zoom）。存本机 localStorage `gwent-ui-pref`（不进 db，电视和手机各自设置），index.html 头部内联脚本在绘制前套上，左边栏 / 手机“数据”页底部选择。对比度都 ≥ 5.6:1。
+- 棋盘：每排单位不换行（`.brow` 里 `.bmeta` 放排分和整排效果，`.bu` 放单位），单位按卡牌比例缩小（电脑最窄 34px、手机 28px，格子里的标记用容器查询缩小），还放不下就在这一排里横向滑动，整页不横向滚。
 - 电脑（≥1100px）：导航在左边栏（对局 / 数据 / 卡组 / 牌库 + 数据迁移按钮），内容两栏；手机：底部导航、单栏。
 - 双阵营牌：数据里只有一个阵营，另一个写在 `app.js` 的 `DUAL`（单张）和 `DUAL_TAG`（按类别整组，目前“火誓者”类别 → 北方王国，共 25 张可收集牌）；用户可在卡牌详情“也属于阵营”里改，存进 `db.edits[牌名].f2`。牌库、组卡搜索、对局搜索都用 `inFac(c,f)`。
 - 扩展包中文名在 `app.js` 的 `SERN`（用户提供：unmillable=新手卡组，baseset=核心卡牌 …），筛选按这个顺序显示，卡牌详情也显示。

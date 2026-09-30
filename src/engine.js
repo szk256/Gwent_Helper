@@ -795,7 +795,9 @@ class Game {
 
   move(u, row, pos, src) {
     const from = this.rowOf(u); from.splice(from.indexOf(u), 1);
+    const et = u.enteredTurn;
     this._place(u, u.side, row, pos);
+    u.enteredTurn = et;                 // 移位不算重新进场（指令照常可用）
     this.log('移位', { uid: u.uid, name: u.name, row, by: src && src.name });
     this.emit('moved', { unit: u, src });
   }
@@ -885,12 +887,21 @@ class Game {
     // 进场当回合不能用；狂热例外
     return u.zeal || this.s.turn > u.enteredTurn;
   }
+  // 指令为什么不能用（界面指示器、提示用）：null = 能用
+  orderBlock(u) {
+    if (!u.def.order) return 'none';
+    if (u.status.lock) return 'lock';
+    if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return 'cd'; }
+    else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return 'used';
+    return u.zeal || this.s.turn > u.enteredTurn ? null : 'new';
+  }
   order(uid, opts = {}) {
     const u = this.find(uid);
     if (!u) return;
     if ((!u.def.order || opts.fee) && (u.def.fee || u.def.feeN != null)) return this.fee(u, opts);
     if (!u.def.order) { this.log('没有指令', { uid, name: u.name, unmodeled: true }, true); return; }
-    if (!this.canOrder(u) && !opts.force) this.log('指令不可用', { uid, name: u.name }, true);
+    // force（对局簿按记录推算）照样结算，但仍提示，方便发现记错回合
+    if (!this.canOrder(u)) this.log('指令不可用', { uid, name: u.name, reason: this.orderBlock(u) }, true);
     u.orderUsed++;
     this.s.sides[u.side].vars.usedOrderTurn = this.s.turn;
     if (u.def.cooldown != null) u.cd = u.def.cooldown;
