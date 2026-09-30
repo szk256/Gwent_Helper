@@ -18,7 +18,7 @@ B['雷纳德·奥多'] = {
   bless: [{ at: 12, run: c => boostAllBoosted(c) }],
   order: c => boostAllBoosted(c),
 };
-function boostAllBoosted(c) { c.allies().filter(u => c.g.isBoosted(u)).forEach(u => c.boost(u, 1)); }
+function boostAllBoosted(c) { c.allies().filter(u => c.g.isBoosted(u) && (c.g.rules.reynardSelf || u !== c.self)).forEach(u => c.boost(u, 1)); }
 
 B['赤红男爵'] = {
   formation: true,
@@ -224,6 +224,34 @@ B['皇家激励'] = {
 };
 
 B['战术优势'] = { charges: 1, order: c => { const t = T(c, '战术优势目标', c.g.units(c.side)); if (t) c.boost(t, 5); } };
+
+// ================= 北方王国 · 对手用过的 =================
+B['工程解决方案'] = { charges: 1, order: c => { const t = T(c, '工程解决方案目标', c.g.units(c.side)); if (t) { c.boost(t, 4); c.status(t, 'shield', true); } } };
+B['安娜·斯特伦格'] = {
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
+    const row = c.g.rowOf(c.self), i = row.indexOf(c.self);
+    const ts = c.g.inspired(c.self) ? c.adjacent() : (row[i + 1] ? [row[i + 1]] : []);
+    ts.forEach(u => c.boost(u, 1));
+  } }],
+};
+B['崔丹姆步兵'] = {
+  abilities: [{ on: 'boosted', when: (c, d) => d.unit === c.self, run: c => {
+    const t = c.pick({ kind: 'random', prompt: '崔丹姆步兵随机伤害', from: c.enemies() });
+    if (t) c.damage(t, 1);
+  } }],
+};
+B['阿德莉亚女王'] = {
+  deploy: c => {
+    const name = c.pick({ prompt: '阿德莉亚：生成并打出的铜色单位', kind: 'deck', from: ['?'] });
+    if (!name) return;
+    const row = c.g.rowOf(c.self);
+    const u = c.g.spawn(name, c.side, c.self.row, row.indexOf(c.self) + 1, c.self, { andPlay: true });
+    if (u) c.status(u, 'shield', true);
+  },
+};
+B['辛特拉工匠'] = { formation: true, order: c => { const t = T(c, '辛特拉工匠：护盾', c.allies()); if (t) c.status(t, 'shield', true); } };
+B['褐旗营'] = {};   // 受到增益时从牌组召唤同名牌：牌组未知，靠记录里的召唤
+B['古雷特的赛尔奇克'] = { order: c => { if (c.self.row !== 'm') return; const t = T(c, '赛尔奇克：对决', c.enemies()); if (t) c.duel(t); } };
 
 // ================= 松鼠党 · 目前对局里出现过的 =================
 B['活力回春'] = { charges: 3, order: c => c.g.log('手牌增益（隐藏）', { side: c.side }) };

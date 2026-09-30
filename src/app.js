@@ -8,31 +8,50 @@ const BY={};C.forEach(c=>BY[c.n]=c);
 const ENG=(typeof GwentEngine!=="undefined")?GwentEngine:null;
 const ENGRAW=RAW;
 let simCache={key:"",res:null};
+// 未确认规则的覆盖值（校准用），见引擎 DEFAULT_RULES
+const SIM_RULES={};
 function sim(g,r,excl){
   if(!ENG)return null;
-  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r===r))+"|"+g.leader;
+  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r===r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
   if(simCache.key===key)return simCache.res;
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
-  const E=new ENG.Game({manualRounds:true,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
+  const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
   E.loadData(ENGRAW);E.loadBehaviors(GwentCards.behaviors);
   E.s.sides.me.vars.devotion=true;
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
   const unitByKey=k=>{const u=key2u[k];return u&&E.find(u.uid)?u:null;};
-  let tq=[],dq=[];
+  let tq=[],dq=[],effQ={};
+  // 目标来源：先用这一步自己的 tgts，再用“触发效果”记录里对应来源的目标（例如法利波的随机伤害）
+  const takeFrom=(q,req,n,out)=>{while(q.length&&out.length<n){const u=unitByKey(q[0]);if(!u||!req.from.includes(u))break;out.push(u);q.shift();}};
   E.chooser=(req)=>{
     if(req.kind==="deck"){return dq.length?dq.shift():null;}
     const n=req.n||1,out=[];
-    while(tq.length&&out.length<n){const u=unitByKey(tq[0]);if(!u||!req.from.includes(u))break;out.push(u);tq.shift();}
+    takeFrom(tq,req,n,out);
+    if(out.length<n&&req.source&&effQ[req.source])takeFrom(effQ[req.source],req,n,out);
     return out.length?out:null;};
+  const TURN=["play","leader","tactic","order","pass","spawn","summon"];
+  const isTurnAct=y=>TURN.includes(y.a)&&!y.via;
+  // 已建模的来源：它的“触发效果”记录只提供目标，效果由引擎结算
+  const modeled=nm=>{const d=nm&&E.def(nm);return !!(d&&!d.unmodeled);};
+  // 只在回合结束时触发的来源：记录到它的效果 = 该方回合已经结束
+  const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
+  const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
   E.startRound();
-  const consumed=new Set();
+  const consumed=new Set();let acted=false;
   for(let i=0;i<log.length;i++){const x=log[i];if(consumed.has(x.id))continue;
-    const side=x.who;
-    // 换人行动 = 回合切换
-    const turnAct=["play","leader","tactic","order","pass","spawn","summon","effect","fx"].includes(x.a)&&!x.via;
-    if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed)E.endTurn();
-    else if(turnAct&&side!==E.s.active)E.s.active=side;
+    let side=x.who;
+    // 领袖记错方（记录时停在“对方”）：目标是另一方单位且另一方领袖同名时，按另一方推算
+    if(x.a==="leader"&&x.tgts&&x.tgts[0]&&x.tgts[0].uid!=null){const tu=unitByKey(x.tgts[0].uid);const other=side==="me"?"op":"me";const otherLeader=other==="me"?g.leader:g.opLeader;
+      if(tu&&tu.side===other&&x.c&&x.c===otherLeader){warns.push({id:x.id,m:"目标是"+sideN(other)+"单位，已按"+sideN(other)+"领袖推算（建议改记录的方）"});side=other;}}
+    // 换人行动 = 回合切换（触发效果、整排效果不算，它们可能在任一方回合里发生）
+    const turnAct=isTurnAct(x);
+    if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
+    else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
+    if(turnAct){effQ={};
+      // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
+      for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];
+        if(y.a==="effect"&&modeled(y.c)&&!endOnly(y.c)){(effQ[y.c]=effQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);}}}
     tq=(x.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);
     // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
@@ -41,7 +60,8 @@ function sim(g,r,excl){
     const def=x.c?E.def(x.c):null;
     try{
     switch(x.a){
-      case "play":{if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});}
+      case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
+        if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});}
         else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场"});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
       case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
@@ -57,20 +77,30 @@ function sim(g,r,excl){
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "pass":{E.s.sides[side].passed=true;E.log("停牌",{side});E.endTurn();break;}
       case "fx":warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});break;
-      case "effect":warns.push({id:x.id,m:"效果「"+(x.c||"")+"」未建模，请用改战力修正"});break;
+      case "effect":{if(!modeled(x.c)){warns.push({id:x.id,m:"效果「"+(x.c||"")+"」未建模，请用改战力修正"});break;}
+        (effQ[x.c]=effQ[x.c]||[]).push(...tq);tq=[];
+        // 回合结束效果：记录到它时，该方回合已结束
+        const src=E.allUnits().find(u=>u.name===x.c);
+        if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
+        break;}
     }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
+    if(turnAct)acted=true;
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
-    for(const y of subs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){bind(y.id,fresh[k]);fresh.splice(k,1);consumed.add(y.id);}
-      else if(def&&!def.unmodeled&&y.a!=="play"){}}
+    for(const y of subs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
+        if(y.row&&(y.side||y.who)===u.side&&(u.row!==y.row||(y.pos!=null&&E.s.sides[u.side].rows[u.row].indexOf(u)!==y.pos)))relocate(u,y.row,y.pos);}}
     fresh.forEach((u,k)=>bind(x.id+"/"+k,u));
+    // 落地战力：以整步结算完后看到的为准（包括牌组拉出的牌）
+    for(const y of [x,...subs]){if(y.pw==null)continue;const u=unitByKey(y.id);
+      if(u&&u.power!==y.pw){E.log("录入战力",{uid:u.uid,name:u.name,from:u.power,to:y.pw});u.power=y.pw;}}
     // 提示：未建模、待选
     for(const t of E.trace.slice(t0)){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+" 本回合不能用指令"});
       if(t.data&&t.data.unmodeled){unmod[t.data.name]=(unmod[t.data.name]||0)+1;}}
   }
-  // 小局结束时的持续效果（双方都停牌前的回合结束已结算）
+  // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
+  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn();}
   const res={E,key2u,u2key,warns,unmod,score:{me:E.score("me"),op:E.score("op")}};
   simCache={key,res};return res;}
 function simBoard(g,r,excl){const S=sim(g,r,excl);if(!S)return null;const R={me:{m:[],r:[]},op:{m:[],r:[]}},all={};
@@ -241,7 +271,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.side&&step&&step.t==="place"){step.side=D.side;rMatch();return true;}
   if(D.u!==undefined){const {all}=board(g);const u=all[D.u]||all[+D.u];if(!u)return true;
     if(D.umode==="multi"){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.uid===u.uid);if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
-    if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:ui.who,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",ui.who):[]));toast(logText(g.log[i]));rMatch();return true;}
+    // 指令、触发效果属于点到的单位那一方（打完牌后界面已切到对方，我方接着用指令也不会记错）
+    if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){const eu=u.eu;const last=g.log.filter(x=>x.r===VR()).pop();
       openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+"）。输入 +n / -n 或目标战力：",eu?String(eu.power):"","记录",v=>{v=(v||"").trim();if(!v)return;$("#dlg").close();
@@ -266,8 +297,9 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     flowCancel(){ui.flow=null;ui.q="";rMatch();},
     noPlace(){const i=pushLog({who:step.who,a:step.a,c:step.card,via:step.via||undefined});afterCard(i,step.card,step.a,step.who);},
     retYes(){ui.flow=[{t:"place",a:"summon",who:"me",side:"me",card:step.card,via:"墓场"},...ui.flow.slice(1)];rMatch();},
-    leader(){const i=pushLog({who:ui.who,a:"leader",c:ui.who==="me"?(g.leader||null):null});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[g.leader],"leader",ui.who));rMatch();},
-    tactic(){const nm=ui.who==="me"?(deckById(g.deck)?.tactic||"战术"):"战术";const i=pushLog({who:ui.who,a:"tactic",c:nm});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[nm],"leader",ui.who));rMatch();},
+    leader(){const i=pushLog({who:"me",a:"leader",c:g.leader||null});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[g.leader],"leader","me"));rMatch();},
+    tactic(){const nm=deckById(g.deck)?.tactic||"战术";const i=pushLog({who:"me",a:"tactic",c:nm});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[nm],"leader","me"));rMatch();},
+    tacticOp(){const i=pushLog({who:"op",a:"tactic",c:"战术"});ui.act="play";queue({t:"target",id:g.log[i].id});rMatch();},
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},
     fxRec(){const f=ui.fx;const i=pushLog({who:ui.who,a:"fx",c:f.k,side:f.side,row:f.row,dur:f.dur||null});ui.fx=null;ui.act="play";toast(logText(g.log[i]));rMatch();},
     noteRec(){const v=($("#noteIn").value||"").trim();if(!v)return toast("写点内容");pushLog({who:ui.who,a:"note",c:v});ui.act="play";rMatch();},
@@ -286,17 +318,19 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.do&&A[D.do]){A[D.do]();return true;}
   return false;}
 
-const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
+const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm,8/0=第8步带出的第1个单位) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
 const ACODE={adj:"J",draw:"D",play:"P",tactic:"T",effect:"E",spawn:"Y",summon:"S",order:"O",leader:"L",fx:"F",move:"V",kill:"K",mull:"X",pass:"-",note:"N"};
 function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};let n=0;g.log.forEach((x,i)=>{n++;num[x.id||i]=n;x._n=n;});
-  const byIdx=(k)=>{if(k==null)return"?";return num[k]!=null?num[k]:(typeof k==="number"&&g.log[k]?g.log[k]._n:"?");};
+  const byIdx0=(k)=>{if(k==null)return"?";return num[k]!=null?num[k]:(typeof k==="number"&&g.log[k]?g.log[k]._n:"?");};
+  // 由某步产生的单位（生成的衍生牌等）键为 “e8/0”，导出成 “8/0”
+  const byIdx=(k)=>{if(typeof k==="string"&&k.includes("/")){const [a,b]=k.split("/");return byIdx0(a)+"/"+b;}return byIdx0(k);};
   const L=[`G ${g.date} ${g.deckName}|${g.leader||"-"} vs ${g.fac}|${g.opLeader||"-"} ${g.coin||"?"} ${o.w}:${o.l}`];
   g.rounds.forEach((r,ri)=>{L.push(`R${ri+1} ${r.res} ${r.me||"-"}:${r.op||"-"} ${r.hm??"-"}:${r.ho??"-"}${r.sec!=null?" "+r.sec:""}`);
     g.log.forEach((x,i)=>{if(x.r!==ri)return;const p=[x._n,x.who==="me"?"A":"B",(ACODE[x.a]||x.a)+(x.fix?"!":"")];
       if(x.a==="fx")p.push(x.c,(x.side==="me"?"A":"B")+(x.row==="all"?"*":x.row)+(x.dur?"/"+x.dur:""));
       else{if(x.a==="draw")p.push((x.cards||[]).join(","));if(x.c)p.push(x.c.replace(/\s+/g,"_"));if(x.into)p.push("+"+x.into);
         if(x.row)p.push((x.side&&x.side!==x.who?"X":"")+x.row+(x.pos??""));
-        if(x.a==="adj")p.push("@"+(x.uid!=null?byIdx(String(x.uid).split("/")[0]):"")+(x.side==="me"?"A":"B"),x.v);
+        if(x.a==="adj")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"),x.v);
         if(x.pw!=null)p.push("="+x.pw);
         if(x.a==="move"||x.a==="kill")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"));
         const tg=(x.tgts||[]).map(t=>t.row?(t.row.startsWith("me")?"A":"B")+t.row.slice(-1):byIdx(t.uid));if(tg.length)p.push(">"+tg.join(","));else if(x.tgt)p.push(">"+x.tgt.replace(/\s+/g,""));
@@ -408,7 +442,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       h+=`</div>`;
     }
     if(!step){
-      const acts=ui.who==="me"?["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","mull",...(g.hand?["draw"]:[]),"pass","note"]:["play","order","leader","effect","adj","spawn","summon","fx","move","kill","pass","note"];
+      const acts=ui.who==="me"?["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","mull",...(g.hand?["draw"]:[]),"pass","note"]:["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","pass","note"];
       if(!acts.includes(ui.act))ui.act="play";
       const roundHasHand=g.log.some(x=>x.r===vr&&x.who==="me"&&x.a==="draw");
       h+=`<div class="sheet"><div class="who"><button class="me ${ui.who==="me"?"on":""}" data-who="me">我方</button><button class="op ${ui.who==="op"?"on":""}" data-who="op">对方</button></div>
@@ -416,11 +450,15 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
        <div class="btns" style="margin-top:8px;align-items:center"><button class="chip ${g.hand?"on":""}" data-do="handToggle">记录手牌</button>${g.hand&&!roundHasHand?`<button class="ghost" data-do="handStart">选第${vr+1}局${vr===0?"起手 10 张":"抽到的 3 张"}</button>`:""}</div>`;
       if(["play","mull","summon","draw","spawn"].includes(ui.act)){
         h+=searchBox(ui.who==="me"?"搜牌名，或点下面的牌":"搜对手打出的牌")+`<div id="resBox">${ui.who==="me"&&!ui.q?(ui.act==="mull"&&g.hand?`<div class="grid">${hand.map(n=>tile(n,"手牌","",`data-nm="${esc(n)}"`)).join("")}</div>`:deckGrid({deckOnly:ui.act==="draw"})):matchRes()}</div>`;
-      }else if(ui.act==="order"){h+=`<p class="note" style="margin:10px 0 4px">点使用指令的单位：</p>${lanes("pick",ui.who)}`;}
+      }else if(ui.act==="order"){h+=`<p class="note" style="margin:10px 0 4px">点使用指令的单位（记为该单位那一方）：</p>${lanes("pick")}`;}
       else if(ui.act==="effect"){h+=`<p class="note" style="margin:10px 0 4px">点触发效果的单位（例如法利波的随机伤害、回合结束效果），下一步选它影响了谁：</p>${lanes("pick")}`;}
-      else if(ui.act==="tactic"){h+=`<div class="row"><button class="primary" data-do="tactic">记录：${ui.who==="me"?"我用战术 "+esc(deckById(g.deck)?.tactic||""):"对方用战术"}</button></div>`;}
-      else if(ui.act==="leader"&&ui.who==="op"){const ls=C.filter(c=>isLeader(c)&&c.f===g.fac).sort((a,b)=>(b.n===g.opLeader)-(a.n===g.opLeader));
-        h+=`<p class="note" style="margin:10px 0 4px">选对方用的领袖${g.opLeader?"，第一个是上次选的":""}</p><div class="grid">${ls.map(c=>tile(c.n,c.n===g.opLeader?"上次":"","",`data-oplead="${esc(c.n)}"`)).join("")}</div>`;}
+      else if(ui.act==="tactic"){const bm=`<button class="${ui.who==="me"?"primary":"ghost"}" data-do="tactic">我用战术 ${esc(deckById(g.deck)?.tactic||"")}</button>`,bo=`<button class="${ui.who==="op"?"primary":"ghost"}" data-do="tacticOp">对方用战术</button>`;
+        h+=`<div class="btns" style="margin-top:8px">${ui.who==="op"?bo+bm:bm+bo}</div>`;}
+      else if(ui.act==="leader"){const ls=C.filter(c=>isLeader(c)&&c.f===g.fac).sort((a,b)=>(b.n===g.opLeader)-(a.n===g.opLeader));
+        // 两方都列出来，按按钮区分是谁用的，不依赖上面的“我方/对方”
+        const mine=`<div class="row"><button class="primary" data-do="leader">我方用领袖 ${esc(g.leader||"")}</button></div>`;
+        const theirs=`<p class="note" style="margin:10px 0 4px">对方用的领袖${g.opLeader?"（第一个是上次选的）":""}：</p><div class="grid">${ls.map(c=>tile(c.n,c.n===g.opLeader?"上次":"","",`data-oplead="${esc(c.n)}"`)).join("")}</div>`;
+        h+=ui.who==="op"?theirs+mine:mine+theirs;}
       else if(ui.act==="fx"){const f=ui.fx=ui.fx||{k:"霜",side:ui.who==="me"?"op":"me",row:"m",dur:3};
         h+=`<div class="row"><div class="lab">效果</div><div class="chips">${FX.map(k=>`<button class="chip ${f.k===k?"on":""}" data-fxk="${k}">${k}</button>`).join("")}</div></div>
          <div class="row"><div class="lab">作用在</div><div class="seg">${[["op","对方半场"],["me","我方半场"]].map(([v,l])=>`<button class="${f.side===v?"on":""}" data-fxside="${v}">${l}</button>`).join("")}</div>
@@ -431,7 +469,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(ui.act==="adj"){h+=`<p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
       else if(ui.act==="kill"){h+=`<p class="note" style="margin:10px 0 4px">点被摧毁的单位：</p>${lanes("pick")}`;}
       else if(ui.act==="note"){h+=`<div class="row"><input id="noteIn" placeholder="例如：对方洗回 2 张牌 / 我方被锁定" autocomplete="off"></div><button class="primary" data-do="noteRec">记录备注</button>`;}
-      else h+=`<div class="row"><button class="primary" data-do="${ui.act}">${ui.act==="leader"?"记录：我用领袖 "+esc(g.leader||""):(ui.who==="me"?"记录：我停牌":"记录：对方停牌")}</button></div>`;
+      else h+=`<div class="row"><button class="primary" data-do="${ui.act}">${ui.who==="me"?"记录：我停牌":"记录：对方停牌"}</button></div>`;
       if(!["order","move","kill"].includes(ui.act))h+=`<details class="row" ${ui.showBoard?"open":""} id="bdet"><summary class="note">场面（根据记录推算）</summary>${lanes("none")}</details>`;
       h+=`</div>`;
     }
