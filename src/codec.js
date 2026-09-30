@@ -131,5 +131,36 @@
     const out = {}; for (const p of t.split(/\s+/).slice(2)) { const m = p.match(/^(.+)x(\d+)$/); if (m) out[uncard(m[1])] = +m[2]; }
     return out;
   }
-  window.GwentCodec = { encodeGame, decodeGame, encodeDeck, decodeDeck, encodeColl, decodeColl, card, uncard };
+  // ---------- 全部迁移 v2：整个 db，牌名换成 "#官方编号"，其余非 ASCII 字符转成 \uXXXX（纯 ASCII、无损） ----------
+  const toId = n => typeof n === 'string' && IDS[n] != null ? '#' + IDS[n] : n;
+  const fromId = v => typeof v === 'string' && /^#\d+$/.test(v) && NAME[+v.slice(1)] ? NAME[+v.slice(1)] : v;
+  const mapKeys = (o, f) => o && typeof o === 'object' && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [f(k), v])) : o;
+  const NOCARD = new Set(['note', 'real', 'hand', 'coin', 'pass', 'fx']);   // 这些动作的 c 不是牌名
+  function mapGame(g, f) {
+    if (!g || typeof g !== 'object') return g;
+    const o = Object.assign({}, g, { leader: f(g.leader), opLeader: f(g.opLeader) });
+    if (Array.isArray(g.stuck)) o.stuck = g.stuck.map(f);
+    if (Array.isArray(g.log)) o.log = g.log.map(x => {
+      const y = Object.assign({}, x);
+      if (x.c != null && !NOCARD.has(x.a)) y.c = f(x.c);
+      if (x.into != null) y.into = f(x.into); if (x.via != null) y.via = f(x.via);
+      if (Array.isArray(x.cards)) y.cards = x.cards.map(f);
+      return y;
+    });
+    return o;
+  }
+  function mapDb(d, f) {
+    const o = Object.assign({}, d);
+    if (Array.isArray(d.decks)) o.decks = d.decks.map(k => Object.assign({}, k, { leader: f(k.leader), tactic: f(k.tactic), cards: mapKeys(k.cards, f) }));
+    if (Array.isArray(d.games)) o.games = d.games.map(g => mapGame(g, f));
+    if (d.live) o.live = mapGame(d.live, f);
+    if (d.owned) o.owned = mapKeys(d.owned, f);
+    if (d.edits) o.edits = mapKeys(d.edits, f);
+    if (Array.isArray(d.tactics)) o.tactics = d.tactics.map(f);
+    return o;
+  }
+  const asciiJSON = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  const encodeDb = d => '#GWMIG v2 ids=gwent\n' + asciiJSON(mapDb(d, toId));
+  const decodeDb = o => mapDb(o, fromId);
+  window.GwentCodec = { encodeGame, decodeGame, encodeDeck, decodeDeck, encodeColl, decodeColl, encodeDb, decodeDb, card, uncard };
 })();

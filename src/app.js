@@ -90,7 +90,6 @@ $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText(
 const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
 const dataVer=()=>{const P=typeof GwentPatches!=="undefined"?GwentPatches:null;if(!P)return "?";const l=P.PATCHES.slice().sort((a,b)=>a.date<b.date?-1:1).pop();return "v"+((l&&l.ver)||P.BASE.ver);};
 const verText=()=>"构建 "+BUILD+" · 卡牌数据 "+dataVer();
-const MIGHEAD="#GWMIG v1 昆特对局簿全部数据，用“全部导入”载入";
 // 备份：记录上次下载备份/迁移导出的时间，超过 7 天提醒
 function downloadBackup(){markBackup();const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");}
 // 录屏时间：接受 12:30、1:02:05、1230（= 12:30），返回规范写法；空返回 ""，格式不对返回 false
@@ -116,8 +115,8 @@ function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
 function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
   el.textContent=d==null?"还没有备份过":d===0?"今天已备份":"上次备份："+d+" 天前";el.classList.toggle("bad",!!has&&(d==null||d>=7));}
-function migText(){return MIGHEAD+"（"+verText()+"）\n"+JSON.stringify(db);}
-function parseAll(txt){txt=(txt||"").trim();if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);return JSON.parse(txt);}
+function migText(){return GwentCodec.encodeDb(db).replace("\n"," build="+BUILD+" data="+dataVer()+"\n");}   // 纯代码 v2（牌用官方编号，纯 ASCII）
+function parseAll(txt){txt=(txt||"").trim();const v2=/^#GWMIG v2\b/.test(txt);if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);const d=JSON.parse(txt);return v2?GwentCodec.decodeDb(d):d;}   // v1（中文 JSON）、v2（纯代码）、备份文件都认
 
 // ---------- export codes ----------
 function deckCode(d){const i=deckInfo(d);const L=[`【昆特卡组】${d.name}`,`阵营：${FN[d.f]}｜领袖：${d.leader||"未选"}｜战术：${d.tactic||"未填"}`,`张数 ${i.n}｜粮草 ${i.pv}/${i.lim}｜单位 ${i.units}`];

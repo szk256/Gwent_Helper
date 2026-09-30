@@ -64,7 +64,18 @@ setTimeout(() => {
     w.eval(`GwentPatches.PATCHES.pop();document.getElementById("cdlg").close&&document.getElementById("cdlg").close();`);
     // 版本号：侧边栏显示构建号和卡牌数据版本；迁移导出带上
     ok(/构建 [0-9a-f]{7} · 卡牌数据 v14\.9\.0/.test(w.document.getElementById('verInfo').textContent), '版本：侧边栏显示构建号和卡牌数据版本');
-    ok(/^#GWMIG v1 .*构建 [0-9a-f]{7}/.test(w.eval('migText()')), '版本：迁移导出带构建号');
+    ok(/^#GWMIG v2 ids=gwent build=[0-9a-f]{7} data=v14\.9\.0\n/.test(w.eval('migText()')), '版本：迁移导出带构建号');
+    // 全部迁移 v2：纯 ASCII，牌名换成编号，导回和原来完全一致
+    w.eval(`db.decks.push({id:901,name:'北境 赤诚',f:'NR',leader:'皇家激励',tactic:'战术优势',cards:{'雷纳德·奥多':1,'科德温骑士':2}});db.owned={'雷纳德·奥多':1,'科德温骑士':2};
+      db.edits={'科德温骑士':{pw:6,tx:'改过的效果：增益 2',alias:'科骑',f2:['SY']}};db.tactics=['战术优势'];db.notePresets=['失误','该停牌'];
+      db.games.push({id:902,date:'2026-09-30',deck:901,deckName:'北境 赤诚',leader:'皇家激励',opLeader:'活力回春',fac:'ST',coin:'先',res:'胜',stuck:['科德温骑士'],note:'备注 = 100%',
+        rounds:[{res:'W',me:'10',op:'5'}],log:[{id:'e1',r:0,who:'me',a:'play',c:'雷纳德·奥多',row:'r',via:'墓场'},{id:'e2',r:0,who:'me',a:'note',c:'科德温骑士 失误'},
+        {id:'e3',r:0,who:'op',a:'fx',c:'霜',side:'me',row:'m'},{id:'e4',r:0,who:'me',a:'draw',cards:['科德温骑士']},{id:'e5',r:0,who:'me',a:'mull',c:'科德温骑士',into:'赤红男爵'}]});`);
+    const before = w.eval('JSON.stringify(db)'), mig = w.eval('migText()');
+    ok(/^[\x20-\x7e\n]+$/.test(mig) && !/雷纳德/.test(mig) && /"#202112"/.test(mig), '全部迁移 v2：纯 ASCII，牌名换成编号');
+    ok(w.eval(`JSON.stringify(parseAll(${JSON.stringify(mig)}))`) === before, '全部迁移 v2：导回和原来完全一致');
+    ok(JSON.stringify(w.eval(`parseAll(${JSON.stringify('#GWMIG v1 旧版\n' + before)}).decks.length`)) === JSON.stringify(JSON.parse(before).decks.length), '全部迁移：旧版 v1 仍能导入');
+    w.eval('db.decks=db.decks.filter(d=>d.id!==901);db.games=db.games.filter(g=>g.id!==902);db.owned={};db.edits={};delete db.tactics;delete db.notePresets;');
     // 纯代码导出 v2：纯 ASCII、导出再导入逐字段一致、推算比分一致；卡组、牌库也能往返
     {
       const G = { id: 77, date: '2026-09-30', deck: null, deckName: '北境 测试', myF: 'NR', leader: '皇家激励', fac: 'ST', coin: '先', opLeader: '活力回春', hand: true, tacCard: true, diff: -1,
