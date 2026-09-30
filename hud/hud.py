@@ -3,6 +3,7 @@
 用法：python hud/hud.py [--monitor N] [--interval 0.15] [--no-hide]
   --monitor  截整个显示器（mss 编号，1 起）；默认自动找游戏窗口（Gwent.exe）的画面区域，窗口模式也行
   --no-hide  不把 HUD 窗口从截屏里排除（默认排除：自己截屏看不到它，录屏也录不到它）
+  --no-board 不扫对方场上的牌（默认每 2.5 秒扫一次，展示时漏掉的牌落地后补记，标“场上”）
 只截屏幕上公开显示的画面，不读游戏内存、不抓网络包。
 """
 import argparse
@@ -110,7 +111,7 @@ class Watcher(threading.Thread):
     def run(self):
         self.reset()
         with MSS() as sct:
-            area, found_t = None, 0
+            area, found_t, board_t = None, 0, 0
             while not self.stop:
                 t0 = time.time()
                 if self.paused:
@@ -137,6 +138,14 @@ class Watcher(threading.Thread):
                     time.sleep(1)
                     continue
                 self.step(img)
+                # 每 2.5 秒扫一次对方半场（约 0.4 秒）；展示中不扫，免得错过展示
+                if self.args.board and self.absent >= 2 and t0 - board_t > 2.5:
+                    board_t = t0
+                    try:
+                        found = detect.board_opp(self.m, grab(sct, area))
+                        self.q.put(('board', found))
+                    except Exception as e:  # noqa: BLE001
+                        self.q.put(('status', f'扫场面失败：{e}'))
                 dt = time.time() - t0
                 time.sleep(max(0.05, self.args.interval - dt))
 
@@ -211,6 +220,8 @@ class App:
                     self.set_status(ev[1])
                 elif ev[0] in ('card', 'unknown'):
                     self.add(ev[0], ev[1], ev[2])
+                elif ev[0] == 'board':
+                    self.on_board(ev[1])
         except queue.Empty:
             pass
         self.root.after(100, self.poll)
@@ -231,6 +242,31 @@ class App:
         self.render()
         v2 = alts[1][0] if len(alts) > 1 else 0
         self.set_status(f"{item['t']} {item['name']}  票数 {item['votes']:.0f}/{v2:.0f}")
+
+    def on_board(self, found):
+        """对方场上某张牌的张数比列表里多（展示时漏掉了，或是召唤/生成的），补进列表，标“场上”。
+        连续两次扫到同样的张数才算，免得偶尔误检。"""
+        cnt = {}
+        for v, art, x, y in found:
+            name = self.pick(self.m.by_art.get(art, []))['name'] if self.m.by_art.get(art) else None
+            if name:
+                cnt[name] = cnt.get(name, 0) + 1
+        prev, self.board_prev = getattr(self, 'board_prev', {}), cnt
+        cur = self.rounds[-1]
+        added = []
+        for name, n in cnt.items():
+            n = min(n, prev.get(name, 0))
+            have = sum(1 for it in cur if it['name'] == name)
+            for _ in range(n - have):
+                card = next(c for c in self.m.cards if c['name'] == name)
+                cur.append({'name': name, 'card': card, 'votes': 0, 'alts': [], 'src': '场上', 'crop': None,
+                            't': time.strftime('%H:%M:%S'), 'round': len(self.rounds)})
+                added.append(name)
+        self.board_now = cnt
+        if added:
+            self.save_log()
+            self.render()
+            self.set_status(f"场上补记：{'、'.join(added)}")
 
     def pick(self, cards):
         """同一张卡图对应多张牌时，优先对手阵营（已记下的非中立牌里最多的阵营）。"""
@@ -264,7 +300,8 @@ class App:
                 if c:
                     rk = removal_kind(c)
                     pw = c['power'] if c['type'] == '单位' else c['type']
-                    txt = f"  {c['name']}  {pw}" + (f"  【{rk}】" if rk else '')
+                    txt = f"  {c['name']}  {pw}" + (f"  【{rk}】" if rk else '') + \
+                        ('  （场上）' if it.get('src') == '场上' else '')
                 else:
                     txt = f"  {it['name']}"
                 self.lb.insert('end', txt)
@@ -329,6 +366,7 @@ class App:
             os.makedirs(os.path.join(LOG_DIR, self.session), exist_ok=True)
         else:
             self.rounds.append([])
+        self.board_prev = {}
         self.render()
 
     def undo(self):
@@ -393,6 +431,7 @@ def main():
     ap.add_argument('--monitor', type=int, default=0)
     ap.add_argument('--interval', type=float, default=0.15)
     ap.add_argument('--no-hide', action='store_true')
+    ap.add_argument('--no-board', dest='board', action='store_false', help='不扫对方场上的牌')
     args = ap.parse_args()
     if not os.path.exists(os.path.join(HERE, 'cache', 'db.npz')):
         print('还没有特征库，先运行：python hud/build_db.py')
