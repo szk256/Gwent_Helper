@@ -26,8 +26,8 @@ setTimeout(() => {
     const eng = w.document.querySelector('.eng .score'); ok(eng && /\d+\s*:\s*\d+/.test(eng.textContent), '界面：比分显示');
     const rep = w.document.querySelector('details.sheet'); ok(rep && /偏差报告/.test(rep.textContent) && /对第1手/.test(rep.textContent), '偏差报告：定位到对第 1 手');
     ok([...w.document.querySelectorAll('.log .lmeta')].some(e => /录屏 1:05/.test(e.textContent)), '记录列表：显示录屏时间');
-    const code = w.eval('gameCodeC(Object.assign({},db.live,{rounds:[{res:"W",me:"8",op:"6"}]}))');
-    ok(/C 8:6/.test(code) && /~1:05/.test(code), '导出码：真实比分 C 和录屏时间 ~');
+    const code = w.eval('GwentCodec.encodeGame(Object.assign({},db.live,{rounds:[{res:"W",me:"8",op:"6"}]}))');
+    ok(/ C v=8:6/.test(code) && /vt=1:05/.test(code), '导出码：真实比分 C 和录屏时间 vt');
     // 快捷备注
     w.eval('ui.act="note";rMatch()'); w.document.querySelector('[data-qnote="关键回合"]').click();
     ok(w.eval('db.live.log[db.live.log.length-1].c') === '关键回合', '快捷备注：一点就记');
@@ -65,6 +65,53 @@ setTimeout(() => {
     // 版本号：侧边栏显示构建号和卡牌数据版本；迁移导出带上
     ok(/构建 [0-9a-f]{7} · 卡牌数据 v14\.9\.0/.test(w.document.getElementById('verInfo').textContent), '版本：侧边栏显示构建号和卡牌数据版本');
     ok(/^#GWMIG v1 .*构建 [0-9a-f]{7}/.test(w.eval('migText()')), '版本：迁移导出带构建号');
+    // 纯代码导出 v2：纯 ASCII、导出再导入逐字段一致、推算比分一致；卡组、牌库也能往返
+    {
+      const G = { id: 77, date: '2026-09-30', deck: null, deckName: '北境 测试', myF: 'NR', leader: '皇家激励', fac: 'ST', coin: '先', opLeader: '活力回春', hand: true, tacCard: true, diff: -1,
+        ver: { build: 'abc1234', data: 'v14.9.0' }, stuck: ['科德温骑士'], note: '第三局 该停牌 = 100%', res: '胜',
+        rounds: [{ res: 'W', me: '46', op: '24', hm: 4, ho: 5, sec: 600 }, { res: 'L', me: '', op: '', hm: null, ho: null, sec: null }],
+        log: [
+          { id: 'e1', r: 0, who: 'me', a: 'draw', cards: ['科德温骑士', '雷纳德·奥多'] },
+          { id: 'e2', r: 0, who: 'me', a: 'mull', c: '科德温骑士', into: '赤红男爵' },
+          { id: 'e3', r: 0, who: 'me', a: 'play', c: '雷纳德·奥多', row: 'r', pos: 0, vt: '1:05', t: 30 },
+          { id: 'e4', r: 0, who: 'me', a: 'tactic', c: '战术优势', tgts: [{ uid: 'e3', label: 'x' }] },
+          { id: 'e5', r: 0, who: 'op', a: 'play', c: '维里赫德旅先锋', row: 'm', pos: 0, pw: 13 },
+          { id: 'e6', r: 0, who: 'op', a: 'play', c: '麦莉', row: 'r', tgts: [{ uid: 'e3', label: 'x' }, { row: 'mem', label: 'y' }], pay: true, fz: false, dn: 3 },
+          { id: 'e7', r: 0, who: 'op', a: 'fx', c: '霜', side: 'me', row: 'm', dur: 3 },
+          { id: 'e8', r: 0, who: 'op', a: 'effect', c: '雨', row: 'm', tgts: [{ uid: 'e8/0', label: 'z' }] },
+          { id: 'e9', r: 0, who: 'me', a: 'adj', c: '麦莉', uid: 'e6', side: 'op', v: '-盾，甲3,活2' },
+          { id: 'e10', r: 0, who: 'me', a: 'play', c: '赤红男爵', row: 'r', via: '墓场', fix: true },
+          { id: 'e11', r: 0, who: 'op', a: 'coin', side: 'op', v: '+2' },
+          { id: 'e12', r: 0, who: 'me', a: 'hand', side: 'op', v: '-1' },
+          { id: 'e13', r: 0, who: 'me', a: 'real', v: '8:6' },
+          { id: 'e14', r: 0, who: 'me', a: 'note', c: '失误 = 没算到, 50%' },
+          { id: 'e15', r: 0, who: 'me', a: 'move', c: '赤红男爵', uid: 'e10', side: 'me', row: 'm', pos: 1, custom: { a: 1 } },
+          { id: 'e16', r: 0, who: 'op', a: 'pass' },
+          { id: 'e17', r: 1, who: 'op', a: 'play', c: '寒冰巨人', row: 'm' },
+        ] };
+      w.eval(`db.games.push(${JSON.stringify(G)});`);
+      const code = w.eval('GwentCodec.encodeGame(db.games[db.games.length-1])');
+      ok(/^[\x20-\x7e\n]+$/.test(code), '纯代码导出：全部是 ASCII');
+      ok(/^#GWLOG v2/.test(code) && /3 A P c=\d+ row=r pos=0/.test(code), '纯代码导出：牌用官方编号');
+      const dec = w.eval(`JSON.stringify(GwentCodec.decodeGame(${JSON.stringify(code)}))`);
+      const r = JSON.parse(dec), g2 = r.game;
+      const strip = l => l.map(x => Object.assign({}, x, { tgts: x.tgts && x.tgts.map(t => { const o = Object.assign({}, t); delete o.label; return o; }) }));
+      const diff = [];
+      strip(G.log).forEach((x, i) => { const y = strip(g2.log)[i]; for (const k of new Set([...Object.keys(x), ...Object.keys(y || {})])) if (JSON.stringify(x[k]) !== JSON.stringify((y || {})[k])) diff.push(x.id + '.' + k + ' ' + JSON.stringify(x[k]) + ' → ' + JSON.stringify((y || {})[k])); });
+      for (const k of ['date', 'deckName', 'myF', 'leader', 'fac', 'coin', 'opLeader', 'hand', 'tacCard', 'diff', 'ver', 'stuck', 'note', 'res', 'rounds']) if (JSON.stringify(G[k]) !== JSON.stringify(g2[k])) diff.push(k + ' ' + JSON.stringify(G[k]) + ' → ' + JSON.stringify(g2[k]));
+      ok(!diff.length, '纯代码导出：导回后每条记录、每个字段一致' + (diff.length ? '（' + diff.slice(0, 4).join('；') + '）' : ''));
+      ok(g2.log[3].tgts[0].label === '我方 雷纳德·奥多', '纯代码导出：导回后目标标签重建');
+      const n0 = w.eval('db.games.length'); w.eval(`importGames(${JSON.stringify(code)})`);
+      ok(w.eval('db.games.length') === n0 + 1, '纯代码导出：导入对局');
+      const s1 = w.eval('JSON.stringify(sim(db.games[db.games.length-2],0).score)'), s2 = w.eval('JSON.stringify(sim(db.games[db.games.length-1],0).score)');
+      ok(s1 === s2, '纯代码导出：导回的对局推算比分一致（' + s1 + '）');
+      const dcode = w.eval('GwentCodec.encodeDeck({name:"北境 赤诚",f:"NR",leader:"皇家激励",tactic:"战术优势",cards:{"雷纳德·奥多":1,"科德温骑士":2}})');
+      const d2 = JSON.parse(w.eval(`JSON.stringify(GwentCodec.decodeDeck(${JSON.stringify(dcode)}))`));
+      ok(/^[\x20-\x7e\n]+$/.test(dcode) && d2.name === '北境 赤诚' && d2.leader === '皇家激励' && d2.tactic === '战术优势' && d2.cards['科德温骑士'] === 2, '纯代码导出：卡组往返');
+      const c2 = JSON.parse(w.eval(`JSON.stringify(GwentCodec.decodeColl(GwentCodec.encodeColl({"科德温骑士":2,"雷纳德·奥多":1})))`));
+      ok(c2['科德温骑士'] === 2 && c2['雷纳德·奥多'] === 1, '纯代码导出：牌库往返');
+      w.eval('db.games=db.games.filter(g=>g.deckName!=="北境 测试")');
+    }
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }
