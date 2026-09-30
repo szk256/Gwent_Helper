@@ -202,6 +202,13 @@ setTimeout(() => {
     ok(us('me') === '科德温骑士25', '改战力：数字框回车设为 25');
     ub('科德温骑士').click(); Q('#adjAr').value = '7'; Q('[data-adjv="?#adjAr:甲"]').click();
     ok(w.eval('sim(db.live,0).E.allUnits("me")[0].armor') === 7, '改战力：护甲设为 7');
+    // 改战力：还有没结算的回合结束效果时先问“看到的是回合结束之后的数值吗”
+    live([{ id: 'e1', who: 'me', a: 'play', c: '瑞达尼亚骑士', row: 'r', side: 'me' }]);
+    w.eval('ui.act="adj";ui.endAsked=null;rMatch()'); ub('瑞达尼亚骑士').click();
+    ok(/瑞达尼亚骑士 \+1/.test(Q('.askend')?.textContent || ''), '改战力：提示回合结束会让瑞达尼亚骑士 +1');
+    Q('[data-do="adjNotEnd"]').click(); ok(fl() === 'adj' && !Q('.askend'), '改战力：答“还没结束”后这一回合不再问');
+    w.eval('ui.endAsked=null;rMatch()'); Q('[data-do="adjEnd"]').click();
+    ok(w.eval('db.live.log.some(x=>x.a==="end"&&x.who==="me")') && !Q('.askend'), '改战力：答“是”记一条结束回合');
     // 落难的少女第二章：连带打出的疯狂的冲锋接着问目标
     live([{ id: 'e1', who: 'me', a: 'play', c: '落难的少女', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', via: '落难的少女', side: 'me' },
       { id: 'e3', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
