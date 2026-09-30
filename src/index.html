@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#18202E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,7 +21,7 @@
 <nav>
 <div class="brand">昆特对局簿</div>
 <button data-t="match" class="on">对局</button><button data-t="stats">数据</button><button data-t="deck">卡组</button><button data-t="coll">牌库</button>
-<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button></div>
+<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button><div class="navlab" id="bkInfo"></div></div>
 </nav>
 <div class="toast" id="toast"></div>
 <dialog id="cdlg"><h2 id="cdN"></h2><p class="note" id="cdMeta"></p>
@@ -34,6 +38,8 @@
 <script src="cards.js"></script>
 <script src="data.js"></script>
 <script src="cardflags.js"></script>
+<script src="sim.js"></script>
 <script src="app.js"></script>
+<script src="keys.js"></script>
 </body>
 </html>

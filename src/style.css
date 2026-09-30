@@ -305,3 +305,7 @@ dialog{background:#241b13;color:var(--ink);box-shadow:0 0 0 1px #76603f,0 20px 5
 .dev.steps>div.me{border-left-color:var(--NR)}.dev.steps>div.op{border-left-color:var(--loss)}
 .dev small{opacity:.8}.dev .fl{color:var(--gold)}
 details.sheet>summary{cursor:pointer}
+#bkInfo{margin-top:6px}#bkInfo.bad{color:#e8806f}
+input.vt{width:108px;padding:6px 8px;font-size:13px}
+/* 键盘选中的搜牌结果 */
+#resBox .kb{outline:2px solid var(--gold);outline-offset:2px}

@@ -15,7 +15,8 @@
 - `src/engine.js`：底层引擎，不含任何具体卡牌。浏览器里是 `window.GwentEngine`，Node 里 `require`。
 - `src/cards.js`：卡牌行为（只写“做什么”），`window.GwentCards.behaviors`。数值来自 `RAW`。
 - `src/data.js`：卡牌数据 `const RAW=[...]`（单行，很大）。
-- `src/app.js`：对局簿界面与逻辑（sim / simBoard 等）。`src/style.css`：样式。
+- `src/app.js`：对局簿界面与逻辑。`src/sim.js`：推算（sim / simBoard）、偏差报告（devReport）、场外计数（extraLine），从 app.js 拆出，和 app.js 共用全局，在它之前载入。`src/keys.js`：电脑快捷键（只模拟点击已有按钮），在 app.js 之后载入。`src/style.css`：样式。
+- 可安装网页（PWA）：`src/manifest.webmanifest` `src/sw.js`（先网络后缓存）`src/icon-192/512.png` `icon.svg`，打包时复制到 `dist/`；只在 http(s) 网址下注册，本地打开 html 不受影响。
 - `src/cardflags.js`：`node build.js` 时从 `cards.js` 注释自动生成（ASSUME → 推测，用改战力/推算不了/按记录 → 需手动），偏差报告用，不要手改。
 - 对局簿数据存 localStorage 键 `gwent-tracker-v3`，**修改时必须保证旧数据能继续用**。
 - `gwent_engine_test.js`：底层测试（假卡），`node gwent_engine_test.js`。
@@ -168,9 +169,15 @@ R1 W 46:24 4:5
 - 双阵营牌：数据里只有一个阵营，另一个写在 `app.js` 的 `DUAL`（单张）和 `DUAL_TAG`（按类别整组，目前“火誓者”类别 → 北方王国，共 25 张可收集牌）；用户可在卡牌详情“也属于阵营”里改，存进 `db.edits[牌名].f2`。牌库、组卡搜索、对局搜索都用 `inFac(c,f)`。
 - 扩展包中文名在 `app.js` 的 `SERN`（用户提供：unmillable=新手卡组，baseset=核心卡牌 …），筛选按这个顺序显示，卡牌详情也显示。
 - 牌库筛选：类型、费用、颜色、稀有度、扩展包组内为“或”；词条（按辞典关键词在卡面文字里出现）为“同时具备”。牌库列表含战术，但拥有数统计不含战术。
+- 电脑快捷键（`keys.js`，对局页“快捷键 ?”看说明）：动作字母同导出码（P O L T E J Y S F V K X D N，- 停牌），A/B 或 Tab 切换我方/对方，/ 搜牌（↑↓ 回车），放牌 1 近战 2 远程，回车 = 当前步骤主按钮，Esc 跳过/取消，Ctrl+Z 撤销，C 真实比分，R 录屏时间。中文输入法组字时不拦截。
+- 录屏时间：记录列表头部“录屏”框（`db.live.vtCur`，接受 12:30 / 1230 / 1:02:05），之后新记录带 `vt`；修改记录里可改；列表、偏差报告、导出（导出码 `~12:30`）都显示。
+- 数据安全：启动时 `navigator.storage.persist()`；`db.lastBackup`（下载备份、迁移导出复制成功时更新），左边栏显示“上次备份”，超过 7 天标红；记完一局超过 7 天没备份会问要不要下载；手机在历史对局上方显示提醒按钮。
+- 导入导出：打开导入框时自动读剪贴板填入（`openDlg` 的 `paste`），内容符合 `opts.auto`（迁移 `#GWMIG`/备份 `{`/卡组 `【昆特卡组】`）时直接进入导入确认；导出复制成功只提示“已复制”，浏览器不让写剪贴板时才弹框。
 - 导入导出：保留原有的各类导出（对局代码、卡组代码、牌库代码、下载备份）。“全部迁移导出”= `#GWMIG v1` 开头的一行说明 + 整个 `db` 的 JSON；“全部导入”接受它或备份文件（也兼容旧版备份），确认后替换全部数据。所有导入对话框都有“点击粘贴”（`openDlg(...,{paste:true})`）。
 
 ## 测试
+- `npm test` = 底层 + 卡牌 + 界面（`gwent_ui_test.js`，jsdom 载入 dist）+ 第一局回放；`npm run smoke` 全部卡牌冒烟。先 `npm ci` 装 jsdom。
+- GitHub Actions（`.github/workflows/test.yml`）：每次推送检查 `node build.js` 后 dist 和 cardflags 没有变化（改了 src 必须打包再提交），再跑 `npm test` 和冒烟。
 - `node gwent_engine_test.js`：底层机制；`node gwent_cards_test.js`：卡牌效果；`node gwent_cards_smoke.js`：全部卡牌冒烟。
 - 界面：用 jsdom 载入 HTML，往 `db.live` 塞一局记录后调用 `rMatch()`，检查 `.eng .score`、`.brow`、`.warn`。脚本结束要 `process.exit(0)`，否则计时器会卡住。
 - 截图：playwright，视口 1440×900 检查电脑布局（≥1100px 两栏：对局页左边比分+场面常驻、右边记录；牌库左边筛选），420×1100 检查手机布局。
