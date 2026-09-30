@@ -5,15 +5,18 @@ const ENG=(typeof GwentEngine!=="undefined")?GwentEngine:null;
 const ENGRAW=RAW;
 // 对局日期当时的卡牌版本（月度补丁之前的对局按旧数值推算）
 const rawFor=g=>typeof GwentPatches!=="undefined"?GwentPatches.rawAt(ENGRAW,g.date):ENGRAW;
-let simCache={key:"",res:null};
+// 推算缓存：保留最近几份（偏差报告的规则对比会用临时规则多算几遍）
+const simCache=new Map();
 // 未确认规则的覆盖值（校准用），见引擎 DEFAULT_RULES
 const SIM_RULES={};
-function sim(g,r,excl){
+// ov：临时覆盖的规则（规则对比用），不改 SIM_RULES
+function sim(g,r,excl,ov){
   if(!ENG)return null;
-  const key=g.id+"|"+(g.date||"")+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
-  if(simCache.key===key)return simCache.res;
+  const rules=ov?Object.assign({},SIM_RULES,ov):SIM_RULES;
+  const key=g.id+"|"+(g.date||"")+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(rules)+"|"+JSON.stringify([g.tacCard,g.coin,g.opTactic,g.opLeader,g.rounds,g.hand,g.myF,deckById(g.deck)]);
+  if(simCache.has(key))return simCache.get(key);
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
-  const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
+  const E=new ENG.Game({manualRounds:true,rules,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
   E.loadData(rawFor(g));E.loadBehaviors(GwentCards.behaviors);
   E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
   const key2u={},u2key=new Map(),warns=[],unmod={};
@@ -67,7 +70,7 @@ function sim(g,r,excl){
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
   // 上一局的坚韧单位留场（老兵在小局开始时 +1）
   let Pprev=null;
-  if(r>0&&g.log.some(x=>x.r===r-1)){const P=Pprev=sim(g,r-1);
+  if(r>0&&g.log.some(x=>x.r===r-1)){const P=Pprev=sim(g,r-1,undefined,ov);
     if(P)for(const sd of["me","op"]){for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(u.status.resilience){const v=E.carryIn(u,sd,w);const k=P.u2key.get(u);if(k)bind(k,v);}
       // 跨局延续：金币（小局开始时减半）、墓场、放逐、牌组里回响的牌、领袖/战术剩余充能
       const A=P.E.s.sides[sd],B=E.s.sides[sd];B.coins=A.coins;B.grave=A.grave.slice();B.banished=A.banished.slice();
@@ -83,7 +86,9 @@ function sim(g,r,excl){
     if(nm&&!(E.s.sides[sd].abilities||{})[nm]&&BY[nm]&&isLeader(BY[nm]))E.addAbility(sd,nm);}
   E.startRound();
   // 战术牌：只在第一局，先手方近战排最左边（新对局才有 g.tacCard，旧记录的位置不受影响）
-  let tacU=null;if(r===0&&g.tacCard&&(g.coin==="先"||g.coin==="后")){const fs=g.coin==="先"?"me":"op";tacU=E.placeTactic(fs,fs==="me"?(deckById(g.deck)?.tactic||"战术"):"战术");bind("tac",tacU);}
+  // 战术牌名：我方按卡组，对方按开局选的（g.opTactic）；旧记录只写了“战术”的也这样对应
+  const tacOf=sd=>(sd==="me"?deckById(g.deck)?.tactic:g.opTactic)||"战术";
+  let tacU=null;if(r===0&&g.tacCard&&(g.coin==="先"||g.coin==="后")){const fs=g.coin==="先"?"me":"op";tacU=E.placeTactic(fs,tacOf(fs));bind("tac",tacU);}
   // 手牌数推算：第一局起手 10 张；之后 = 上一局结束时的手牌（R 行记了就用记录，否则用推算）+ 3，上限 10。打出（不含牌组/墓场/生成）-1，“手牌”记录修正
   {const P=Pprev;const R0=g.rounds&&g.rounds[r-1];
     for(const sd of["me","op"]){const rec=R0&&R0[sd==="me"?"hm":"ho"];let prev=rec!=null&&rec!==""?+rec:P?P.E.s.sides[sd].handCount:null;
@@ -134,7 +139,7 @@ function sim(g,r,excl){
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
       case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
-        const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
+        const nm=x.a==="tactic"?(x.c&&x.c!=="战术"?x.c:tacOf(side)):(x.c||(side==="me"?g.leader:g.opLeader));if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
         if(x.a==="tactic")E.removeTactic(side);break;}   // 战术牌用掉即离场
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
       case "kill":{const u=unitByKey(x.uid);if(u)E.destroy(u);break;}
@@ -193,6 +198,7 @@ function sim(g,r,excl){
     for(const t of E.trace.slice(t0)){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
+      if(t.type==="没有指令")warns.push({id:x.id,m:t.data.name+" 没有指令能力，这条没有结算（触发的效果请记成“效果”，神赐/部署会自动结算）"});
       if(t.type==="排满")warns.push({id:x.id,m:t.data.name+" 放不上：这一排已满 9 张（单位、神器、战术牌都算），检查记录的排"});
       if(t.type==="癫狂没造成伤害，费用能力不触发")warns.push({id:x.id,m:t.data.name+" 有护盾，癫狂没造成伤害，费用能力不触发"});
       if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
@@ -207,8 +213,10 @@ function sim(g,r,excl){
   {const R1=g.rounds&&g.rounds[r];if(R1&&log.length)for(const sd of["me","op"]){const rec=R1[sd==="me"?"hm":"ho"];
     if(rec!=null&&rec!==""&&+rec!==E.s.sides[sd].handCount)warns.push({id:log[log.length-1].id,m:"推算"+sideN(sd)+"局末手牌 "+E.s.sides[sd].handCount+" 张，记录是 "+rec+" 张（中途抽牌、回手没记，用“修正手牌”补上）"});}}
   const res={E,key2u,u2key,warns,unmod,steps,score:{me:E.score("me"),op:E.score("op")}};
-  simCache={key,res};return res;}
+  simCache.set(key,res);if(simCache.size>16)simCache.delete(simCache.keys().next().value);return res;}
 // ---------- 偏差报告：真实比分（录屏核对的 C 记录、R 行局末比分）和推算逐步对比 ----------
+// 规则对比里逐个反过来试的未确认规则
+const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"]];
 const NOTE_PRESETS=["失误","关键回合","该停牌","没算到","对面读牌","卡手","好操作","节奏亏"];
 function parseScore(v){const m=String(v||"").match(/(\d+)\s*[:：\s]\s*(\d+)/);return m?{me:+m[1],op:+m[2]}:null;}
 function stepLabel(st){return st?(st.who==="me"?"我":"对")+"第"+st.n+"手":"";}
@@ -217,6 +225,11 @@ function devReport(g,r,S){if(!S||!S.steps)return null;const log=g.log.filter(x=>
   const chk=[];log.forEach((x,i)=>{if(x.a==="real"){const v=parseScore(x.v);if(v&&S.steps[x.id])chk.push({i,id:x.id,real:v,eng:{me:S.steps[x.id].me,op:S.steps[x.id].op},lab:stepLabel(S.steps[x.id])});}});
   const R=g.rounds[r];if(R&&R.me!==""&&R.me!=null&&R.op!==""&&R.op!=null)chk.push({i:log.length,id:"end",real:{me:+R.me,op:+R.op},eng:{me:S.score.me.total,op:S.score.op.total},lab:"局末"});
   chk.forEach(c=>{c.dm=c.eng.me-c.real.me;c.dop=c.eng.op-c.real.op;c.ok=!c.dm&&!c.dop;});
+  // 规则对比：没确认的规则逐个反过来再算一遍，看哪种和真实比分对得上
+  const alt=[];if(chk.length)for(const [k,lab] of CAL_RULES){const cur=k in SIM_RULES?SIM_RULES[k]:ENG.DEFAULT_RULES[k];let S2;try{S2=sim(g,r,undefined,{[k]:!cur});}catch(e){continue;}if(!S2)continue;
+    const ev=chk.map(c=>{const e=c.id==="end"?{me:S2.score.me.total,op:S2.score.op.total}:S2.steps[c.id]&&{me:S2.steps[c.id].me,op:S2.steps[c.id].op};return e&&e.me===c.real.me&&e.op===c.real.op;});
+    const end=chk.find(c=>c.id==="end");alt.push({lab,on:!cur,n:ev.filter(Boolean).length,end:end?S2.score.me.total+":"+S2.score.op.total:null});}
+  const nOk=chk.filter(c=>c.ok).length;
   const bad=chk.find(c=>!c.ok);const prevOk=bad?[...chk].reverse().find(c=>c.ok&&c.i<bad.i):null;
   // 每一步的比分变化和可疑来源
   let pm=0,po=0;const rows=log.map((x,i)=>{const st=S.steps[x.id];if(!st)return null;const d={i,x,st,dm:st.me-pm,dop:st.op-po};pm=st.me;po=st.op;
@@ -234,6 +247,8 @@ function devReport(g,r,S){if(!S||!S.steps)return null;const log=g.log.filter(x=>
       html.push(sus.length?`<div class="dev">${sus.map(d=>`<div>${esc(stepLabel(d.st))}${d.x.vt?"（录屏 "+esc(d.x.vt)+"）":""}　${esc(logText(d.x))}　<b>${sgn(d.dm)} : ${sgn(d.dop)}</b>${d.flags.length?`<br><small>${esc(d.flags.join("、"))}</small>`:""}</div>`).join("")}</div>`:`<p class="note">这段里没有标记为推测/未建模的牌，可能是记录漏了（对方落地战力、触发效果）。</p>`);
       sus.forEach(d=>txt.push(`  ${stepLabel(d.st)}${d.x.vt?"（录屏 "+d.x.vt+"）":""} ${logText(d.x)} ${sgn(d.dm)}:${sgn(d.dop)}${d.flags.length?" ["+d.flags.join("、")+"]":""}`));}
     else{html.push(`<p class="note">所有核对点都一致。</p>`);}}
+  if(alt.length){const line=a=>`「${a.lab}」改成${a.on?"开":"关"}：核对点一致 ${a.n}/${chk.length}${a.end?"，局末推算 "+a.end:""}${a.n>nOk?"（更准）":a.n<nOk?"（更差）":""}`;
+    html.push(`<p class="note">规则对比（现在一致 ${nOk}/${chk.length}）：</p><div class="dev">${alt.map(a=>`<div class="${a.n>nOk?"ok":""}">${esc(line(a))}</div>`).join("")}</div>`);alt.forEach(a=>txt.push("规则对比 "+line(a)));}
   const notes=rows.filter(d=>d.x.a==="note");
   if(notes.length){html.push(`<p class="note">备注：</p><div class="dev">${notes.map(d=>`<div>${esc(stepLabel(d.st))}　${esc(d.x.c)}</div>`).join("")}</div>`);notes.forEach(d=>txt.push(`备注 ${stepLabel(d.st)} ${d.x.c}`));}
   html.push(`<details><summary class="note">逐步比分（${rows.length} 步）</summary><div class="dev steps">${rows.map(d=>`<div class="${d.x.who}">${esc(stepLabel(d.st))}${d.x.vt?" · 录屏 "+esc(d.x.vt):d.x.t!=null?" · "+fmt(d.x.t):""}　${esc(logText(d.x))}　<b>${d.st.me}:${d.st.op}</b>${d.dm||d.dop?` <small>(${sgn(d.dm)}:${sgn(d.dop)})</small>`:""}${d.flags.length?` <small class="fl">${esc(d.flags.join("、"))}</small>`:""}</div>`).join("")}</div></details>`);

@@ -53,6 +53,28 @@ setTimeout(() => {
     S = w.eval('sim(db.live,1)'); ok(!S.E.s.sides.me.rows.m.some(u => u.isTactic) && !S.E.s.sides.me.grave.includes('战术'), '战术牌：第二局没有，也不进墓场');
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
     ok(!w.eval('sim(db.live,0)').E.s.sides.me.rows.m.some(u => u.isTactic), '战术牌：旧对局（没有 tacCard）不放');
+    // 对方先手：开局选对方战术牌，放到对方近战排最左边；旧记录只写“战术”的按它结算
+    live([{ id: 'e1', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', pos: 1, side: 'op' }], { tacCard: true, coin: '后' });
+    ok(!!w.document.querySelector('[data-optacset="战术优势"]'), '对方先手：提示选对方战术牌');
+    w.document.querySelector('[data-optacset="战术优势"]').click();
+    S = w.eval('sim(db.live,0)'); m = S.E.s.sides.op.rows.m;
+    ok(w.eval('db.live.opTactic') === '战术优势' && m[0].isTactic && m[0].name === '战术优势' && !w.document.querySelector('[data-optacset]'), '对方先手：选好后放到对方近战排，不再提示');
+    live([{ id: 'e1', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', pos: 1, side: 'op' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
+      { id: 'e3', who: 'op', a: 'tactic', c: '战术', tgts: [{ uid: 'e1', label: 'x' }] }], { tacCard: true, coin: '后', opTactic: '战术优势' });
+    S = w.eval('sim(db.live,0)'); ok(S.key2u.e1.power === w.eval('BY["寒冰巨人"].pw') * 1 + 5 && !S.unmod['战术'], '旧记录“战术”：按对方战术牌（战术优势 +5）结算');
+    // 平局：下一局最后一个从手牌出牌的一方先手
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '科德温骑士', row: 'm', side: 'op' }], { pend: { res: 'D', me: '5', op: '5', hm: null, ho: null } });
+    w.eval('ui.who="me";rMatch()'); w.document.querySelector('[data-do="endRound"]').click(); ok(w.eval('ui.who') === 'op', '平局：最后出牌的一方（对方）下一局先手');
+    // 手牌格子按查看的那一局显示
+    live([{ id: 'd1', who: 'me', a: 'draw', set: true, cards: ['科德温骑士', '赤红男爵', '安赛斯王子'] }, { id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
+      { id: 'f1', r: 1, who: 'me', a: 'play', c: '赤红男爵', row: 'm', side: 'me' }], { hand: true, cur: 1, rounds: [{ res: 'W', me: '5', op: '0' }] });
+    ok(w.eval('myHand(db.live,undefined,1).length') === 1 && w.eval('myHand(db.live,undefined,0).length') === 2 && html.includes('myHand(g,undefined,vr)'), '手牌格子：看第一局时显示第一局的手牌');
+    // 偏差报告的规则对比：对方停牌后安娜·斯特伦格（回合结束 +1）不再推进才对得上 → 标“更准”
+    live([{ id: 'e1', who: 'op', a: 'play', c: '科德温骑士', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '安娜·斯特伦格', row: 'm', pos: 0, side: 'op' },
+      { id: 'e3', who: 'op', a: 'pass' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
+      { id: 'e6', who: 'me', a: 'pass' }], { rounds: [{ res: 'D', me: '10', op: '10' }] });
+    const rep2 = w.document.querySelector('details.sheet'); const ro = rep2 && rep2.textContent;
+    ok(/规则对比/.test(ro) && /「停牌方回合照常推进」改成关：核对点一致 1\/1.*（更准）/.test(ro), '偏差报告：规则对比标出更准的写法');
     // 指令指示器：进场当回合虚线“令”，下回合金色；列阵在近战排当回合就能用
     live([{ id: 'e1', who: 'me', a: 'play', c: '安赛斯王子', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' }]);
     const ord = () => [...w.document.querySelectorAll('.brow.me [data-u]')].map(e => e.title + ':' + (e.querySelector('.uord') ? e.querySelector('.uord').className : ''));

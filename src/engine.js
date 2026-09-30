@@ -19,6 +19,7 @@ const DEFAULT_RULES = {
   reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
   spawnBanished: false,       // 生成的牌离场时一律放逐（未确认；衍生牌卡面都写了“佚亡”，按状态放逐）
   purifyKeepsDoomed: false,   // 净化会移除佚亡，之后离场进墓场（用户查证）
+  resilienceKeepsArmor: false,// 坚韧留场时护甲（含卡面自带的）清零（英/俄/德/波/日/韩释义 + Steam 讨论；中文写“额外护甲”）
   resilienceKeepsDamage: false,// 坚韧留场时回到基础战力（资料有分歧，暂按 NamuWiki：伤害也恢复）
   knightSummonSelf: false,    // 骑士册封“己方每控制 1 名骑士”不算被拉出的骑士自己（已确认）
   timerRepeats: true,         // 计时归零触发后重新计时（未确认）
@@ -174,13 +175,15 @@ class Game {
   emit(evt, data) {
     (this.handlers[evt] || []).forEach(fn => fn(data, this));
     // 场上单位自带的监听（卡牌能力），锁定的单位不响应
+    // 同一个事件里先被别的能力摧毁/移出战场的单位不再响应
+    const live = u => this.find(u.uid) === u;
     for (const u of this.allUnits()) {
-      if (u.status.lock) continue;
+      if (u.status.lock || !live(u)) continue;
       for (const ab of u.def.abilities || []) {
-        if (ab.on === evt && (!ab.when || ab.when(this.ctx(u), data))) ab.run(this.ctx(u), data);
+        if (ab.on === evt && live(u) && (!ab.when || ab.when(this.ctx(u), data))) ab.run(this.ctx(u), data);
       }
       for (const inf of u.infused) {
-        if (inf.on === evt && (!inf.when || inf.when(this.ctx(u), data))) inf.run(this.ctx(u), data);
+        if (inf.on === evt && live(u) && (!inf.when || inf.when(this.ctx(u), data))) inf.run(this.ctx(u), data);
       }
     }
     // 墓场里的牌的能力（graveAbilities）：牌离开墓场后自动失效
@@ -415,6 +418,7 @@ class Game {
     const d = this.def(name);
     const player = opts.player || side;
     if (!opts.fromDeck && !opts.spawned && !opts.fromGrave) this.s.sides[player].handCount = Math.max(0, this.s.sides[player].handCount - 1);
+    if (!opts.fromDeck && !opts.spawned) this.s.lastPlayer = player;   // 平局后最后出牌的一方先手
     if (opts.fromGrave) { const gr = this.s.sides[player].grave, i = gr.lastIndexOf(name); if (i >= 0) gr.splice(i, 1); }
     if (d.type === 'special') {
       const pseudo = { side: player, name, def: d, uid: null };
@@ -907,7 +911,7 @@ class Game {
     const u = this.find(uid);
     if (!u) return;
     if ((!u.def.order || opts.fee) && (u.def.fee || u.def.feeN != null)) return this.fee(u, opts);
-    if (!u.def.order) { this.log('没有指令', { uid, name: u.name, unmodeled: true }, true); return; }
+    if (!u.def.order) { this.log('没有指令', { uid, name: u.name, unmodeled: !!u.def.unmodeled }, true); return; }
     // force（对局簿按记录推算）照样结算，但仍提示，方便发现记错回合
     if (!this.canOrder(u)) this.log('指令不可用', { uid, name: u.name, reason: this.orderBlock(u) }, true);
     u.orderUsed++;
@@ -1033,7 +1037,7 @@ class Game {
       const keep = [];
       for (const u of s.sides[sd].rows[r]) {
         if (u.status.resilience) {
-          u.status.resilience = false; u.armor = u.def.armor || 0; keep.push(u);
+          u.status.resilience = false; u.armor = this.rules.resilienceKeepsArmor ? (u.def.armor || 0) : 0; keep.push(u);
           u.power = this.rules.resilienceKeepsDamage ? Math.min(u.power, u.base) : u.base;
         } else {
           (this.isDoomed(u) ? s.sides[sd].banished : s.sides[sd].grave).push(u.name);
@@ -1044,7 +1048,8 @@ class Game {
     s.hazards = { me: { m: null, r: null }, op: { m: null, r: null } };
     if (s.sides.me.wins >= 2 || s.sides.op.wins >= 2 || s.round >= 2) { s.over = true; this.log('对局结束', { results: s.results }); return; }
     s.round++;
-    if (this.rules.roundWinnerGoesFirst && res !== 'D') s.active = res === 'W' ? 'me' : 'op';
+    // 上一局赢家先手；平局时最后一个出牌的一方先手（用户确认）
+    if (this.rules.roundWinnerGoesFirst) s.active = res === 'W' ? 'me' : res === 'L' ? 'op' : (s.lastPlayer || s.active);
     this.startRound();
   }
 
@@ -1063,7 +1068,7 @@ class Game {
   // 上一局留场的单位（坚韧）带进这一局（对局簿逐局推算用）
   carryIn(u, side, row) {
     const v = this.makeUnit(u.name, side);
-    Object.assign(v, { base: u.base, armor: u.def.armor || 0, origin: u.origin, enteredTurn: -1,
+    Object.assign(v, { base: u.base, armor: this.rules.resilienceKeepsArmor ? (u.def.armor || 0) : 0, origin: u.origin, enteredTurn: -1,
       power: this.rules.resilienceKeepsDamage ? Math.min(u.power, u.base) : u.base,
       status: Object.assign({}, u.status, { resilience: false }), infused: [] });
     v.row = row; this.s.sides[side].rows[row].push(v);

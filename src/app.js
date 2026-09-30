@@ -197,7 +197,8 @@ function myGrave(g){const r=VR();const {all}=board(g,r);const on=new Set(Object.
 function returners(g,played){const c=BY[played];if(!c||c.t!=="单位")return[];const tags=c.tags||"";
   return myGrave(g).filter(n=>{const r=BY[n];if(!r)return false;const m=r.tx.match(/每打出 ?1 ?个“([^”]+)”单位，便从己方墓场召唤自身/);return m&&tags.includes(m[1]);});}
 // my hand, derived from draw / mull / play entries
-function myHand(g,uptoId){const h=[];for(const x of g.log){if(uptoId&&x.id===uptoId)break;if(x.who!=="me")continue;
+// maxR：只算到第 maxR 局（查看前面的局时，手牌显示那一局的）
+function myHand(g,uptoId,maxR){const h=[];for(const x of g.log){if(uptoId&&x.id===uptoId)break;if(x.who!=="me"||(maxR!=null&&x.r>maxR))continue;
   if(x.a==="draw"){if(x.set)h.length=0;(x.cards||[x.c]).forEach(n=>h.push(n));}
   else if(x.a==="mull"){const i=h.indexOf(x.c);if(i>=0)h.splice(i,1);if(x.into)h.push(x.into);}
   else if((x.a==="play"||x.a==="summon")&&!x.via){let i=h.indexOf(x.c);if(i<0)i=h.findIndex(n=>baseOf(n)===baseOf(x.c));if(i>=0)h.splice(i,1);}}return h;}
@@ -313,6 +314,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     for(let k=0;k<n;k++)pushLog({who:step.who,a:"summon",c:step.card,via:step.card,side:step.side!==step.who?step.side:undefined,row:step.row,pos:step.pos+k});
     persist();nextStep();return true;}
   if(D.optac){ui.flow=null;recTactic("op",D.optac);return true;}
+  if(D.optacset!==undefined){db.live.opTactic=D.optacset;persist();toast(D.optacset?"对方战术："+D.optacset:"先跳过，对方用战术时再选");rMatch();return true;}
   if(D.rep!==undefined&&step&&step.t==="target"){ui.rep=+D.rep;rMatch();return true;}
   if(D.qnote){const i=pushLog({who:ui.who,a:"note",c:D.qnote});toast(logText(g.log[i]));rMatch();return true;}
   if(D.fixstep){ui.flow=[JSON.parse(D.fixstep)];rMatch();window.scrollTo(0,0);return true;}
@@ -359,7 +361,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     noteRec(){const v=($("#noteIn").value||"").trim();if(!v)return toast("写点内容");pushLog({who:ui.who,a:"note",c:v});ui.act="play";rMatch();},
     undo(){const r=VR();const idx=g.log.map((x,i)=>[x,i]).filter(([x])=>x.r===r).pop();if(!idx)return;const x=g.log.splice(idx[1],1)[0];ui.flow=null;persist();rMatch();toast("已撤销："+logText(x));},
     // 选这一局换牌之后的整手牌：上一局留下的先选上，加上抽到的、去掉换掉的（不再单独记换牌）
-    handStart(){const prev=VR()>0?myHand(g):[];const i=pushLog({who:"me",a:"draw",cards:prev,set:true});ui.recent=[];ui.flow=[{t:"hand",id:g.log[i].id}];rMatch();},
+    handStart(){const prev=VR()>0?myHand(g,undefined,VR()-1):[];const i=pushLog({who:"me",a:"draw",cards:prev,set:true});ui.recent=[];ui.flow=[{t:"hand",id:g.log[i].id}];rMatch();},
     handDone(){const e=entry(step.id);if(!e.cards.length){g.log.splice(g.log.indexOf(e),1);}persist();nextStep();},
     eUp(){sw(-1);},eDown(){sw(1);},
     eDel(){const e=entry(step.id);g.log.splice(g.log.indexOf(e),1);persist();nextStep();},
@@ -459,7 +461,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       const meta=(us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:"")+fxTags(s,r);
       // 单位不换行：多了按比例缩小，手机上再放不下就在这一排里横向滑动
       return `<div class="brow ${s}" data-side="${s}" data-row="${r}">${lab}${meta?`<span class="bmeta">${meta}</span>`:""}<div class="bu${mode==="slots"?" slots":""}">${inner}</div></div>`;}).join("")}</div>`;};
-    const hand=g.hand?myHand(g):[];
+    const hand=g.hand?myHand(g,undefined,vr):[];
     const deckGrid=(opts)=>{opts=opts||{};if(!d)return"";const used={};const dev=devotionOf(d);const setSel=opts.sel&&opts.sel.set?opts.sel:null;
       g.log.forEach(x=>{if(x===opts.sel)return;if(x.who==="me"&&(x.a==="play"||x.a==="summon")&&x.via!=="墓场"&&!(setSel&&x.r>=setSel.r))used[baseOf(x.c)]=(used[baseOf(x.c)]||0)+1;if(x.who==="me"&&x.a==="draw"&&opts.forHand&&!setSel)(x.cards||[]).forEach(n=>used[baseOf(n)]=(used[baseOf(n)]||0)+1);});
       if(setSel)(setSel.cards||[]).forEach(n=>used[baseOf(n)]=(used[baseOf(n)]||0)+1);
@@ -551,7 +553,10 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       if(!acts.includes(ui.act))ui.act="play";
       const roundHasHand=g.log.some(x=>x.r===vr&&x.who==="me"&&x.a==="draw");
       const pe=pendingEnd(g);
+      // 对方先手：第一局对方近战排最左边有战术牌，开局选一下是哪张（之后对方用战术就按它结算）
+      const askOpTac=vr===0&&g.tacCard&&g.coin==="后"&&g.opTactic===undefined;
       h+=`<div class="sheet"><div class="who"><button class="me ${ui.who==="me"?"on":""}" data-who="me">我方</button><button class="op ${ui.who==="op"?"on":""}" data-who="op">对方</button></div>
+       ${askOpTac?`<div class="optac"><p class="note" style="margin:8px 0 4px">对方先手：对方的战术牌是哪张？（放在对方近战排最左边）</p><div class="grid">${[...new Set(["战术优势",...C.filter(isTactic).map(c=>c.n)])].map(n=>tile(n,"","",`data-optacset="${esc(n)}"`)).join("")}</div><div class="btns" style="margin-top:6px"><button class="ghost" data-optacset="">不知道，先跳过</button></div></div>`:""}
        ${pe?`<div class="btns" style="margin:6px 0 0"><button class="ghost endturn" data-do="endTurn" title="结算${sideN(pe)}的回合结束效果（快捷键 Z）。之后改战力按回合结束后的值填">⏎ 结束${sideN(pe)}回合</button></div>`:""}
        <div class="acts">${acts.map(k=>`<button data-act="${k}" class="${ui.act===k?"on":""}">${ACT[k].replace("整排效果","整排")}</button>`).join("")}</div>
        <div class="btns" style="margin-top:8px;align-items:center"><button class="chip ${g.hand?"on":""}" data-do="handToggle">记录手牌</button>${g.hand&&!roundHasHand?`<button class="ghost" data-do="handStart">选第${vr+1}局${vr===0?"起手 10 张":"抽到的 3 张"}</button>`:""}</div>`;
@@ -752,7 +757,9 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       ui.who=setup.coin==="后"?"op":"me";ui.act="play";ui.q="";setup.fac=null;setup.coin=null;persist();rMatch();},
     endRound(){const p=g.pend;if(!p.res)return toast("选一下本局结果");if(p.hm==null&&g.hand)p.hm=myHand(g).length;ui.vr=null;const now=Date.now();g.rounds.push({res:p.res,me:p.me,op:p.op,hm:p.hm??null,ho:p.ho??null,sec:g.rt0?Math.round((now-g.rt0)/1000):null});g.rt0=now;g.lastT=now;
       if(g.rounds.length===1)g.diff=(p.hm!=null&&p.ho!=null)?p.hm-p.ho:null;g.pend={res:null,me:"",op:"",hm:null,ho:null};g.cur=g.rounds.length;
-      if(!outcome(g.rounds)){ui.who=g.rounds[g.rounds.length-1].res==="W"?"op":"me";toast(`进入第${g.cur+1}局`);}persist();rMatch();window.scrollTo(0,0);},
+      // 下一局先手：上一局赢家；平局时最后一个从手牌出牌的一方（用户确认）
+      if(!outcome(g.rounds)){const res=g.rounds[g.rounds.length-1].res;const lastPlay=g.log.filter(x=>x.r===g.cur-1&&x.a==="play"&&!x.via).pop();
+        ui.who=res==="W"?"me":res==="L"?"op":(lastPlay?lastPlay.who:ui.who);toast(`进入第${g.cur+1}局，${sideN(ui.who)}先手`);}persist();rMatch();window.scrollTo(0,0);},
     undoRound(){const r=g.rounds.pop();g.cur=g.rounds.length;g.pend={res:r.res,me:r.me,op:r.op,hm:r.hm,ho:r.ho};persist();rMatch();},
     finish(){ui.vr=null;ui.flow=null;ui.insertBefore=null;const o=outcome(g.rounds);const {pend,cur,...rest}=g;db.games.push({...rest,res:o.res});db.live=null;persist();render();toast("已保存");
       // 记完一局：超过 7 天没备份就提醒下载
