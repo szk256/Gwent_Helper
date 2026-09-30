@@ -209,7 +209,7 @@ class Game {
     for (const sd of sides) for (const r of ROWS) out.push(...this.s.sides[sd].rows[r]);
     return out;
   }
-  units(side) { return this.allUnits(side).filter(u => u.def.type !== 'artifact'); }
+  units(side) { return this.allUnits(side).filter(u => u.def.type !== 'artifact' && !u.isTactic); }
   find(uid) { return this.allUnits().find(u => u.uid === uid) || null; }
   rowOf(u) { return this.s.sides[u.side].rows[u.row]; }
   adjacent(u) {
@@ -590,6 +590,17 @@ class Game {
     u.power = o.keepPower ? p : u.base;
     this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
     this.checkBless(u);
+  }
+  // 战术牌（用户确认）：第一局先手方近战排最左边放 1 张战术牌，占位置（算相邻），不算单位、不计分；用掉即离场，小局结束也离场，不进墓场
+  placeTactic(side, name) {
+    const u = this.makeUnit(name || '战术', side); u.isTactic = true; u.power = u.base = 0; u.origin = 'tactic';
+    this.s.sides[side].rows.m.unshift(u); u.row = 'm'; u.side = side; u.enteredTurn = -1;
+    this.log('战术牌', { side, name: u.name, uid: u.uid });
+    return u;
+  }
+  removeTactic(side) {
+    const row = this.s.sides[side].rows.m, i = row.findIndex(u => u.isTactic);
+    if (i >= 0) { const u = row.splice(i, 1)[0]; this.log('战术牌离场', { side, name: u.name }); }
   }
   // 手牌张数（对局簿推算亢奋、“手牌不满”用）：抽牌 +n（超过上限的丢弃），弃牌 -n
   draw(side, n, src) {

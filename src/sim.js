@@ -57,12 +57,14 @@ function sim(g,r,excl){
       // 跨局延续：金币（小局开始时减半）、墓场、放逐、牌组里回响的牌、领袖/战术剩余充能
       const A=P.E.s.sides[sd],B=E.s.sides[sd];B.coins=A.coins;B.grave=A.grave.slice();B.banished=A.banished.slice();
       // 上一局结束时场上的非坚韧单位进墓场（佚亡的放逐）
-      for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(!u.status.resilience)(P.E.isDoomed(u)?B.banished:B.grave).push(u.name);B.deck=A.deck.slice();B.echoed=(A.echoed||[]).slice();
+      for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(!u.status.resilience&&!u.isTactic)(P.E.isDoomed(u)?B.banished:B.grave).push(u.name);B.deck=A.deck.slice();B.echoed=(A.echoed||[]).slice();
       // 墓场里的计数（洞察之球）、牌组里单位的增益（埃兰）、最大耐性（校友会，ASSUME 跨小局保留）
       B.graveWatch=JSON.parse(JSON.stringify(A.graveWatch||[]));B.deckBuff=JSON.parse(JSON.stringify(A.deckBuff||{}));if(A.vars.maxPat)B.vars.maxPat=Object.assign({},A.vars.maxPat);
       for(const[nm,h]of Object.entries(A.abilities||{})){const h2=E.addAbility(sd,nm,h.charges);h2.vars=JSON.parse(JSON.stringify(h.vars||{}));}}}
   E.s.round=r;
   E.startRound();
+  // 战术牌：只在第一局，先手方近战排最左边（新对局才有 g.tacCard，旧记录的位置不受影响）
+  let tacU=null;if(r===0&&g.tacCard&&(g.coin==="先"||g.coin==="后")){const fs=g.coin==="先"?"me":"op";tacU=E.placeTactic(fs,fs==="me"?(deckById(g.deck)?.tactic||"战术"):"战术");bind("tac",tacU);}
   // 手牌数推算：第一局起手 10 张；之后 = 上一局结束时的手牌（R 行记了就用记录，否则用推算）+ 3，上限 10。打出（不含牌组/墓场/生成）-1，“手牌”记录修正
   {const P=Pprev;const R0=g.rounds&&g.rounds[r-1];
     for(const sd of["me","op"]){const rec=R0&&R0[sd==="me"?"hm":"ho"];let prev=rec!=null&&rec!==""?+rec:P?P.E.s.sides[sd].handCount:null;
@@ -109,7 +111,8 @@ function sim(g,r,excl){
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
       case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
-        const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});break;}
+        const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
+        if(x.a==="tactic")E.removeTactic(side);break;}   // 战术牌用掉即离场
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
       case "kill":{const u=unitByKey(x.uid);if(u)E.destroy(u);break;}
       case "adj":{const u=unitByKey(x.uid);if(u){

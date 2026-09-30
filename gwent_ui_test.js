@@ -38,6 +38,20 @@ setTimeout(() => {
     L.push({ id: 'm9', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'er', who: 'op', a: 'play', c: '拉尔维克的埃兰', row: 'r', side: 'op', dn: 3 });
     live(L); S = w.eval('sim(db.live,0)');
     ok(S.key2u.er && S.key2u.er.status.immune, '亢奋：推算对方手牌 2 张 → 埃兰免疫');
+    // 战术牌：第一局先手方近战排最左，占位置不计分；用掉离场；第二局没有
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', pos: 1, side: 'me' }], { tacCard: true });
+    S = w.eval('sim(db.live,0)'); let m = S.E.s.sides.me.rows.m;
+    ok(m.length === 2 && m[0].isTactic && S.E.units('me').length === 1 && S.score.me.total === 5, '战术牌：近战最左、不算单位不计分');
+    ok(w.document.querySelectorAll('.brow.me [data-u]').length >= 2, '战术牌：棋盘上显示');
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', pos: 1, side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' },
+      { id: 'e3', who: 'me', a: 'tactic', c: '战术优势', tgts: [{ uid: 'e1', label: 'x' }] }], { tacCard: true });
+    S = w.eval('sim(db.live,0)'); m = S.E.s.sides.me.rows.m;
+    ok(m.length === 1 && !m[0].isTactic && m[0].power === 10, '战术牌：用掉 +5 并离场');
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'f1', r: 1, who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }],
+      { tacCard: true, cur: 1, rounds: [{ res: 'W', me: '5', op: '0' }] });
+    S = w.eval('sim(db.live,1)'); ok(!S.E.s.sides.me.rows.m.some(u => u.isTactic) && !S.E.s.sides.me.grave.includes('战术'), '战术牌：第二局没有，也不进墓场');
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
+    ok(!w.eval('sim(db.live,0)').E.s.sides.me.rows.m.some(u => u.isTactic), '战术牌：旧对局（没有 tacCard）不放');
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }
