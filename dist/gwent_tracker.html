@@ -688,7 +688,7 @@ class Game {
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
       targets: us => g.targetable(us, u.side),
       dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
-      frenzy: n => g.frenzy(u.side, n, u), draw: (n, side) => g.draw(side || u.side, n, u), discard: (n, side) => g.discard(side || u.side, n, u),
+      frenzy: n => g.frenzy(u.side, n, u), draw: (n, side) => g.draw(side || u.side, n, u), discard: (n, side) => g.discard(side || u.side, n, u), handToDeck: (n, side) => g.handToDeck(side || u.side, n, u),
       handFull: side => g.handFull(side || u.side), returnToHand: t => g.returnToHand(t, u), passed: side => g.s.sides[side || u.side].passed, deckUnits: () => g.deckUnits(u.side),
       bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
@@ -932,9 +932,12 @@ class Game {
     this.emit('drew', { side, n: S.handCount - before, src });
   }
   discard(side, n, src) {
-    const S = this.s.sides[side]; S.handCount = Math.max(0, S.handCount - n);
+    const S = this.s.sides[side]; const k = Math.min(n, S.handKnown ? S.handCount : n); S.handCount = Math.max(0, S.handCount - n);
     this.log('丢弃', { side, n, hand: S.handCount, by: src && src.name });
+    for (let i = 0; i < k; i++) this.emit('discarded', { side, src });
   }
+  // 从手牌洗回/置入牌组（张数 -n，不算丢弃）
+  handToDeck(side, n, src) { const S = this.s.sides[side]; S.handCount = Math.max(0, S.handCount - n); this.log('手牌回牌组', { side, n, hand: S.handCount, by: src && src.name }); }
   handFull(side) { return this.s.sides[side].handCount >= this.rules.handLimit; }
   // 返回手牌：离场，不算摧毁；拥有者手牌 +1
   returnToHand(u, src) {
@@ -2741,7 +2744,8 @@ B['凯瑞丝·奎特'] = { deployRow: {
 } };
 B['凯瑞丝：无所畏惧'] = { order: c => { const a = T(c, '凯瑞丝：完全治愈', c.allies().filter(isDamaged)); if (!a) return; const n = a.base - a.power; c.heal(a);
   const b = T(c, '凯瑞丝：造成治愈量伤害的友军', c.allies().filter(u => u !== a)); if (b && n) c.damage(b, n); } };
-B['珊瑚'] = { order: noop };   // 丢弃触发的随机伤害：按记录
+B['珊瑚'] = { order: c => { c.draw(1); c.discard(1); },
+  abilities: [{ on: 'discarded', when: (c, d) => d.side === c.side, run: c => { const t = R(c, '珊瑚：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }] };
 B['腐化的佛兰明妮卡'] = { deploy: c => { const n = new Set(c.g.s.sides[c.side].grave.filter(x => (c.g.def(x).tags || []).includes('野兽'))).size; if (n) c.boost(c.self, 2 * n); } };
 B['刀剑盟约'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.power <= 6, run: c => c.armor(c.self, 1) }] };
 B['克拉茨·奎特'] = {
@@ -3206,7 +3210,8 @@ B['获奖奶牛'] = { order: c => c.transform(c.self, '羊角魔') };
 B['萝卜'] = {};
 B['萨坤'] = { deploy: c => { const t = T(c, '萨坤：伤害', c.enemies()); if (t) c.damage(t, c.allies().length); } };
 B['萨琪亚萨司：龙焰'] = { abilities: [{ on: 'destroyed', when: (c, d) => d.unit.side === c.foe && c.g.s.active === c.side, run: c => c.boost(c.self, 1) }, { on: 'banished', when: (c, d) => d.unit.side === c.foe && c.g.s.active === c.side, run: c => c.boost(c.self, 1) }] };
-B['落雪'] = { order: noop };
+B['落雪'] = { order: c => { c.draw(2); c.handToDeck(2); },   // ASSUME 抽满 2 张
+  abilities: [{ on: 'drew', when: (c, d) => d.side === c.side && d.n > 0, run: (c, d) => c.boost(c.self, 2 * d.n) }] };
 B['薇薇恩：月下金莺'] = { deploy: c => { const r = rightOf(c); if (r) c.boost(c.self, r.def.prov || 0); } };
 B['虚无'] = { deploy: c => { c.self.zeal = true; }, order: c => { const r = rightOf(c); if (r) c.transform(r, '虚无'); } };
 B['裤裆'] = {};

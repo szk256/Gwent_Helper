@@ -355,7 +355,7 @@ class Game {
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
       targets: us => g.targetable(us, u.side),
       dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
-      frenzy: n => g.frenzy(u.side, n, u), draw: (n, side) => g.draw(side || u.side, n, u), discard: (n, side) => g.discard(side || u.side, n, u),
+      frenzy: n => g.frenzy(u.side, n, u), draw: (n, side) => g.draw(side || u.side, n, u), discard: (n, side) => g.discard(side || u.side, n, u), handToDeck: (n, side) => g.handToDeck(side || u.side, n, u),
       handFull: side => g.handFull(side || u.side), returnToHand: t => g.returnToHand(t, u), passed: side => g.s.sides[side || u.side].passed, deckUnits: () => g.deckUnits(u.side),
       bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
@@ -599,9 +599,12 @@ class Game {
     this.emit('drew', { side, n: S.handCount - before, src });
   }
   discard(side, n, src) {
-    const S = this.s.sides[side]; S.handCount = Math.max(0, S.handCount - n);
+    const S = this.s.sides[side]; const k = Math.min(n, S.handKnown ? S.handCount : n); S.handCount = Math.max(0, S.handCount - n);
     this.log('丢弃', { side, n, hand: S.handCount, by: src && src.name });
+    for (let i = 0; i < k; i++) this.emit('discarded', { side, src });
   }
+  // 从手牌洗回/置入牌组（张数 -n，不算丢弃）
+  handToDeck(side, n, src) { const S = this.s.sides[side]; S.handCount = Math.max(0, S.handCount - n); this.log('手牌回牌组', { side, n, hand: S.handCount, by: src && src.name }); }
   handFull(side) { return this.s.sides[side].handCount >= this.rules.handLimit; }
   // 返回手牌：离场，不算摧毁；拥有者手牌 +1
   returnToHand(u, src) {

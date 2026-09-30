@@ -1365,7 +1365,8 @@ B['凯瑞丝·奎特'] = { deployRow: {
 } };
 B['凯瑞丝：无所畏惧'] = { order: c => { const a = T(c, '凯瑞丝：完全治愈', c.allies().filter(isDamaged)); if (!a) return; const n = a.base - a.power; c.heal(a);
   const b = T(c, '凯瑞丝：造成治愈量伤害的友军', c.allies().filter(u => u !== a)); if (b && n) c.damage(b, n); } };
-B['珊瑚'] = { order: noop };   // 丢弃触发的随机伤害：按记录
+B['珊瑚'] = { order: c => { c.draw(1); c.discard(1); },
+  abilities: [{ on: 'discarded', when: (c, d) => d.side === c.side, run: c => { const t = R(c, '珊瑚：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }] };
 B['腐化的佛兰明妮卡'] = { deploy: c => { const n = new Set(c.g.s.sides[c.side].grave.filter(x => (c.g.def(x).tags || []).includes('野兽'))).size; if (n) c.boost(c.self, 2 * n); } };
 B['刀剑盟约'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.power <= 6, run: c => c.armor(c.self, 1) }] };
 B['克拉茨·奎特'] = {
@@ -1830,7 +1831,8 @@ B['获奖奶牛'] = { order: c => c.transform(c.self, '羊角魔') };
 B['萝卜'] = {};
 B['萨坤'] = { deploy: c => { const t = T(c, '萨坤：伤害', c.enemies()); if (t) c.damage(t, c.allies().length); } };
 B['萨琪亚萨司：龙焰'] = { abilities: [{ on: 'destroyed', when: (c, d) => d.unit.side === c.foe && c.g.s.active === c.side, run: c => c.boost(c.self, 1) }, { on: 'banished', when: (c, d) => d.unit.side === c.foe && c.g.s.active === c.side, run: c => c.boost(c.self, 1) }] };
-B['落雪'] = { order: noop };
+B['落雪'] = { order: c => { c.draw(2); c.handToDeck(2); },   // ASSUME 抽满 2 张
+  abilities: [{ on: 'drew', when: (c, d) => d.side === c.side && d.n > 0, run: (c, d) => c.boost(c.self, 2 * d.n) }] };
 B['薇薇恩：月下金莺'] = { deploy: c => { const r = rightOf(c); if (r) c.boost(c.self, r.def.prov || 0); } };
 B['虚无'] = { deploy: c => { c.self.zeal = true; }, order: c => { const r = rightOf(c); if (r) c.transform(r, '虚无'); } };
 B['裤裆'] = {};
