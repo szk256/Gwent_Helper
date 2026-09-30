@@ -89,7 +89,7 @@ $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText(
 // 版本：构建号（打包时按内容生成，调试页面是“开发版”）+ 卡牌数据版本（patches.js 最新一条，没有则基线）
 const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
 // 外观（每台设备各自记住，存 localStorage，不进对局簿数据）：主题 + 字号缩放
-const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["navy","午夜蓝"]];
+const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["pure","纯黑（最暗）"],["navy","午夜蓝"]];
 const ZOOMS=[1,1.15,1.3,1.5];
 function loadPref(){try{return JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}")||{};}catch(e){return {};}}
 function savePref(p){try{localStorage.setItem("gwent-ui-pref",JSON.stringify(p));}catch(e){}}
