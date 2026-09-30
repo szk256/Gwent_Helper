@@ -27,6 +27,7 @@ const DEFAULT_RULES = {
   autoTribute: true,          // 献金：没有记录时，金币够就当作付了（未确认，对局簿可逐次记录）
   feeSameTurn: true,          // 费用能力进场当回合就能用（未确认）
   ambushCounts: true,         // 伏击（背面朝上）的单位战力是否计入总分（未确认）
+  harmonySelf: true,          // 和谐：打出的正是这张和谐牌时是否也算（未确认）
 };
 
 // ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
@@ -93,6 +94,8 @@ class Game {
     d.abilities = (d.abilities || []).slice();
     // 恐吓：己方打出“罪行”牌时自身增益
     if (d.intimidate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('罪行'), run: c => c.boost(c.self, d.intimidate) });
+    // 和谐：己方打出非中立单位，且其主类别（第一个类别）与己方其他单位都不同时，自身增益
+    if (d.harmony) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit.def.fac !== 'NE' && (e.unit !== c.self || c.g.rules.harmonySelf) && c.g.uniquePrimary(e.unit), run: c => c.boost(c.self, d.harmony) });
     // 增兵：己方打出“战争”牌时冷却 -1
     if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
@@ -127,6 +130,8 @@ class Game {
         else if (seg === '回响') { if (apply) d.echo = true; }
         else if (seg === '癫狂') { if (apply) d.insanity = true; }
         else if (seg === '增兵') { if (apply) d.reinforce = true; }
+        else if ((m = seg.match(/^和谐\s*(\d*)$/))) { if (apply) d.harmony = +(m[1] || 1); }
+        else if (seg === '共生') { if (apply) d.symbiosis = true; }
         else if ((m = seg.match(/^耐性\s*(?:[（(](近战|远程)[）)])?$/))) { if (apply) d.patience = m[1] === '近战' ? 'm' : m[1] === '远程' ? 'r' : true; }
         else return false;
         return true;
@@ -212,6 +217,25 @@ class Game {
     const row = this.rowOf(u), i = row.indexOf(u), nb = [row[i - 1], row[i + 1]];
     if (nb.some(v => v && v.name === '欧德林')) return true;
     return nb.every(v => v && (this.hasTag(v, '士兵') || (u.def.operateMages && this.hasTag(v, '法师'))));
+  }
+  // 主类别：类别里的第一个；和谐判断“与己方其他单位的主类别都不同”
+  uniquePrimary(u) {
+    const p = (u.tags || [])[0]; if (!p) return false;
+    return !this.units(u.side).some(v => v !== u && (v.tags || [])[0] === p);
+  }
+  // 共生：己方控制的共生数量（场上单位、被灌注共生的单位、带共生的领袖）
+  symbiosisCount(side) {
+    const n = this.units(side).filter(u => !u.status.lock && (u.def.symbiosis || u.symbiosis)).length;
+    const lead = Object.values(this.s.sides[side].abilities || {}).filter(h => h.def.symbiosis).length;
+    return n + lead;
+  }
+  _symbiosis(side, d) {
+    if (!(d.tags || []).includes('自然')) return;
+    const n = this.symbiosisCount(side); if (!n) return;
+    // 随机一排：先放近战，对局簿按记录里的位置摆
+    const t = this.spawn('游荡的树人', side, 'm', null, { name: '共生' });
+    if (t) { t.base = n; t.power = n; this.log('共生', { side, power: n }); }
+    this.emit('symbiosis', { side, unit: t });
   }
   // 翼守：仅与 1 张牌相邻
   flanked1(u) { return this.adjacent(u).length === 1; }
@@ -332,6 +356,7 @@ class Game {
       if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
       this.s.sides[player].grave.push(name);
       this.emit('cardPlayed', { side: player, name, special: true, def: d });
+      this._symbiosis(player, d);
       return null;
     }
     if (d.disloyal && side === player && !opts.keepSide) side = OTHER[player];
@@ -386,8 +411,11 @@ class Game {
     this.emit('unitEnter', { unit: u, played });
     if (played) {
       // by = 打出这张牌的玩家（不忠牌落在对面半场，但算打出者“打出”）
+      if (d.type !== 'artifact') this.s.sides[player].vars.lastUnit = u;
+      if ((d.tags || []).includes('陷阱')) this.s.sides[player].vars.trapsRound = (this.s.sides[player].vars.trapsRound || 0) + 1;
       this.emit('cardPlayed', { side: player, name: u.name, unit: u, def: d });
       if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player });
+      this._symbiosis(player, d);
     }
   }
 
@@ -758,6 +786,7 @@ class Game {
     side = side || this.s.active;
     this.s.sides[side].passed = true;
     this.log('停牌', { side });
+    this.emit('passed', { side });
     this.endTurn();
   }
 
@@ -777,6 +806,7 @@ class Game {
         if (this.def(n).echo) { S.grave.splice(i, 1); S.deck.unshift(n); (S.echoed = S.echoed || []).push(n); this.log('回响', { side: sd, name: n }); }
       }
     }
+    for (const sd of ['me', 'op']) s.sides[sd].vars.trapsRound = 0;
     this.log('小局开始', { round: s.round + 1, first: s.active });
     this.emit('roundStart', { round: s.round });
     this.startTurn();

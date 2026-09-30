@@ -102,7 +102,7 @@ function sim(g,r,excl){
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "coin":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的金币修正「"+v+"」"});break;}
         const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
-      case "pass":{E.s.sides[side].passed=true;E.log("停牌",{side});E.endTurn();break;}
+      case "pass":{E.pass(side);break;}
       case "fx":{if(!HZ[x.c])warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});
         if(!x.dur&&HZ[x.c])warns.push({id:x.id,m:"「"+x.c+"」没记持续回合，按 "+HZ[x.c].turns+" 回合算"});
         E.addHazard(x.side,x.row,x.c,x.dur||undefined);break;}

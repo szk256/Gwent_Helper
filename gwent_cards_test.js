@@ -69,5 +69,36 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); P(g, 'me', '围攻', 'r'); ok(g.units('me').some(u => u.name === '加强型投石机'), '围攻序章：生成加强型投石机');
   P(g, 'me', '弩炮', 'r'); ok(g.units('me').some(u => u.name === '攻城槌'), '围攻第一章：生成攻城槌');
 }
+
+// ---------- 松鼠党 ----------
+{ // 和谐：打出主类别不同的非中立单位 +1
+  const g = game(); const h = P(g, 'op', '新生树精', 'm');
+  P(g, 'op', '矿工', 'm'); P(g, 'op', '伊森格林', 'r'); P(g, 'op', '矿工', 'r');
+  ok(h.power === 5 + 1 + 1 + 1, '和谐：自身（树精）、矮人、精灵各 +1，第二个矮人不加');
+}
+{ // 共生：打出自然牌生成游荡的树人，战力 = 共生数量
+  const g = game(); P(g, 'op', '橡树之地护卫', 'm'); P(g, 'op', '树精附魔师', 'r');
+  const t = P(g, 'op', '科德温骑士', 'm'); g.chooser = () => [t]; g.play('op', '淬火', null, null, { player: 'op' });
+  const tr = g.units('op').find(u => u.name === '游荡的树人');
+  ok(tr && tr.power === 2, '共生：2 个共生单位 → 树人 2');
+}
+{ // 陷阱：焚烧陷阱背面朝上，对手打出单位时翻开并造成 5 点伤害
+  const g = game(); const tp = P(g, 'op', '焚烧陷阱', 'r'); ok(tp.status.ambush, '陷阱打出时背面朝上');
+  const u = P(g, 'me', '亚甸槌击者', 'm'); ok(u.power === 0 || !g.find(u.uid), '焚烧陷阱：对手打出单位 → 5 伤害');
+  ok(!tp.status.ambush, '陷阱触发后翻开');
+}
+{ // 做炸弹：唯一单位时改为 4 伤害
+  const g = game(); const e = P(g, 'me', '科德温骑士', 'm'); g.chooser = () => [e]; g.play('op', '做炸弹', null, null, { player: 'op' });
+  ok(e.row === 'r' && e.power === 1 && !e.status.bleed, '做炸弹：移到空排 → 4 伤害');
+}
+{ // 游击战术（领袖）：移动敌军并 1 伤害；维里赫德旅被移动 → 随机 2 伤害
+  const g = game(); const v = P(g, 'op', '维里赫德旅', 'm'); const e = P(g, 'me', '科德温骑士', 'm');
+  g.chooser = req => [req.kind === 'random' ? e : v]; g.useAbility('op', '游击战术');
+  ok(v.row === 'r' && v.power === 7 && e.power === 3, '游击战术移动友军 +3；维里赫德旅被移动 → 2 伤害');
+}
+{ // 备用计划：对手上一个打出的单位 2 伤害
+  const g = game(); P(g, 'me', '科德温骑士', 'm'); const last = P(g, 'me', '亚甸槌击者', 'm'); g.play('op', '备用计划', null, null, { player: 'op' });
+  ok(last.power === 3, '备用计划：打对手上一个打出的单位');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
