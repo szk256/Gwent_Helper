@@ -163,8 +163,11 @@ function migrate(){const m=n=>EN2ZH[n]||n;let ch=false;const mm=n=>{const r=m(n)
 function addCustom(){(db.custom||[]).forEach(x=>{if(BY[x.n])return;const c={i:C.length,n:x.n,f:x.f,col:x.col,t:x.t,pw:x.pw||"-",pv:+x.pv||0,rar:"",tags:"自定义",tx:x.tx||"",en:"",txe:"",ser:"custom",custom:true};c.orig={pw:c.pw,pv:c.pv,tx:c.tx};C.push(c);BY[c.n]=c;});}
 // 双阵营牌：数据里只有一个阵营，另一个阵营写在这里；用户可在卡牌详情里改（存进 edits.f2）
 const DUAL={"神殿守卫":["NR"]};
+// 按类别整组跨阵营：带这些类别的牌也属于对应阵营（用户说明：火誓者北方王国也能用）
+const DUAL_TAG={"火誓者":["NR"]};
+const dualOf=c=>{const out=new Set(DUAL[c.n]||[]);for(const[t,fs]of Object.entries(DUAL_TAG))if(c.f!=="NE"&&(c.tags||"").split(/[,、]\s*/).includes(t))fs.forEach(f=>{if(f!==c.f)out.add(f);});return[...out];};
 const inFac=(c,f)=>c.f===f||(c.f2||[]).includes(f);
-function applyEdits(){C.forEach(c=>{const e=db.edits[c.n];Object.assign(c,c.orig,{alias:"",f2:(e&&e.f2)||DUAL[c.n]||[]});if(e){if(e.pv!=null)c.pv=e.pv;if(e.pw!=null)c.pw=e.pw;if(e.tx)c.tx=e.tx;c.alias=e.alias||"";}});}
+function applyEdits(){C.forEach(c=>{const e=db.edits[c.n];Object.assign(c,c.orig,{alias:"",f2:(e&&e.f2)||dualOf(c)});if(e){if(e.pv!=null)c.pv=e.pv;if(e.pw!=null)c.pw=e.pw;if(e.tx)c.tx=e.tx;c.alias=e.alias||"";}});}
 async function load(){try{const raw=await readRaw();if(raw)db=JSON.parse(raw);}catch(e){}
   if(!db.games.length&&!db.decks.length){for(const k of OLDKEYS){try{const s=localStorage.getItem(k);if(s){ui.oldData=s;break;}}catch(e){}}}
   if(migrate())persist();addCustom();applyEdits();
@@ -732,7 +735,7 @@ function openCard(c){$("#cdN").textContent=c.n;
   $("#cdF2row").classList.toggle("hidden",c.f==="NE"||isLeader(c));drawF2();
   $("#cdEn").textContent=c.txe?"游戏当前英文描述（数值以这个为准，上面的中文描述可能是旧版本）：\n"+c.txe:"";
   $("#cdOk").onclick=()=>{const pv=parseInt($("#cdPv").value),pw=$("#cdPw").value.trim(),tx=$("#cdTx").value.trim(),al=$("#cdAl").value.trim();const e={};
-    if(!isNaN(pv)&&pv!==c.orig.pv)e.pv=pv;if(pw&&pw!==String(c.orig.pw))e.pw=pw;if(tx&&tx!==c.orig.tx)e.tx=tx;if(al)e.alias=al;const d2=DUAL[c.n]||[];if(f2.slice().sort().join()!==d2.slice().sort().join())e.f2=f2;
+    if(!isNaN(pv)&&pv!==c.orig.pv)e.pv=pv;if(pw&&pw!==String(c.orig.pw))e.pw=pw;if(tx&&tx!==c.orig.tx)e.tx=tx;if(al)e.alias=al;const d2=dualOf(c);if(f2.slice().sort().join()!==d2.slice().sort().join())e.f2=f2;
     if(Object.keys(e).length)db.edits[c.n]=e;else delete db.edits[c.n];applyEdits();persist();$("#cdlg").close();render();toast("已保存修改");};
   $("#cdReset").onclick=()=>{delete db.edits[c.n];applyEdits();persist();$("#cdlg").close();render();toast("已恢复默认");};
   $("#cdlg").showModal();}
