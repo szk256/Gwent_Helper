@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="ffe15da";</script>
+<script>window.GWENT_BUILD="72966ce";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -500,6 +500,7 @@ const DEFAULT_RULES = {
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
   passedTurnsTick: true,      // 停牌之后停牌方的回合开始/结束效果照常结算（NamuWiki；用户确认对方停牌后数值还会涨）。另一方出完最后一张牌强制停牌时没有这个回合（对局簿 deferPassedTick）
+  veteranOffBoard: true,      // 老兵在手牌/牌组里也加（用户实测：手牌、牌组都会变）
   passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
@@ -912,7 +913,7 @@ class Game {
     const ech = this.s.sides[player].echoed;
     if (opts.fromDeck && ech && ech.includes(name)) { ech.splice(ech.indexOf(name), 1); u.status.doomed = true; }
     if (!this._place(u, side, row, pos)) return null;
-    if (!opts.spawned) this._deckBuff(u, player);
+    if (!opts.spawned) { this._deckBuff(u, player); this._veteranOffBoard(u); }
     this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled, player });
     this._enter(u, true, Object.assign({}, opts, { player }));
     if (opts.power != null && this.find(u.uid) && opts.power !== u.power) {
@@ -929,7 +930,7 @@ class Game {
   summon(name, side, row, pos, src) {
     const u = this.makeUnit(name, side); u.origin = 'summon';
     if (!this._place(u, side, row, pos)) return null;
-    this._deckBuff(u, side);
+    this._deckBuff(u, side); this._veteranOffBoard(u);
     this.log('召唤', { side, name, uid: u.uid, row, by: src && src.name });
     this._enter(u, false, {});
     return u;
@@ -945,6 +946,12 @@ class Game {
     return u;
   }
 
+  // 老兵（用户实测：第二局开局手牌里的图尔赛克家族入侵者 5 → 6）：手牌、牌组里的也加（牌组也实测过），第二局 +1、第三局 +2
+  _veteranOffBoard(u) {
+    if (!u.def.veteran || !this.rules.veteranOffBoard || !(this.s.round > 0)) return;
+    const n = u.def.veteran * this.s.round; u.base += n; u.power += n;
+    this.log('老兵（手牌/牌组）', { uid: u.uid, name: u.name, n });
+  }
   // 牌组里的单位受到的增益（拉尔维克的埃兰）：这张牌之后上场时带上（按同名牌里增益最高的一张算）
   _deckBuff(u, side) {
     const L = this.s.sides[side].deckBuff[u.name];
@@ -1074,11 +1081,12 @@ class Game {
   // 变形：变成另一张牌（默认按新牌的基础战力；keepPower 保留当前战力）
   transform(u, name, src, o = {}) {
     if (!u || !this.find(u.uid)) return;
-    const d = this.def(name), p = u.power;
+    const d = this.def(name), p = u.power, b0 = u.base;
     Object.assign(u, { name, def: d, base: d.base || 0, tags: d.tags || [], unmodeled: !!d.unmodeled,
       status: Object.assign({}, d.status || {}), infused: [], blessFired: {}, orderUsed: 0, cd: 0, zeal: !!d.zeal,
       timer: d.timer ? d.timer.n : (d.timerN || null), pat: d.patience ? (d.patInit || 0) : null });
-    u.power = o.keepPower ? p : u.base;
+    // 战力不变的变形（被诅咒的骑士）：基础战力也保留原来的（用户实测：变成 6 战力、显示为增益的被诅咒的骑士）
+    if (o.keepPower) { u.power = p; u.base = b0; } else u.power = u.base;
     this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
     this.checkBless(u);
   }
@@ -1514,7 +1522,10 @@ class Game {
       const keep = [];
       for (const u of s.sides[sd].rows[r]) {
         if (u.status.resilience) {
-          u.status.resilience = false; u.armor = this.rules.resilienceKeepsArmor ? (u.def.armor || 0) : 0; keep.push(u);
+          u.armor = this.rules.resilienceKeepsArmor ? (u.def.armor || 0) : 0; keep.push(u);
+          // 全部还原（用户实测）：状态回到卡面默认、耐性归零；已用掉的指令、已触发的神赐不恢复
+          u.status = Object.assign({}, u.def.status || {}, { resilience: false }); u.infused = [];
+          u.pat = u.def.patience ? (u.def.patInit || 0) : null; u.timer = u.def.timer ? u.def.timer.n : (u.def.timerN || null);
           u.power = this.rules.resilienceKeepsDamage ? Math.min(u.power, u.base) : u.base;
         } else {
           (this.isDoomed(u) ? s.sides[sd].banished : s.sides[sd].grave).push(u.name);
@@ -1547,7 +1558,10 @@ class Game {
     const v = this.makeUnit(u.name, side);
     Object.assign(v, { base: u.base, armor: this.rules.resilienceKeepsArmor ? (u.def.armor || 0) : 0, origin: u.origin, enteredTurn: -1,
       power: this.rules.resilienceKeepsDamage ? Math.min(u.power, u.base) : u.base,
-      status: Object.assign({}, u.status, { resilience: false }), infused: [] });
+      // 用户实测：留场的单位战力、状态“全部还原”（状态回到卡面默认、耐性归零），但已用掉的指令和已触发的神赐不恢复
+      //（冥想的法师第二局没有指令了；范德格里夫特第二局不再触发神赐）
+      status: Object.assign({}, u.def.status || {}, { resilience: false }), infused: [], blessFired: Object.assign({}, u.blessFired),
+      orderUsed: u.orderUsed || 0, cd: u.cd || 0, bonusCharges: u.bonusCharges || 0 });
     v.row = row; this.s.sides[side].rows[row].push(v);
     this.log('留场', { side, name: v.name, uid: v.uid, row, power: v.power });
     return v;
