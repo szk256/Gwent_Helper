@@ -55,7 +55,8 @@ def reader():
 def scan_frame(m, im):
     import layout
     ent = {'rows': board.names(m, board.scan(m, im)), 'sharp': sharpness(im), 'show': None,
-           'score': reader().scores(im), 'smin': layout.get(im)['sharp_min']}
+           'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'lead': reader().leader(im),
+           'turn': reader().turn(im)}
     sc = detect.showcase(im)
     if sc is not None:
         res = m.match(sc)
@@ -99,8 +100,11 @@ def scan_dir(m, d, jobs=1):
         k = os.path.basename(p)
         ent = done.get(k)
         if ent is not None and 'rows' in ent:
-            if 'score' not in ent:  # 旧缓存：补读总分（很快）
-                ent['score'] = reader().scores(cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR))
+            if 'score' not in ent or 'lead' not in ent or 'turn' not in ent:  # 旧缓存：补读总分、领袖、回合（很快）
+                im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+                ent['score'] = reader().scores(im)
+                ent['lead'] = reader().leader(im)
+                ent['turn'] = reader().turn(im)
             continue
         im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
         if ent is not None:  # 旧缓存只有各排牌名：补上清晰度和展示
@@ -138,6 +142,7 @@ class Tracker:
         self.less = {}       # (排, 名) -> (连续次数, 首次时间, 看到的张数)
         self.vanish_since = None
         self.blur_seen = False
+        self.lead = {}
         self.shows = []      # [(时间, 名)] 还没对上进场的展示
         self.events = []     # [(时间, 类型, 方, 名, 排)]
 
@@ -148,6 +153,8 @@ class Tracker:
         if ent.get('show') and (not self.shows or self.shows[-1][1] != ent['show'] or t - self.shows[-1][0] > 3):
             self.shows.append((t, ent['show']))
         sc = ent.get('score') or (None, None)
+        if ent['sharp'] >= ent.get('smin', 300) and sc[0] is not None and sc[1] is not None:
+            self.update_leader(t, ent.get('lead') or (None, None))
         if ent['sharp'] < ent.get('smin', 300) or sc[0] is None or sc[1] is None:
             # 调度、墓场、选牌、过场画面（背景模糊、右侧没有总分），或开局前的界面：不看
             self.blur_seen = True
@@ -196,6 +203,38 @@ class Tracker:
             else:
                 self.more.pop(k, None)
                 self.less.pop(k, None)
+
+    # 领袖剩余次数：读数稳定下降 = 用了；标牌消失很久 = 用完了（我方标牌用完就消失；对方的时隐时现，要等更久）
+    # 对方的次数标牌只在对方回合显示，所以对方只看读数下降（最后一次用完看不出来）
+    LEAD_RUN, LEAD_GONE = 3, {'我方': 8, '对方': 10 ** 9}
+
+    def update_leader(self, t, vals):
+        for side, v in zip(('对方', '我方'), vals):
+            st = self.lead.setdefault(side, {'n': None, 'val': None, 'run': 0, 'gone': 0, 't': t})
+            if v is None:
+                st['gone'] += 1
+                st['run'], st['val'] = 0, None
+                if st['n'] and st['gone'] >= self.LEAD_GONE[side]:
+                    for _ in range(st['n']):
+                        self.events.append((st['t'], '领袖', side, '', ''))
+                    st['n'] = 0
+                continue
+            if st['gone']:
+                st['t'] = t
+            st['gone'] = 0
+            if v > 9:
+                continue  # 读错（领袖次数都是个位数）
+            st['run'] = st['run'] + 1 if v == st['val'] else 1
+            if v != st['val']:
+                st['t'] = t
+            st['val'] = v
+            if st['run'] >= self.LEAD_RUN:
+                if st['n'] is None or (v == st['n'] + 1 and side == '我方'):
+                    st['n'] = v            # 第一次读到，或次数恢复 1（皇家激励刷新等）
+                elif v < st['n']:
+                    for _ in range(st['n'] - v):
+                        self.events.append((st['t'], '领袖', side, '', ''))
+                    st['n'] = v
 
     def enter(self, t, k):
         row, name = k

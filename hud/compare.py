@@ -62,6 +62,11 @@ def main():
             tot['extra'] += sum(extra.values())
             print(f"  {lab}：对局簿打出 {sum(tp[who].values())} 张，认出 {hit}；"
                   f"漏 {dict(miss) or '无'}；多记 {dict(extra) or '无'}")
+            for a, name in (('leader', '领袖'), ('pass', '停牌')):
+                nt = sum(1 for x in t['log'] if x.get('r', 0) == r and x.get('who') == who and x.get('a') == a)
+                nh = sum(1 for x in g['log'] if x.get('r', 0) == r and x.get('who') == who and x.get('a') == a)
+                if nt or nh:
+                    print(f"    {name}：对局簿 {nt} 次，hud {nh} 次")
     n = tot['hit'] + tot['miss']
     print(f"\n合计：对局簿打出 {n} 张，认出 {tot['hit']}（{tot['hit'] / max(1, n):.0%}），多记 {tot['extra']} 张")
 

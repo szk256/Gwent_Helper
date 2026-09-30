@@ -183,7 +183,7 @@ class BoardWatcher(threading.Thread):
                         self.tr.shows.append((st, name))
                     ent['show'] = None
                     self.tr.update(t0, ent)
-                    self.states.append((t0, {k: ent.get(k) for k in ('score', 'sharp', 'smin')}))
+                    self.states.append((t0, {k: ent.get(k) for k in ('score', 'sharp', 'smin', 'turn')}))
                     snap = self.tr.snapshot()
                 if self.frames_dir:
                     name = time.strftime('%H%M%S', time.localtime(t0)) + f'_{int(t0 * 10) % 10}.jpg'
@@ -194,8 +194,9 @@ class BoardWatcher(threading.Thread):
         with self.lock:
             events = self.tr.snapshot()
             scores = export.stable_scores(self.states)
+            runs = export.turn_runs(self.states)
         return export.build_game(events, scores, date, {c['name']: c for c in (self.m.cards if self.m else [])},
-                                 my_deck=my_deck)
+                                 my_deck=my_deck, runs=runs)
 
 
 class App:

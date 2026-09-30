@@ -47,6 +47,13 @@ def mask_score(bgr):
     return ((v > 150) & ((s < 70) | ((h >= 17) & (h <= 32) & (s < 200)))).astype(np.uint8)
 
 
+def mask_lead(bgr):
+    """领袖剩余次数：灰白（不能用时）或金色 / 橙色（可以用时）。"""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    return (((v > 110) & (s < 90)) | ((h >= 8) & (h <= 32) & (s > 60) & (v > 140))).astype(np.uint8)
+
+
 def mask_power(bgr):
     """战力数字：白色（基础）、绿色（增益）、红色（受伤）。"""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
@@ -167,6 +174,26 @@ class Reader:
         import layout
         L = layout.get(frame)
         return (self.number(mask_score(crop(frame, L['score_op']))), self.number(mask_score(crop(frame, L['score_me']))))
+
+    def turn(self, frame):
+        """轮到谁：我方总分后面出现蓝旗 = 'me'，否则 'op'。"""
+        import layout
+        box = layout.get(frame).get('turn_me')
+        if not box:
+            return None
+        hsv = cv2.cvtColor(crop(frame, box), cv2.COLOR_BGR2HSV)
+        h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+        blue = ((h >= 100) & (h <= 125) & (s > 120) & (v > 50)).mean()
+        return 'me' if blue > 0.05 else 'op'
+
+    def leader(self, frame):
+        """(对方, 我方) 领袖剩余次数；标牌不在（用完了）或读不出为 None。"""
+        import layout
+        L = layout.get(frame)
+        if not L.get('lead_op'):
+            return (None, None)
+        return tuple(self.number(mask_lead(crop(frame, L[k])), min_h=int(0.2 * crop(frame, L[k]).shape[0]))
+                     if L.get(k) else None for k in ('lead_op', 'lead_me'))
 
     def power(self, frame, cx, cy, h):
         """场上一张牌的战力：cx, cy, h 为画面比例（board.scan(detail=True) 给的中心和高度）。特殊牌 / 神器没有数字，返回 None。"""
