@@ -96,6 +96,61 @@ ok(g.score('me').total===0,'非坚韧单位清场');
   const z=r3.play('op','丙','m'); r3.addHazard('op','m','灾厄',1); r3.endTurn();
   ok(z.power===5, '灾厄：只有 1 个单位时 3 点都打它');
 }
+
+// ---------- 条件词条、计时显示 ----------
+{
+  const cs = { 大:{name:'大',base:10}, 小:{name:'小',base:3}, 兵:{name:'兵',base:4,tags:['士兵']}, 夹:{name:'夹',base:2},
+    计:{name:'计',base:1,timerN:2}, 充:{name:'充',base:1,charges:2,order:()=>{}} };
+  const q = new Game({cards:cs, first:'me'}); q.startRound();
+  q.play('me','大','m'); q.play('op','小','m');
+  ok(q.dominance('me') && !q.dominance('op'), '统御：控制场上战力最高的单位');
+  ok(!q.might('me'), '威势：远程排没有 10 战力单位时不成立');
+  q.play('me','大','r'); ok(q.might('me'), '威势：两排都有 ≥10');
+  const b1=q.play('me','大','r'); q.boost(b1,5); ok(q.feast('me'), '夜宴：远程排 10+15=25');
+  q.play('op','兵','r'); const j=q.play('op','夹','r'); q.play('op','兵','r'); ok(q.harmonyFlank(j), '操控：两侧都是士兵');
+  const sm=q.s.sides.op.rows.m[0]; q.damage(sm,1); ok(q.bloodthirst('me',1)&&!q.bloodthirst('me',2), '战狂：受伤敌军数');
+  ok(q.initiative('me'), '先机：本回合没用指令');
+  const t=q.play('me','计','m'); ok(q.counters(t).timer===2, '计时：显示剩余回合');
+  q.endTurn(); ok(t.timer===1, '计时：己方回合结束 -1');
+  const c=q.play('op','充','m'); ok(q.counters(c).charges===2, '充能：显示剩余次数');
+}
+
+// ---------- 金币、潜伏、伏击、回响 ----------
+{
+  const cs = {
+    商人:{name:'商人',base:3,profit:4},
+    献金兵:{name:'献金兵',base:2,tributeN:3,tribute:{n:3,run:c=>c.boost(c.self,5)}},
+    费用兵:{name:'费用兵',base:4,fee:{n:2,run:c=>c.boost(c.self,1)}},
+    疯子:{name:'疯子',base:6,insanity:true,fee:{n:3,run:c=>c.boost(c.self,1)}},
+    恐吓兵:{name:'恐吓兵',base:3,intimidate:1,abilities:[]},
+    罪行:{name:'罪行',type:'special',tags:['罪行'],profit:3},
+    叛徒:{name:'叛徒',base:5,disloyal:true},
+    伏兵:{name:'伏兵',base:4,ambush:true,deploy:c=>c.boost(c.self,9)},
+    靶:{name:'靶',base:5}, 回:{name:'回',base:2,echo:true},
+  };
+  const G = new Game({cards:cs, first:'me'});
+  // 恐吓是 def() 里合成的通用能力；测试用 registerCard 的假卡要手动走一遍
+  cs.恐吓兵.abilities=[{on:'cardPlayed',when:(c,e)=>e.side===c.side&&(e.def.tags||[]).includes('罪行'),run:c=>c.boost(c.self,1)}];
+  G.startRound();
+  G.play('me','商人','m'); ok(G.s.sides.me.coins===4, '利润：打出时获得 4 金币');
+  const tb=G.play('me','献金兵','m'); ok(G.s.sides.me.coins===1 && tb.power===7, '献金：金币够时付 3 并触发');
+  const tb2=G.play('me','献金兵','m'); ok(G.s.sides.me.coins===1 && tb2.power===2, '献金：金币不够不触发');
+  G.gainCoins('me',20); ok(G.s.sides.me.coins===9, '金币上限 9');
+  const fe=G.play('me','费用兵','r'); G.order(fe.uid); ok(G.s.sides.me.coins===7 && fe.power===5, '费用：花 2 金币触发');
+  G.s.sides.me.coins=1; const mad=G.play('me','疯子','r'); G.order(mad.uid); ok(mad.power===4 && G.s.sides.me.coins===1, '癫狂：金币不够改为自伤 3，再 +1');
+  const it=G.play('me','恐吓兵','r'); G.play('me','罪行'); ok(it.power===4 && G.s.sides.me.coins===4, '恐吓：打出罪行牌 +1；罪行牌利润 3');
+  const tr=G.play('me','叛徒','m'); ok(tr.side==='op' && tr.status.spying, '不忠：落到对面半场并获得潜伏');
+  G.seize(tr,'me'); ok(tr.side==='me' && !tr.status.spying, '抓捕：已有潜伏的改为移除潜伏');
+  const tg=G.play('op','靶','m'); G.seize(tg,'me'); ok(tg.side==='me' && tg.status.spying, '抓捕：移到己方同排并获得潜伏');
+  const am=G.play('op','伏兵','r'); ok(am.status.ambush && am.power===4, '伏击：背面朝上，部署不触发');
+  G.lock(am); ok(!am.status.ambush, '伏击被锁定：翻开');
+  const bt=G.play('op','靶','r'); G.addStatus(bt,'bounty'); const c0=G.s.sides.me.coins; G.destroy(bt); ok(G.s.sides.me.coins===Math.min(9,c0+5), '赏金：被摧毁时对手获得其基础战力的金币');
+  const rv=G.play('me','回','r'); G.destroy(rv);
+  G.s.round=1; G.s.sides.me.coins=7; G.startRound();
+  ok(G.s.sides.me.coins===3, '金币：下一小局减半（向下取整）');
+  ok(G.s.sides.me.deck[0]==='回' && !G.s.sides.me.grave.includes('回'), '回响：小局开始从墓场回到牌组顶端');
+  const rv2=G.play('me','回','r',null,{fromDeck:true}); ok(rv2.status.doomed, '回响回来的牌再打出带佚亡');
+}
 console.log('\n快照:', JSON.stringify(g.snapshot().op.rows));
 console.log('校准:', calibrate(g,[{me:g.s.results[0].me, op:g.s.results[0].op}]));
 console.log(fails? `\n${fails} 项失败`:'\n全部通过');

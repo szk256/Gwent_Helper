@@ -13,6 +13,21 @@ function inline(tag, file, text) {
   return `<${tag}>\n${text}${text.endsWith('\n') ? '' : '\n'}</${tag}>`;
 }
 
+// 先从 cards.js 的注释生成卡牌标记（偏差报告用）：ASSUME = 推测；用改战力 / 推算不了 / 按记录 = 需要手动
+{
+  const flags = {}; let cur = null;
+  for (const line of read('cards.js').split('\n')) {
+    const names = [...line.matchAll(/B\['([^']+)'\]\s*=/g)].map(m => m[1]);
+    if (names.length) cur = names[names.length - 1];
+    const kind = /ASSUME/.test(line) ? '推测' : /用改战力|推算不了|无法推算|按记录/.test(line) ? '需手动' : null;
+    if (!kind) continue;
+    for (const n of (names.length ? names : cur ? [cur] : [])) if (!flags[n] || kind === '推测') flags[n] = kind;
+  }
+  const js = '// 由 build.js 从 cards.js 注释生成，不要手改\n(function (root) { const F = ' + JSON.stringify(flags) + ';\n' +
+    "if (typeof module !== 'undefined' && module.exports) module.exports = F; else root.GwentCardFlags = F; })(this);\n";
+  fs.writeFileSync(path.join(SRC, 'cardflags.js'), js);
+}
+
 let html = read('index.html');
 const used = [];
 // 用函数做替换，避免 JS 内容里的 $& $1 之类被当成替换模式
