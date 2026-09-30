@@ -85,9 +85,27 @@ def joint_powers(cands, score):
     return pws, ok
 
 
+_MINE = {}
+DECK_SPEC = None   # 卡组代码 / 文件路径；None = hud/deck.txt
+
+
+def mine_matcher(m):
+    """我方半场用的子库：hud/deck.txt 里的卡组 + 同阵营 / 中立衍生牌。没有卡组返回 None（用全库）。"""
+    if id(m) not in _MINE:
+        import deck
+        dk = deck.load(DECK_SPEC, m.cards)
+        if not dk:
+            _MINE[id(m)] = None
+        else:
+            facs = {c['fac'] for c in m.cards if c['name'] in dk} | {'NE'}
+            names = set(dk) | {c['name'] for c in m.cards if c['set'] == 'token' and c['fac'] in facs}
+            _MINE[id(m)] = m.subset(names)
+    return _MINE[id(m)]
+
+
 def scan_frame(m, im):
     import layout
-    det = board.scan(m, im, detail=True)
+    det = board.scan(m, im, detail=True, mine=mine_matcher(m))
     rows = board.names(m, {r: [c[:3] for c in cs] for r, cs in det.items()})
     score = reader().scores(im)
     cands = {}
@@ -103,7 +121,7 @@ def scan_frame(m, im):
     pws, ok = joint_powers(cands, score)
     ent = {'rows': rows, 'pw': pws, 'pw_ok': ok, 'sharp': sharpness(im), 'show': None,
            'score': score, 'smin': layout.get(im)['sharp_min'], 'lead': reader().leader(im),
-           'turn': reader().turn(im), 'cnt': reader().counts(im)}
+           'turn': reader().turn(im), 'cnt': reader().counts(im), 'v2': 1}  # v2：我方半场用卡组子库
     sc = detect.showcase(im)
     if sc is not None:
         res = m.match(sc)
@@ -140,7 +158,7 @@ def scan_dir(m, d, jobs=1):
             done = json.load(f)
     frames = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=frame_time)
     t0 = time.time()
-    todo = [p for p in frames if 'pw_ok' not in (done.get(os.path.basename(p)) or {})]
+    todo = [p for p in frames if 'v2' not in (done.get(os.path.basename(p)) or {})]
     if jobs > 1 and len(todo) > 20:
         import multiprocessing as mp
         with mp.Pool(jobs, _init_worker) as pool:
@@ -152,7 +170,7 @@ def scan_dir(m, d, jobs=1):
     for i, p in enumerate(frames):
         k = os.path.basename(p)
         ent = done.get(k)
-        if ent is not None and 'pw_ok' in ent:
+        if ent is not None and 'v2' in ent:
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
@@ -196,6 +214,7 @@ class Tracker:
         self.vanish_since = None
         self.blur_seen = False
         self.lead = {}
+        self.last_score, self.zero_n, self.zero_t, self.score_run = None, 0, None, 0
         self.extra = {}      # (时间, 牌名, 排) -> {'pos': 排内第几个（从 0 数）, 'pw': 落地战力}
         self.cur = None
         self.shows = []      # [(时间, 名)] 还没对上进场的展示
@@ -217,6 +236,24 @@ class Tracker:
         sc = ent.get('score') or (None, None)
         if ent['sharp'] >= ent.get('smin', 300) and sc[0] is not None and sc[1] is not None:
             self.update_leader(t, ent.get('lead') or (None, None))
+            # 双方总分从大于 0 回到 0:0（连续两帧）= 新小局开始（场上牌少时“一大半消失”的规则触发不了）
+            if sc[0] == 0 and sc[1] == 0 and self.last_score and sum(self.last_score) >= 5 and self.score_run >= 3                     and not any(e[1] == '小局结束' and t - e[0] < 60 for e in self.events):
+                self.zero_n += 1
+                if self.zero_n >= 2:
+                    if not any(e[1] == '小局结束' and t - e[0] < 30 for e in self.events):
+                        self.events.append((self.zero_t, '小局结束', '', '', ''))
+                        self.count = {k: c for k, c in self.count.items() if k[0] == '手牌'}
+                        self.more, self.less, self.vanish_since = {}, {}, None
+                    self.last_score, self.zero_n = (0, 0), 0
+            else:
+                if self.zero_n == 0:
+                    self.zero_t = t
+                self.zero_n = 0 if (sc[0], sc[1]) != (0, 0) else self.zero_n
+                if (sc[0], sc[1]) != (0, 0):
+                    self.score_run = self.score_run + 1 if (sc[0], sc[1]) == self.last_score else 1
+                    self.last_score = (sc[0], sc[1])
+            if (sc[0], sc[1]) == (0, 0) and self.zero_n == 1:
+                self.zero_t = self.zero_t or t
         if ent['sharp'] < ent.get('smin', 300) or sc[0] is None or sc[1] is None:
             # 调度、墓场、选牌、过场画面（背景模糊、右侧没有总分），或开局前的界面：不看
             self.blur_seen = True

@@ -122,7 +122,7 @@ def depart_reason(states, t, side):
 
 
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
-               runs=None, extra=None, sync_states=None, states=None):
+               runs=None, extra=None, sync_states=None, states=None, deck_filter=True):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
     sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
@@ -228,8 +228,24 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                           'hud': '画面读到的战力'}, t)
                     u[2] = p
 
+    used = Counter()   # 我方每张牌已经打出 / 召唤的次数（不超过卡组张数；回手的退回一次）
+
+    def over_deck(x):
+        """我方可收集的牌打出 / 召唤次数超过卡组张数 = 误识别（手牌区时有时无、边缘误判）。"""
+        if not my_deck or not deck_filter or x.get('who') != 'me' or x['a'] not in ('play', 'summon'):
+            return False
+        c = cards_by_name.get(x.get('c'), {})
+        if c.get('set') == 'token' or x.get('c') not in my_deck or x.get('via') == x.get('c'):
+            return False  # 衍生牌、卡组外、同名复制（不朽者骑兵这类）不占卡组张数
+        if used[x['c']] >= my_deck[x['c']]:
+            return True
+        used[x['c']] += 1
+        return False
+
     def push(x, t):
         nonlocal n
+        if over_deck(x):
+            return
         ex = extra.get((t, x.get('c'), cur_row[0])) if x['a'] in ('play', 'summon') else None
         if ex:
             if ex.get('pos') is not None and x.get('row'):
@@ -284,17 +300,72 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 return n2
         return None
 
+    # 比分变化当证据：打出单位 → 这一方总分上涨；打出特殊牌 → 几秒内双方总分有变化。没有证据的当误识别（手牌区误认、拖动）
+    def score_delta(t, lo=1.0, hi=10.0):
+        before = next((s for tt, s in reversed(scores) if tt <= t - 0.3), None)
+        after = next((s for tt, s in scores if t + lo <= tt <= t + hi and s != before), None)
+        if before is None:
+            return None
+        if after is None:
+            return (0, 0) if any(t + lo <= tt <= t + hi for tt, _s in scores) else None
+        return (after[0] - before[0], after[1] - before[1])
+
+    drop = set()
+    mode = os.environ.get('HUD_DECK_MODE', 'cap')   # off / cap（只按卡组张数封顶）/ evidence（再要求比分变化）
+    if mode == 'off':
+        deck_filter = False
+    if my_deck and deck_filter and mode == 'cap':
+        # 超出卡组张数时，优先保留有比分变化作证据的那几次（证据一样再按先后）
+        occ = {}
+        for i, (t, kind, side, name, row) in enumerate(events):
+            c = cards_by_name.get(name, {})
+            if side != '我方' or name not in my_deck or c.get('set') == 'token':
+                continue
+            if kind == '离手' and c.get('type') == '特殊':
+                d = score_delta(t, 0.5, 12)
+                occ.setdefault(name, []).append((0 if d and d != (0, 0) else 1, t, i, None))
+            elif kind in ('打出', '进场') and row != '手牌' and c.get('type') in ('单位', '神器'):
+                d = score_delta(t, 0.5, 10)
+                end = next((j for j in range(i + 1, len(events)) if events[j][1] in ('离场', '小局结束')
+                            and (events[j][1] == '小局结束' or (events[j][3] == name and events[j][4] == row))), None)
+                occ.setdefault(name, []).append((0 if d and d[0] > 0 else 1, t, i, end))
+        for name, lst in occ.items():
+            for _ev, _t, i, end in sorted(lst)[my_deck[name]:]:
+                drop.add(i)
+                if end is not None and events[end][1] == '离场':
+                    drop.add(end)
+    if my_deck and deck_filter and mode == 'evidence':
+        for i, (t, kind, side, name, row) in enumerate(events):
+            c = cards_by_name.get(name, {})
+            if side != '我方' or name not in my_deck or c.get('set') == 'token':
+                continue
+            if kind == '离手' and c.get('type') == '特殊':
+                d = score_delta(t, 0.5, 12)
+                if d is not None and d == (0, 0):
+                    drop.add(i)
+            elif kind in ('打出', '进场') and row != '手牌' and c.get('type') == '单位':
+                d = score_delta(t, 0.5, 10)
+                if d is not None and d[0] <= 0:
+                    drop.add(i)
+                    end = next((j for j in range(i + 1, len(events)) if events[j][1] in ('离场', '小局结束')
+                                and (events[j][1] == '小局结束' or (events[j][3] == name and events[j][4] == row))), None)
+                    if end is not None and events[end][1] == '离场':
+                        drop.add(end)
+
     cur_row = [None]
-    for t, kind, side, name, row in events:
+    for ei, (t, kind, side, name, row) in enumerate(events):
+        if ei in drop:
+            continue
         cur_row[0] = row
         c = cards_by_name.get(name, {})
-        if my_deck and side == '我方' and name and name not in my_deck and c.get('set') != 'token':
-            continue
+        if my_deck and side == '我方' and name and name not in my_deck and                 (c.get('set') != 'token' or c.get('fac') not in (my_fac, 'NE')):
+            continue  # 我方只认卡组里的牌，和本阵营 / 中立的衍生牌
         if kind == '离手' and c.get('type') == '特殊' and side == '我方':
             # 我方手牌里的特殊牌消失（不是闪烁）：打出了特殊牌（特殊牌不上场，只能这样看）
             flush_scores(t)
+            k0 = len(log)
             push({'who': 'me', 'a': 'play', 'c': name, 'side': 'me', 'hud': '手牌里消失的特殊牌'}, t)
-            pending_step = True
+            pending_step = pending_step or len(log) > k0
             continue
         if row == '手牌' or kind in ('离手', '抽到') or c.get('type') == '战术':
             continue  # 战术牌：对局簿开局自动放在先手方近战排最左边
@@ -342,6 +413,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             pending_step = True
         elif kind in ('离场', '移动', '回手'):
             why = depart_reason(states, t, side) if kind == '离场' and states else None
+            if (why == '回手' or kind == '回手') and who == 'me' and used[name] > 0:
+                used[name] -= 1   # 回到手牌，可以再打一次
             push({'who': who, 'a': 'note', 'c': f'画面：{name} {why or kind}（{row}）'}, t)
             src = row.split('→')[0]
             u = next((u for u in units.get(src, []) if u[1] == name), None)
@@ -402,7 +475,8 @@ def main():
     my_deck = deck.load(spec, m.cards)
     sync = '--sync-power' in sys.argv
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
-                      runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states)
+                      runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states,
+                      deck_filter='--no-deck-filter' not in sys.argv)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)

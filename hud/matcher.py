@@ -63,6 +63,19 @@ class Matcher:
         self.flann.add([self.desc])
         self.flann.train()
 
+    def subset(self, names):
+        """只在这些牌（牌名）里找的轻量副本（共用卡牌数据，自己一份小索引）：候选少，比值检验放过的正确匹配更多。"""
+        import copy
+        keep_art = {self.arts.index(c['art']) for c in self.cards if c['name'] in names and c['art'] in self.arts}
+        sel = np.isin(self.owner, list(keep_art))
+        sub = copy.copy(self)
+        sub.desc, sub.owner = self.desc[sel], self.owner[sel]
+        sub.geo = self.geo[sel] if self.geo is not None else None
+        sub.flann = cv2.FlannBasedMatcher({'algorithm': 1, 'trees': 4}, {'checks': 64})
+        sub.flann.add([sub.desc])
+        sub.flann.train()
+        return sub
+
     def features(self, bgr):
         g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
         scale = QUERY_H / g.shape[0]

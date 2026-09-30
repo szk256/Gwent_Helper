@@ -439,6 +439,7 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # 4K 缩放下截屏坐标用物理像素
     except Exception:  # noqa: BLE001
         pass
+    timeline.DECK_SPEC = args.deck
     root = tk.Tk()
     App(root, args)
     root.mainloop()
