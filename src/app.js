@@ -118,6 +118,7 @@ function sim(g,r,excl){
     for(const t of E.trace.slice(t0)){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+" 本回合不能用指令"});
+      if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
       if(t.data&&t.data.unmodeled){unmod[t.data.name]=(unmod[t.data.name]||0)+1;}}
   }
   // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
@@ -440,7 +441,8 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
     const unitFace=n=>{const c=BY[n];return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${c&&c.t==="单位"&&c.pw!=="-"?`<span class="upw">${c.pw}</span>`:""}<span class="un">${esc(n)}</span>`;};
 const unitFaceU=u=>{const e=u.eu;if(!e)return unitFace(u.n);const c=BY[u.n];const st=e.status||{};
       const cls=e.power>e.base?"up":e.power<e.base?"dn":"";
-      const marks=[st.shield?"盾":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:"",st.lock?"锁":"",st.poison?"毒":"",st.veil?"遮":"",st.resilience?"坚":""].filter(Boolean).join(" ");
+      const marks=[st.shield?"盾":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:"",st.lock?"锁":"",st.poison?"毒":"",st.veil?"遮":"",st.resilience?"坚":"",
+        e.timer!=null?"计"+e.timer:"",e.def.cooldown!=null&&e.cd>0?"冷"+e.cd:"",e.def.order&&e.def.cooldown==null&&(e.def.charges||1)>1?"充"+Math.max(0,e.def.charges-e.orderUsed):""].filter(Boolean).join(" ");
       return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled?`<span class="unm">?</span>`:""}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
 const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small class="upw">${c.pw}</small>`:"";};
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{

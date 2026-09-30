@@ -96,6 +96,24 @@ ok(g.score('me').total===0,'非坚韧单位清场');
   const z=r3.play('op','丙','m'); r3.addHazard('op','m','灾厄',1); r3.endTurn();
   ok(z.power===5, '灾厄：只有 1 个单位时 3 点都打它');
 }
+
+// ---------- 条件词条、计时显示 ----------
+{
+  const cs = { 大:{name:'大',base:10}, 小:{name:'小',base:3}, 兵:{name:'兵',base:4,tags:['士兵']}, 夹:{name:'夹',base:2},
+    计:{name:'计',base:1,timerN:2}, 充:{name:'充',base:1,charges:2,order:()=>{}} };
+  const q = new Game({cards:cs, first:'me'}); q.startRound();
+  q.play('me','大','m'); q.play('op','小','m');
+  ok(q.dominance('me') && !q.dominance('op'), '统御：控制场上战力最高的单位');
+  ok(!q.might('me'), '威势：远程排没有 10 战力单位时不成立');
+  q.play('me','大','r'); ok(q.might('me'), '威势：两排都有 ≥10');
+  const b1=q.play('me','大','r'); q.boost(b1,5); ok(q.feast('me'), '夜宴：远程排 10+15=25');
+  q.play('op','兵','r'); const j=q.play('op','夹','r'); q.play('op','兵','r'); ok(q.harmonyFlank(j), '操控：两侧都是士兵');
+  const sm=q.s.sides.op.rows.m[0]; q.damage(sm,1); ok(q.bloodthirst('me',1)&&!q.bloodthirst('me',2), '战狂：受伤敌军数');
+  ok(q.initiative('me'), '先机：本回合没用指令');
+  const t=q.play('me','计','m'); ok(q.counters(t).timer===2, '计时：显示剩余回合');
+  q.endTurn(); ok(t.timer===1, '计时：己方回合结束 -1');
+  const c=q.play('op','充','m'); ok(q.counters(c).charges===2, '充能：显示剩余次数');
+}
 console.log('\n快照:', JSON.stringify(g.snapshot().op.rows));
 console.log('校准:', calibrate(g,[{me:g.s.results[0].me, op:g.s.results[0].op}]));
 console.log(fails? `\n${fails} 项失败`:'\n全部通过');

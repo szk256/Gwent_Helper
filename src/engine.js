@@ -116,6 +116,8 @@ class Game {
         return true;
       };
       for (const seg of text.split(/\s*\/\s*/).map(x => x.replace(/[。.．\s]+$/, '').trim()).filter(Boolean)) {
+        const tm = seg.match(/^计时\s*(\d+)\s*[：:]/);   // “计时 3：……”：先记下回合数，效果靠卡牌行为
+        if (tm) d.timerN = +tm[1];
         const parts = seg.split(/\s*[、，,]\s*/);          // “坚韧、护盾.”
         if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
       }
@@ -163,6 +165,35 @@ class Game {
       return !this.rowOf(u).some(v => v !== u && v.status.defender && !v.status.lock);
     });
   }
+  // ---------- 条件词条（见词条辞典） ----------
+  // 统御：己方控制战场上战力最高的单位（ASSUME：并列最高也算）
+  dominance(side) {
+    const all = this.units(); if (!all.length) return false;
+    const m = Math.max(...all.map(u => u.power));
+    return this.units(side).some(u => u.power === m);
+  }
+  // 威势：己方各排均控制战力不低于 10 的单位
+  might(side) { return ROWS.every(r => this.s.sides[side].rows[r].some(u => u.def.type !== 'artifact' && u.power >= 10)); }
+  // 夜宴：己方至少一排总战力不低于 25
+  feast(side) { const sc = this.score(side); return ROWS.some(r => sc[r] >= 25); }
+  // 壁垒：自身有护甲
+  bulwark(u) { return u.armor > 0; }
+  // 狂暴 X：自身战力不高于 X
+  berserk(u, x) { return u.power <= x; }
+  // 会师：己方控制此牌的同名牌（场上另一张）
+  cohort(u) { return this.allUnits(u.side).some(v => v !== u && v.name === u.name); }
+  // 操控：相邻两侧均为“士兵”
+  harmonyFlank(u) { const row = this.rowOf(u), i = row.indexOf(u); return [row[i - 1], row[i + 1]].every(v => v && this.hasTag(v, '士兵')); }
+  // 翼守：仅与 1 张牌相邻
+  flanked1(u) { return this.adjacent(u).length === 1; }
+  // 战狂 N：受伤的敌军单位数量达到 N
+  bloodthirst(side, n) { return this.units(OTHER[side]).filter(u => u.power < u.base).length >= n; }
+  // 先机：本回合己方没有用过指令/费用/现身（记录在 side.vars.usedOrderTurn）
+  initiative(side) { return this.s.sides[side].vars.usedOrderTurn !== this.s.turn; }
+  // 掠食：只能以战力低于自身的单位为目标
+  prey(u, us) { return us.filter(v => v.power < u.power); }
+  // 赤诚：起始牌组没有中立牌（对局簿里由卡组决定，存在 vars.devotion）
+  devotion(side) { return this.s.sides[side].vars.devotion !== false; }
   isBoosted(u) { return u.power > u.base; }               // 已确认：当前战力高于基础战力
   isDamaged(u) { return u.power < u.base; }
   inspired(u) { return u.power > u.base; }                // 激励
@@ -215,7 +246,9 @@ class Game {
       playFromDeck: (name, row, pos, o) => g.play(u.side, name, row, pos, Object.assign({ fromDeck: true, by: u }, o)),
       pick: (req) => g.choose(Object.assign({ source: u && u.name }, req))[0] || null,
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
-      targets: us => g.targetable(us, u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
+      targets: us => g.targetable(us, u.side),
+      dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
+      bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
     };
   }
@@ -228,7 +261,7 @@ class Game {
       base: d.base || 0, power: d.base || 0, armor: d.armor || 0,
       tags: d.tags || [], status: Object.assign({}, d.status || {}),
       infused: [], blessFired: {}, enteredTurn: this.s.turn, orderUsed: 0,
-      zeal: !!d.zeal, unmodeled: !!d.unmodeled, origin: null, timer: d.timer ? d.timer.n : null,
+      zeal: !!d.zeal, unmodeled: !!d.unmodeled, origin: null, timer: d.timer ? d.timer.n : (d.timerN || null),
     };
   }
 
@@ -462,6 +495,7 @@ class Game {
     const h = (this.s.sides[side].abilities || {})[name] || this.addAbility(side, name);
     if (h.charges <= 0 && !opts.force) this.log('能力已用完', { side, name }, true);
     h.charges--;
+    this.s.sides[side].vars.usedOrderTurn = this.s.turn;   // 领袖、战术也是指令（先机）
     this.log('能力', { side, name, left: h.charges, unmodeled: !!h.def.unmodeled });
     if (h.def.order) h.def.order(this.ctx(h), opts);
     return h;
@@ -496,6 +530,7 @@ class Game {
     if (!u) return;
     if (!this.canOrder(u) && !opts.force) this.log('指令不可用', { uid, name: u.name }, true);
     u.orderUsed++;
+    this.s.sides[u.side].vars.usedOrderTurn = this.s.turn;
     if (u.def.cooldown != null) u.cd = u.def.cooldown;
     this.log('指令', { uid, name: u.name });
     u.def.order(this.ctx(u), opts);
@@ -522,9 +557,11 @@ class Game {
     for (const u of this.allUnits(side).slice()) {
       if (u.timer == null || u.status.lock || !this.find(u.uid)) continue;
       if (--u.timer <= 0) {
-        this.log('计时触发', { uid: u.uid, name: u.name });
-        u.def.timer.run(this.ctx(u));
-        u.timer = this.rules.timerRepeats ? u.def.timer.n : null;
+        const run = u.def.timer && u.def.timer.run;
+        this.log('计时触发', { uid: u.uid, name: u.name, unmodeled: !run }, !run);
+        if (run) run(this.ctx(u));
+        const n = u.def.timer ? u.def.timer.n : u.def.timerN;
+        u.timer = this.rules.timerRepeats ? n : null;
       }
     }
     this.emit('turnEnd', { side });
@@ -588,6 +625,14 @@ class Game {
     this.startRound();
   }
 
+  // 界面显示用：计时剩余、充能剩余、冷却剩余
+  counters(u) {
+    const o = {};
+    if (u.timer != null) o.timer = u.timer;
+    if (u.def.order && u.def.cooldown == null && u.def.charges != null) o.charges = Math.max(0, u.def.charges - u.orderUsed);
+    if (u.def.cooldown != null) o.cd = u.cd || 0;
+    return o;
+  }
   // 上一局留场的单位（坚韧）带进这一局（对局簿逐局推算用）
   carryIn(u, side, row) {
     const v = this.makeUnit(u.name, side);
@@ -605,7 +650,7 @@ class Game {
       rows: Object.fromEntries(ROWS.map(r => [r, this.s.sides[sd].rows[r].map(u => ({
         uid: u.uid, name: u.name, base: u.base, power: u.power, armor: u.armor,
         status: Object.fromEntries(Object.entries(u.status).filter(([, v]) => v)),
-        unmodeled: u.unmodeled, canOrder: this.canOrder(u) }))])),
+        unmodeled: u.unmodeled, canOrder: this.canOrder(u), ...this.counters(u) }))])),
       score: this.score(sd), passed: this.s.sides[sd].passed, handCount: this.s.sides[sd].handCount,
       hazards: Object.fromEntries(ROWS.map(r => [r, this.s.hazards[sd][r] && { kind: this.s.hazards[sd][r].kind, turns: this.s.hazards[sd][r].turns }])),
     });
