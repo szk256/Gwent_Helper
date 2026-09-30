@@ -28,6 +28,7 @@
 - `gwent_engine_test.js`：底层测试（假卡），`node gwent_engine_test.js`。
 - `gwent_cards_test.js`：卡牌效果测试（真实数据），`gwent_cards_smoke.js`：每张已建模的牌都打一遍检查不报错（可带牌名只测几张）。
 - `gwent_replay_r1.js`：第一局回放，`node gwent_replay_r1.js`（默认读 `src/data.js`；设 `TRACKER=./dist/gwent_tracker.html` 则从打包产物读）。
+- `hud/`：对局 HUD 原型（Python，独立于对局簿）：截屏识别右侧展示的对方出牌（SIFT 比对 gwent.one 卡图），置顶小窗列出对方已出的牌、解牌标红。卡图和特征库在 `hud/cache/`（不提交），见 `hud/README.md`。只看屏幕，不读内存、不抓包。
 - 卡牌数据库：`northern_realms.md` `neutral.md` `monster.md` `nilfgaard.md` `scoiatael.md` `skellige.md` `syndicate.md`；关键词：`词条辞典.md`（标“游戏内”的条目最可靠）。中文效果可能比游戏旧，以“当前英文效果”和游戏内说明为准。
 
 ## 引擎结构（gwent_engine.js）
