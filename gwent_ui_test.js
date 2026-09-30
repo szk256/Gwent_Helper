@@ -62,6 +62,9 @@ setTimeout(() => {
     ok(kNew === kOld + 1, '补丁：补丁后的对局用新战力，之前的对局用旧战力（' + kOld + ' → ' + kNew + '）');
     ok(/2099-01-01 战力 5→6/.test((w.eval('openCard(BY["科德温骑士"]),document.getElementById("cdEn").textContent'))), '补丁：卡牌详情显示改动历史');
     w.eval(`GwentPatches.PATCHES.pop();document.getElementById("cdlg").close&&document.getElementById("cdlg").close();`);
+    // 版本号：侧边栏显示构建号和卡牌数据版本；迁移导出带上
+    ok(/构建 [0-9a-f]{7} · 卡牌数据 v14\.9\.0/.test(w.document.getElementById('verInfo').textContent), '版本：侧边栏显示构建号和卡牌数据版本');
+    ok(/^#GWMIG v1 .*构建 [0-9a-f]{7}/.test(w.eval('migText()')), '版本：迁移导出带构建号');
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }
