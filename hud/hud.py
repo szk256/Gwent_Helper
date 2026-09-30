@@ -1,6 +1,6 @@
 """昆特牌对局 HUD 原型：识别屏幕右侧展示的对方出牌，置顶小窗列出本局对方已出的牌，解牌标红。
 
-用法：python hud/hud.py [--monitor N] [--interval 0.3] [--no-hide]
+用法：python hud/hud.py [--monitor N] [--interval 0.15] [--no-hide]
   --monitor  截整个显示器（mss 编号，1 起）；默认自动找游戏窗口（Gwent.exe）的画面区域，窗口模式也行
   --no-hide  不把 HUD 窗口从截屏里排除（默认排除：自己截屏看不到它，录屏也录不到它）
 只截屏幕上公开显示的画面，不读游戏内存、不抓网络包。
@@ -98,7 +98,8 @@ class Watcher(threading.Thread):
                 self.cand_n += 1
             else:
                 self.cand, self.cand_n = art, 1
-            if self.cand_n >= 2:  # 连续两帧一致才算（避开放大动画）
+            # 展示只停留不到 1 秒：特别有把握时一帧就算，否则连续两帧一致才算（避开放大动画）
+            if self.cand_n >= 2 or Matcher.confident(res, min_votes=20, ratio=4):
                 self.shown, self.tries = art, 0
                 self.q.put(('card', res, crop))
         elif not ok and self.shown is None:
@@ -390,7 +391,7 @@ class App:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--monitor', type=int, default=0)
-    ap.add_argument('--interval', type=float, default=0.3)
+    ap.add_argument('--interval', type=float, default=0.15)
     ap.add_argument('--no-hide', action='store_true')
     args = ap.parse_args()
     if not os.path.exists(os.path.join(HERE, 'cache', 'db.npz')):

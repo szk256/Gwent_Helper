@@ -3,6 +3,7 @@
 python hud/eval.py shots 截图1.png 截图2.png …   对截图跑一遍：右侧展示区 + 墓场网格
 python hud/eval.py synth [张数]                    用卡图模拟游戏画面（裁边、缩小、边框、模糊、压缩），统计准确率
 python hud/eval.py log [对局目录]                  重新识别 HUD 存下的展示截图（cache/log/…）
+python hud/eval.py ai [对局目录]                   人机对局：和游戏日志里 AI 的出牌核对，算准确率
 """
 import glob
 import os
@@ -94,6 +95,43 @@ def relog(m, d):
         print(os.path.basename(p), '✓' if Matcher.confident(res) else '?', fmt(res))
 
 
+def ai_check(m, d):
+    """人机对局：拿游戏日志里 AI 的出牌（[AIPCP] Playing card）核对 HUD 记录（cache/log/<时间>/log.json）。"""
+    import json
+    import re
+    if not d:
+        ds = sorted(glob.glob(os.path.join(HERE, 'cache', 'log', '*')))
+        d = ds[-1] if ds else ''
+    with open(os.path.join(d, 'log.json'), encoding='utf-8') as f:
+        hud = [it for r in json.load(f) for it in r]
+    by_id = {c['id']: c['name'] for c in m.cards if c.get('id')}
+    sec = lambda t: int(t[:2]) * 3600 + int(t[3:5]) * 60 + float(t[6:])  # noqa: E731
+    day = os.path.basename(d)[:8]
+    plays = []
+    for p in glob.glob(os.path.expandvars(rf'%USERPROFILE%\AppData\LocalLow\CDProjektRED\Gwent\GwentClient-{day}*.log')):
+        with open(p, encoding='utf-8', errors='replace') as f:
+            for line in f:
+                mt = re.match(r'(\d\d:\d\d:\d\d\.\d+).*Playing card: \[T:(.*?), ID:(\d+)', line)
+                if mt:
+                    plays.append((sec(mt.group(1)), by_id.get(int(mt.group(3)), mt.group(2))))
+    t0 = sec(hud[0]['t']) - 60 if hud else 0
+    t1 = sec(hud[-1]['t']) + 10 if hud else 0
+    plays = sorted(p for p in plays if t0 <= p[0] <= t1)
+    used, hit = set(), 0
+    for t, name in plays:
+        j = next((j for j, it in enumerate(hud) if j not in used and it['name'] == name
+                  and -1 <= sec(it['t']) - t <= 8), None)
+        if j is None:
+            print(f'  漏记/认错  {time.strftime("%H:%M:%S", time.gmtime(t))}  {name}')
+        else:
+            used.add(j)
+            hit += 1
+    extra = [it for j, it in enumerate(hud) if j not in used]
+    for it in extra:
+        print(f'  多记（可能是己方或悬停）  {it["t"]}  {it["name"]}')
+    print(f'AI 出牌 {len(plays)} 张，HUD 认对 {hit}；HUD 多出 {len(extra)} 条')
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -108,6 +146,8 @@ def main():
         synth(m, int(sys.argv[2]) if len(sys.argv) > 2 else 200)
     elif cmd == 'log':
         relog(m, sys.argv[2] if len(sys.argv) > 2 else '')
+    elif cmd == 'ai':
+        ai_check(m, sys.argv[2] if len(sys.argv) > 2 else '')
     return 0
 
 
