@@ -23,6 +23,10 @@ const DEFAULT_RULES = {
   knightSummonSelf: false,    // 骑士册封“己方每控制 1 名骑士”不算被拉出的骑士自己（已确认）
   timerRepeats: true,         // 计时归零触发后重新计时（未确认）
   dragonDreamOnLast: true,    // 龙之梦在最后一个回合开始时爆炸（未确认）
+  coinLimit: 9,               // 金币上限（词条辞典）
+  autoTribute: true,          // 献金：没有记录时，金币够就当作付了（未确认，对局簿可逐次记录）
+  feeSameTurn: true,          // 费用能力进场当回合就能用（未确认）
+  ambushCounts: true,         // 伏击（背面朝上）的单位战力是否计入总分（未确认）
 };
 
 // ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
@@ -74,7 +78,7 @@ class Game {
   }
   _side() {
     return { rows: { m: [], r: [] }, hand: [], handCount: 0, deck: [], grave: [],
-             banished: [], passed: false, wins: 0, leaderCharges: 0, vars: {} };
+             banished: [], passed: false, wins: 0, leaderCharges: 0, coins: 0, vars: {} };
   }
 
   // ---------- 卡牌定义 ----------
@@ -86,7 +90,9 @@ class Game {
     const beh = this.behaviors && this.behaviors[name];
     const d = Object.assign({ name, base: 0, abilities: [] }, data || {}, beh || {});
     d.status = Object.assign({}, data && data.status, beh && beh.status);
-    if (!d.abilities) d.abilities = [];
+    d.abilities = (d.abilities || []).slice();
+    // 恐吓：己方打出“罪行”牌时自身增益
+    if (d.intimidate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('罪行'), run: c => c.boost(c.self, d.intimidate) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
     if (!data) d.unknown = true;
     this.cards[name] = d;
@@ -112,12 +118,24 @@ class Game {
         else if ((m = seg.match(/^老兵\s*(\d*)$/))) { if (apply) d.veteran = +(m[1] || 1); }
         else if ((m = seg.match(/^冷却[：:]\s*(\d+)$/))) { if (apply) d.cooldown = +m[1]; }
         else if ((m = seg.match(/^充能[：:]\s*(\d+)$/))) { if (apply) d.charges = +m[1]; }
+        else if ((m = seg.match(/^利润\s*[：:]?\s*(\d+)$/))) { if (apply) d.profit = +m[1]; }
+        else if ((m = seg.match(/^恐吓\s*(\d*)$/))) { if (apply) d.intimidate = +(m[1] || 1); }
+        else if (seg === '不忠') { if (apply) d.disloyal = true; }
+        else if (seg === '伏击') { if (apply) d.ambush = true; }
+        else if (seg === '回响') { if (apply) d.echo = true; }
+        else if (seg === '癫狂') { if (apply) d.insanity = true; }
         else return false;
         return true;
       };
       for (const seg of text.split(/\s*\/\s*/).map(x => x.replace(/[。.．\s]+$/, '').trim()).filter(Boolean)) {
         const tm = seg.match(/^计时\s*(\d+)\s*[：:]/);   // “计时 3：……”：先记下回合数，效果靠卡牌行为
         if (tm) d.timerN = +tm[1];
+        // 金币能力：先记下数额（付款由引擎处理），效果靠卡牌行为
+        let mm;
+        if ((mm = seg.match(/(?:^|、)\s*献金\s*(\d+)\s*[：:]/))) d.tributeN = +mm[1];
+        if ((mm = seg.match(/(?:^|、)\s*费用\s*(\d+)\s*[：:]/))) d.feeN = +mm[1];
+        if ((mm = seg.match(/^囤积\s*(\d+)/))) d.hoardN = +mm[1];
+        if (/^伏击/.test(seg)) d.ambush = true;
         const parts = seg.split(/\s*[、，,]\s*/);          // “坚韧、护盾.”
         if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
       }
@@ -192,6 +210,10 @@ class Game {
   initiative(side) { return this.s.sides[side].vars.usedOrderTurn !== this.s.turn; }
   // 掠食：只能以战力低于自身的单位为目标
   prey(u, us) { return us.filter(v => v.power < u.power); }
+  // 囤积 X：己方金币不少于 X
+  hoard(side, x) { return this.s.sides[side].coins >= x; }
+  // 共谋：目标有潜伏
+  conspiring(u) { return !!(u && u.status.spying); }
   // 赤诚：起始牌组没有中立牌（对局簿里由卡组决定，存在 vars.devotion）
   devotion(side) { return this.s.sides[side].vars.devotion !== false; }
   isBoosted(u) { return u.power > u.base; }               // 已确认：当前战力高于基础战力
@@ -204,7 +226,8 @@ class Game {
   }
   score(side) {
     const rows = {};
-    for (const r of ROWS) rows[r] = this.s.sides[side].rows[r].reduce((a, u) => a + u.power, 0);
+    const counts = u => this.rules.ambushCounts || !u.status.ambush;
+    for (const r of ROWS) rows[r] = this.s.sides[side].rows[r].reduce((a, u) => a + (counts(u) ? u.power : 0), 0);
     return { m: rows.m, r: rows.r, total: rows.m + rows.r };
   }
 
@@ -250,6 +273,8 @@ class Game {
       dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
       bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
+      coins: () => g.s.sides[u.side].coins, gainCoins: n => g.gainCoins(u.side, n, u), spendCoins: n => g.spendCoins(u.side, n, u),
+      hoard: x => g.hoard(u.side, x), seize: t => g.seize(t, u.side, u), flip: t => g.flip(t || u, u),
     };
   }
 
@@ -276,22 +301,32 @@ class Game {
   }
 
   // 打出：从手牌打出（触发部署、己方“打出单位”事件）
+  // side = 放在哪一方半场；opts.player = 打出这张牌的玩家（默认同 side）。
+  // 不忠：放到出牌方的对面半场并获得潜伏；调用方没换边时自动换。
   play(side, name, row, pos, opts = {}) {
     const d = this.def(name);
-    if (!opts.fromDeck && !opts.spawned) this.s.sides[side].handCount = Math.max(0, this.s.sides[side].handCount - 1);
+    const player = opts.player || side;
+    if (!opts.fromDeck && !opts.spawned) this.s.sides[player].handCount = Math.max(0, this.s.sides[player].handCount - 1);
+    if (opts.fromGrave) { const gr = this.s.sides[player].grave, i = gr.lastIndexOf(name); if (i >= 0) gr.splice(i, 1); }
     if (d.type === 'special') {
-      const pseudo = { side, name, def: d, uid: null };
-      this.log('打出', { side, name, special: true, unmodeled: !!d.unmodeled });
+      const pseudo = { side: player, name, def: d, uid: null };
+      this.log('打出', { side: player, name, special: true, unmodeled: !!d.unmodeled });
+      if (d.profit) this.gainCoins(player, d.profit, pseudo);
       if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
-      this.s.sides[side].grave.push(name);
-      this.emit('cardPlayed', { side, name, special: true, def: d });
+      this.s.sides[player].grave.push(name);
+      this.emit('cardPlayed', { side: player, name, special: true, def: d });
       return null;
     }
+    if (d.disloyal && side === player && !opts.keepSide) side = OTHER[player];
     const u = this.makeUnit(name, side);
     u.origin = opts.fromDeck ? 'deck' : 'hand';
+    u.owner = player;
+    // 回响回到牌组的牌：再打出时带佚亡
+    const ech = this.s.sides[player].echoed;
+    if (opts.fromDeck && ech && ech.includes(name)) { ech.splice(ech.indexOf(name), 1); u.status.doomed = true; }
     if (!this._place(u, side, row, pos)) return null;
-    this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled });
-    this._enter(u, true, opts);
+    this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled, player });
+    this._enter(u, true, Object.assign({}, opts, { player }));
     if (opts.power != null && this.find(u.uid) && opts.power !== u.power) {
       this.log('录入战力', { uid: u.uid, name: u.name, from: u.power, to: opts.power });
       u.power = opts.power;                 // 对面手牌里的隐藏增益：以落地时看到的战力为准
@@ -319,16 +354,92 @@ class Game {
 
   _enter(u, played, opts) {
     const c = this.ctx(u), d = u.def;
+    const player = (opts && opts.player) || u.side;
+    // 伏击：打出时背面朝上，能力等条件触发（翻开）时才生效
+    if (played && d.ambush) { u.status.ambush = true; this.log('伏击', { uid: u.uid, name: u.name }); }
     // 列阵：近战狂热，远程自身 +1
     if (d.formation) { if (u.row === 'm') u.zeal = true; else this.boost(u, 1, u); }
-    if (played && d.deploy) d.deploy(c, opts);
-    if (played && d.deployRow && d.deployRow[u.row]) d.deployRow[u.row](c, opts);
+    if (played && d.profit) this.gainCoins(player, d.profit, u);        // 利润：打出时获得金币
+    if (played && !u.status.ambush && d.deploy) d.deploy(c, opts);
+    if (played && !u.status.ambush && d.deployRow && d.deployRow[u.row]) d.deployRow[u.row](c, opts);
+    if (played && (d.tributeN || d.tribute) && this.find(u.uid)) this.payTribute(u, player);
+    if (played && d.disloyal && u.side !== player) this.addStatus(u, 'spying', true, u);
     this.checkBless(u);
     this.emit('unitEnter', { unit: u, played });
     if (played) {
-      this.emit('cardPlayed', { side: u.side, name: u.name, unit: u, def: d });
-      if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u });
+      // by = 打出这张牌的玩家（不忠牌落在对面半场，但算打出者“打出”）
+      this.emit('cardPlayed', { side: player, name: u.name, unit: u, def: d });
+      if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player });
     }
+  }
+
+  // ---------- 金币（辛迪加） ----------
+  gainCoins(side, n, src) {
+    if (!n || n <= 0) return 0;
+    const sd = this.s.sides[side], before = sd.coins, lim = this.rules.coinLimit;
+    sd.coins = Math.min(lim, before + n);
+    const gained = sd.coins - before, overflow = Math.max(0, before + n - lim);
+    this.log('金币', { side, n: gained, coins: sd.coins, overflow, by: src && src.name });
+    this.emit('coinsGained', { side, n: gained, overflow, src });
+    return gained;
+  }
+  spendCoins(side, n, src) {
+    const sd = this.s.sides[side];
+    if (sd.coins < n) return false;
+    sd.coins -= n;
+    this.log('花费金币', { side, n, coins: sd.coins, by: src && src.name });
+    this.emit('coinsSpent', { side, n, src });
+    return true;
+  }
+  // 献金：部署后可选择付金币触发。是否付款走 chooser（kind 'tribute'），没有输入时按 autoTribute
+  payTribute(u, side) {
+    const d = u.def, n = d.tribute ? d.tribute.n : d.tributeN, sd = this.s.sides[side];
+    const afford = sd.coins >= n;
+    const ans = this.chooser ? this.chooser({ kind: 'tribute', source: u.name, n, afford }, this) : null;
+    const pay = ans == null ? (afford && this.rules.autoTribute) : !!ans;
+    if (!pay) { this.log('献金未付', { name: u.name, n }); return; }
+    if (!this.spendCoins(side, n, u)) { this.log('金币不足', { side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
+    const run = d.tribute && d.tribute.run;
+    this.log('献金', { uid: u.uid, name: u.name, n, unmodeled: !run }, !run);
+    if (run) run(this.ctx(u));
+  }
+  // 费用：花金币触发的能力（对局簿里和指令一样点单位记录）。癫狂：金币不够时改为对自身造成等量伤害（无视护甲），会致死则不能用
+  canFee(u) {
+    const n = u.def.fee ? u.def.fee.n : u.def.feeN;
+    if (n == null || u.status.lock) return false;
+    if (u.def.cooldown != null && (u.cd || 0) > 0) return false;
+    if (!(this.rules.feeSameTurn || u.zeal || this.s.turn > u.enteredTurn)) return false;
+    return this.s.sides[u.side].coins >= n || (u.def.insanity && u.power > n);
+  }
+  fee(u, opts = {}) {
+    const d = u.def, n = d.fee ? d.fee.n : d.feeN, sd = this.s.sides[u.side];
+    if (!this.canFee(u) && !opts.force) this.log('费用不可用', { uid: u.uid, name: u.name }, true);
+    if (!this.spendCoins(u.side, n, u)) {
+      if (d.insanity && u.power > n) { this.log('癫狂', { uid: u.uid, name: u.name, n }); this.damage(u, n, { name: '癫狂' }, { ignoreArmor: true }); }
+      else { this.log('金币不足', { side: u.side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
+    }
+    if (d.cooldown != null) u.cd = d.cooldown;
+    sd.vars.usedOrderTurn = this.s.turn;                                 // 先机：费用也算
+    const run = d.fee && d.fee.run;
+    this.log('费用', { uid: u.uid, name: u.name, n, unmodeled: !run }, !run);
+    if (run && this.find(u.uid)) run(this.ctx(u), opts);
+  }
+  // 抓捕：把敌军单位移到己方同排并使其获得潜伏；已有潜伏则改为移除潜伏
+  seize(u, side, src) {
+    if (!u || !this.find(u.uid)) return;
+    const from = this.rowOf(u); from.splice(from.indexOf(u), 1);
+    this._place(u, side, u.row, null);
+    this.log('抓捕', { uid: u.uid, name: u.name, side, by: src && src.name });
+    if (u.status.spying) { u.status.spying = false; this.log('状态', { uid: u.uid, name: u.name, key: 'spying', val: false }); }
+    else this.addStatus(u, 'spying', true, src);
+    this.emit('moved', { unit: u, src, seized: true });
+  }
+  // 翻开：伏击的牌翻到正面
+  flip(u, src) {
+    if (!u || !u.status.ambush) return;
+    u.status.ambush = false;
+    this.log('翻开', { uid: u.uid, name: u.name, by: src && src.name });
+    this.emit('flipped', { unit: u, src });
   }
 
   boost(u, n, src) {
@@ -378,8 +489,13 @@ class Game {
     } else if (key === 'poison') {
       u.status.poison = (u.status.poison || 0) + 1;
       if (u.status.poison >= 2) { this.log('中毒摧毁', { uid: u.uid }); this.destroy(u, src); return; }
-    } else u.status[key] = val;
+    } else {
+      // 赏金：每一方同时只能有 1 个单位带赏金
+      if (key === 'bounty' && val) for (const v of this.allUnits(u.side)) if (v !== u) v.status.bounty = false;
+      u.status[key] = val;
+    }
     this.log('状态', { uid: u.uid, name: u.name, key, val: u.status[key], by: src && src.name });
+    if (key === 'lock' && val && u.status.ambush) this.flip(u, src);   // 伏击被锁定：失去能力并翻开
     if (key === 'shield') this.emit('shieldGained', { unit: u });
   }
 
@@ -419,6 +535,7 @@ class Game {
     const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
     this.s.sides[u.side].banished.push(u.name);
     this.log('放逐', { uid: u.uid, name: u.name, by: src && src.name });
+    if (u.status.bounty) this.gainCoins(OTHER[u.side], u.base, { name: '赏金' });
     this.emit('banished', { unit: u, src });
   }
   // 整排效果：同一排只留一个，新的替换旧的
@@ -452,6 +569,7 @@ class Game {
     const doomed = this.isDoomed(u);
     (doomed ? this.s.sides[u.side].banished : this.s.sides[u.side].grave).push(u.name);
     this.log('摧毁', { uid: u.uid, name: u.name, by: src && src.name });
+    if (u.status.bounty) this.gainCoins(OTHER[u.side], u.base, { name: '赏金' });
     // 遗愿：被摧毁并进入墓场时触发；佚亡（放逐）的不触发
     if (u.def.deathwish && !u.status.lock && !doomed) u.def.deathwish(this.ctx(u));
     this.emit('destroyed', { unit: u, src });
@@ -528,6 +646,8 @@ class Game {
   order(uid, opts = {}) {
     const u = this.find(uid);
     if (!u) return;
+    if ((!u.def.order || opts.fee) && (u.def.fee || u.def.feeN != null)) return this.fee(u, opts);
+    if (!u.def.order) { this.log('没有指令', { uid, name: u.name, unmodeled: true }, true); return; }
     if (!this.canOrder(u) && !opts.force) this.log('指令不可用', { uid, name: u.name }, true);
     u.orderUsed++;
     this.s.sides[u.side].vars.usedOrderTurn = this.s.turn;
@@ -592,6 +712,16 @@ class Game {
     s.sides.me.passed = s.sides.op.passed = false;
     // 老兵：第二、三小局开始时基础战力 +1
     if (s.round > 0) for (const u of this.allUnits()) if (u.def.veteran) this.strengthen(u, u.def.veteran, { name: '老兵' });
+    if (s.round > 0) for (const sd of ['me', 'op']) {
+      const S = s.sides[sd];
+      // 金币：进入下一小局减半（向下取整）
+      if (S.coins) { S.coins = Math.floor(S.coins / 2); this.log('金币减半', { side: sd, coins: S.coins }); }
+      // 回响：小局开始时从墓场移到牌组顶端，并获得佚亡
+      for (let i = S.grave.length - 1; i >= 0; i--) {
+        const n = S.grave[i];
+        if (this.def(n).echo) { S.grave.splice(i, 1); S.deck.unshift(n); (S.echoed = S.echoed || []).push(n); this.log('回响', { side: sd, name: n }); }
+      }
+    }
     this.log('小局开始', { round: s.round + 1, first: s.active });
     this.emit('roundStart', { round: s.round });
     this.startTurn();
@@ -631,6 +761,8 @@ class Game {
     if (u.timer != null) o.timer = u.timer;
     if (u.def.order && u.def.cooldown == null && u.def.charges != null) o.charges = Math.max(0, u.def.charges - u.orderUsed);
     if (u.def.cooldown != null) o.cd = u.cd || 0;
+    const fn = u.def.fee ? u.def.fee.n : u.def.feeN;
+    if (fn != null) o.fee = fn;
     return o;
   }
   // 上一局留场的单位（坚韧）带进这一局（对局簿逐局推算用）
@@ -651,7 +783,7 @@ class Game {
         uid: u.uid, name: u.name, base: u.base, power: u.power, armor: u.armor,
         status: Object.fromEntries(Object.entries(u.status).filter(([, v]) => v)),
         unmodeled: u.unmodeled, canOrder: this.canOrder(u), ...this.counters(u) }))])),
-      score: this.score(sd), passed: this.s.sides[sd].passed, handCount: this.s.sides[sd].handCount,
+      score: this.score(sd), passed: this.s.sides[sd].passed, handCount: this.s.sides[sd].handCount, coins: this.s.sides[sd].coins,
       hazards: Object.fromEntries(ROWS.map(r => [r, this.s.hazards[sd][r] && { kind: this.s.hazards[sd][r].kind, turns: this.s.hazards[sd][r].turns }])),
     });
     return { round: this.s.round + 1, turn: this.s.turn, active: this.s.active, me: view('me'), op: view('op'), results: this.s.results };

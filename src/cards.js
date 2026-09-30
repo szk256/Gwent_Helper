@@ -6,7 +6,8 @@
 'use strict';
 const isKnight = u => (u.tags || []).includes('骑士');
 const isElf = u => (u.tags || []).includes('精灵');
-const own = (c, d) => d.unit.side === c.side;
+// 己方打出：按打出者算（不忠牌落在对面半场，但仍是打出者“打出”的，ASSUME）
+const own = (c, d) => (d.by || d.unit.side) === c.side;
 // 手动指定目标：免疫的不能选，对方有卫士时只能选卫士（引擎 targetable）
 const T = (c, prompt, from) => c.pick({ prompt, from: c.targets(from) });
 
@@ -327,6 +328,15 @@ B['蔽日浓雾'] = HZ('雾', 3);
 B['史凯利格风暴'] = HZ('风暴', 2);
 B['龙之梦'] = HZ('龙之梦', 3);
 B['晴空'] = { onPlay: (c, o) => { const row = (o && o.row) || 'm'; c.g.units(c.side).filter(u => u.row === row).forEach(u => c.boost(u, 1)); } };
+
+// ================= 辛迪加 · 金币系统示例 =================
+B['坑道钻机'] = {
+  fee: { n: 2, run: c => { const t = T(c, '坑道钻机：3 伤害', c.enemies()); if (t) c.damage(t, 3); } },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('罪行'), run: c => { if (c.self.cd > 0) c.self.cd--; } }],
+};
+B['大审讯官赫韦德'] = {
+  fee: { n: 2, run: c => { const row = c.g.rowOf(c.self); c.spawn('火誓狂热者', c.side, c.self.row, row.indexOf(c.self) + 1); } },
+};
 
 const API = { behaviors: B };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;

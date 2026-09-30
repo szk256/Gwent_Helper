@@ -356,6 +356,10 @@ const DEFAULT_RULES = {
   knightSummonSelf: false,    // 骑士册封“己方每控制 1 名骑士”不算被拉出的骑士自己（已确认）
   timerRepeats: true,         // 计时归零触发后重新计时（未确认）
   dragonDreamOnLast: true,    // 龙之梦在最后一个回合开始时爆炸（未确认）
+  coinLimit: 9,               // 金币上限（词条辞典）
+  autoTribute: true,          // 献金：没有记录时，金币够就当作付了（未确认，对局簿可逐次记录）
+  feeSameTurn: true,          // 费用能力进场当回合就能用（未确认）
+  ambushCounts: true,         // 伏击（背面朝上）的单位战力是否计入总分（未确认）
 };
 
 // ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
@@ -407,7 +411,7 @@ class Game {
   }
   _side() {
     return { rows: { m: [], r: [] }, hand: [], handCount: 0, deck: [], grave: [],
-             banished: [], passed: false, wins: 0, leaderCharges: 0, vars: {} };
+             banished: [], passed: false, wins: 0, leaderCharges: 0, coins: 0, vars: {} };
   }
 
   // ---------- 卡牌定义 ----------
@@ -419,7 +423,9 @@ class Game {
     const beh = this.behaviors && this.behaviors[name];
     const d = Object.assign({ name, base: 0, abilities: [] }, data || {}, beh || {});
     d.status = Object.assign({}, data && data.status, beh && beh.status);
-    if (!d.abilities) d.abilities = [];
+    d.abilities = (d.abilities || []).slice();
+    // 恐吓：己方打出“罪行”牌时自身增益
+    if (d.intimidate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('罪行'), run: c => c.boost(c.self, d.intimidate) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
     if (!data) d.unknown = true;
     this.cards[name] = d;
@@ -445,12 +451,24 @@ class Game {
         else if ((m = seg.match(/^老兵\s*(\d*)$/))) { if (apply) d.veteran = +(m[1] || 1); }
         else if ((m = seg.match(/^冷却[：:]\s*(\d+)$/))) { if (apply) d.cooldown = +m[1]; }
         else if ((m = seg.match(/^充能[：:]\s*(\d+)$/))) { if (apply) d.charges = +m[1]; }
+        else if ((m = seg.match(/^利润\s*[：:]?\s*(\d+)$/))) { if (apply) d.profit = +m[1]; }
+        else if ((m = seg.match(/^恐吓\s*(\d*)$/))) { if (apply) d.intimidate = +(m[1] || 1); }
+        else if (seg === '不忠') { if (apply) d.disloyal = true; }
+        else if (seg === '伏击') { if (apply) d.ambush = true; }
+        else if (seg === '回响') { if (apply) d.echo = true; }
+        else if (seg === '癫狂') { if (apply) d.insanity = true; }
         else return false;
         return true;
       };
       for (const seg of text.split(/\s*\/\s*/).map(x => x.replace(/[。.．\s]+$/, '').trim()).filter(Boolean)) {
         const tm = seg.match(/^计时\s*(\d+)\s*[：:]/);   // “计时 3：……”：先记下回合数，效果靠卡牌行为
         if (tm) d.timerN = +tm[1];
+        // 金币能力：先记下数额（付款由引擎处理），效果靠卡牌行为
+        let mm;
+        if ((mm = seg.match(/(?:^|、)\s*献金\s*(\d+)\s*[：:]/))) d.tributeN = +mm[1];
+        if ((mm = seg.match(/(?:^|、)\s*费用\s*(\d+)\s*[：:]/))) d.feeN = +mm[1];
+        if ((mm = seg.match(/^囤积\s*(\d+)/))) d.hoardN = +mm[1];
+        if (/^伏击/.test(seg)) d.ambush = true;
         const parts = seg.split(/\s*[、，,]\s*/);          // “坚韧、护盾.”
         if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
       }
@@ -525,6 +543,10 @@ class Game {
   initiative(side) { return this.s.sides[side].vars.usedOrderTurn !== this.s.turn; }
   // 掠食：只能以战力低于自身的单位为目标
   prey(u, us) { return us.filter(v => v.power < u.power); }
+  // 囤积 X：己方金币不少于 X
+  hoard(side, x) { return this.s.sides[side].coins >= x; }
+  // 共谋：目标有潜伏
+  conspiring(u) { return !!(u && u.status.spying); }
   // 赤诚：起始牌组没有中立牌（对局簿里由卡组决定，存在 vars.devotion）
   devotion(side) { return this.s.sides[side].vars.devotion !== false; }
   isBoosted(u) { return u.power > u.base; }               // 已确认：当前战力高于基础战力
@@ -537,7 +559,8 @@ class Game {
   }
   score(side) {
     const rows = {};
-    for (const r of ROWS) rows[r] = this.s.sides[side].rows[r].reduce((a, u) => a + u.power, 0);
+    const counts = u => this.rules.ambushCounts || !u.status.ambush;
+    for (const r of ROWS) rows[r] = this.s.sides[side].rows[r].reduce((a, u) => a + (counts(u) ? u.power : 0), 0);
     return { m: rows.m, r: rows.r, total: rows.m + rows.r };
   }
 
@@ -583,6 +606,8 @@ class Game {
       dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
       bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
+      coins: () => g.s.sides[u.side].coins, gainCoins: n => g.gainCoins(u.side, n, u), spendCoins: n => g.spendCoins(u.side, n, u),
+      hoard: x => g.hoard(u.side, x), seize: t => g.seize(t, u.side, u), flip: t => g.flip(t || u, u),
     };
   }
 
@@ -609,22 +634,32 @@ class Game {
   }
 
   // 打出：从手牌打出（触发部署、己方“打出单位”事件）
+  // side = 放在哪一方半场；opts.player = 打出这张牌的玩家（默认同 side）。
+  // 不忠：放到出牌方的对面半场并获得潜伏；调用方没换边时自动换。
   play(side, name, row, pos, opts = {}) {
     const d = this.def(name);
-    if (!opts.fromDeck && !opts.spawned) this.s.sides[side].handCount = Math.max(0, this.s.sides[side].handCount - 1);
+    const player = opts.player || side;
+    if (!opts.fromDeck && !opts.spawned) this.s.sides[player].handCount = Math.max(0, this.s.sides[player].handCount - 1);
+    if (opts.fromGrave) { const gr = this.s.sides[player].grave, i = gr.lastIndexOf(name); if (i >= 0) gr.splice(i, 1); }
     if (d.type === 'special') {
-      const pseudo = { side, name, def: d, uid: null };
-      this.log('打出', { side, name, special: true, unmodeled: !!d.unmodeled });
+      const pseudo = { side: player, name, def: d, uid: null };
+      this.log('打出', { side: player, name, special: true, unmodeled: !!d.unmodeled });
+      if (d.profit) this.gainCoins(player, d.profit, pseudo);
       if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
-      this.s.sides[side].grave.push(name);
-      this.emit('cardPlayed', { side, name, special: true, def: d });
+      this.s.sides[player].grave.push(name);
+      this.emit('cardPlayed', { side: player, name, special: true, def: d });
       return null;
     }
+    if (d.disloyal && side === player && !opts.keepSide) side = OTHER[player];
     const u = this.makeUnit(name, side);
     u.origin = opts.fromDeck ? 'deck' : 'hand';
+    u.owner = player;
+    // 回响回到牌组的牌：再打出时带佚亡
+    const ech = this.s.sides[player].echoed;
+    if (opts.fromDeck && ech && ech.includes(name)) { ech.splice(ech.indexOf(name), 1); u.status.doomed = true; }
     if (!this._place(u, side, row, pos)) return null;
-    this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled });
-    this._enter(u, true, opts);
+    this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled, player });
+    this._enter(u, true, Object.assign({}, opts, { player }));
     if (opts.power != null && this.find(u.uid) && opts.power !== u.power) {
       this.log('录入战力', { uid: u.uid, name: u.name, from: u.power, to: opts.power });
       u.power = opts.power;                 // 对面手牌里的隐藏增益：以落地时看到的战力为准
@@ -652,16 +687,92 @@ class Game {
 
   _enter(u, played, opts) {
     const c = this.ctx(u), d = u.def;
+    const player = (opts && opts.player) || u.side;
+    // 伏击：打出时背面朝上，能力等条件触发（翻开）时才生效
+    if (played && d.ambush) { u.status.ambush = true; this.log('伏击', { uid: u.uid, name: u.name }); }
     // 列阵：近战狂热，远程自身 +1
     if (d.formation) { if (u.row === 'm') u.zeal = true; else this.boost(u, 1, u); }
-    if (played && d.deploy) d.deploy(c, opts);
-    if (played && d.deployRow && d.deployRow[u.row]) d.deployRow[u.row](c, opts);
+    if (played && d.profit) this.gainCoins(player, d.profit, u);        // 利润：打出时获得金币
+    if (played && !u.status.ambush && d.deploy) d.deploy(c, opts);
+    if (played && !u.status.ambush && d.deployRow && d.deployRow[u.row]) d.deployRow[u.row](c, opts);
+    if (played && (d.tributeN || d.tribute) && this.find(u.uid)) this.payTribute(u, player);
+    if (played && d.disloyal && u.side !== player) this.addStatus(u, 'spying', true, u);
     this.checkBless(u);
     this.emit('unitEnter', { unit: u, played });
     if (played) {
-      this.emit('cardPlayed', { side: u.side, name: u.name, unit: u, def: d });
-      if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u });
+      // by = 打出这张牌的玩家（不忠牌落在对面半场，但算打出者“打出”）
+      this.emit('cardPlayed', { side: player, name: u.name, unit: u, def: d });
+      if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player });
     }
+  }
+
+  // ---------- 金币（辛迪加） ----------
+  gainCoins(side, n, src) {
+    if (!n || n <= 0) return 0;
+    const sd = this.s.sides[side], before = sd.coins, lim = this.rules.coinLimit;
+    sd.coins = Math.min(lim, before + n);
+    const gained = sd.coins - before, overflow = Math.max(0, before + n - lim);
+    this.log('金币', { side, n: gained, coins: sd.coins, overflow, by: src && src.name });
+    this.emit('coinsGained', { side, n: gained, overflow, src });
+    return gained;
+  }
+  spendCoins(side, n, src) {
+    const sd = this.s.sides[side];
+    if (sd.coins < n) return false;
+    sd.coins -= n;
+    this.log('花费金币', { side, n, coins: sd.coins, by: src && src.name });
+    this.emit('coinsSpent', { side, n, src });
+    return true;
+  }
+  // 献金：部署后可选择付金币触发。是否付款走 chooser（kind 'tribute'），没有输入时按 autoTribute
+  payTribute(u, side) {
+    const d = u.def, n = d.tribute ? d.tribute.n : d.tributeN, sd = this.s.sides[side];
+    const afford = sd.coins >= n;
+    const ans = this.chooser ? this.chooser({ kind: 'tribute', source: u.name, n, afford }, this) : null;
+    const pay = ans == null ? (afford && this.rules.autoTribute) : !!ans;
+    if (!pay) { this.log('献金未付', { name: u.name, n }); return; }
+    if (!this.spendCoins(side, n, u)) { this.log('金币不足', { side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
+    const run = d.tribute && d.tribute.run;
+    this.log('献金', { uid: u.uid, name: u.name, n, unmodeled: !run }, !run);
+    if (run) run(this.ctx(u));
+  }
+  // 费用：花金币触发的能力（对局簿里和指令一样点单位记录）。癫狂：金币不够时改为对自身造成等量伤害（无视护甲），会致死则不能用
+  canFee(u) {
+    const n = u.def.fee ? u.def.fee.n : u.def.feeN;
+    if (n == null || u.status.lock) return false;
+    if (u.def.cooldown != null && (u.cd || 0) > 0) return false;
+    if (!(this.rules.feeSameTurn || u.zeal || this.s.turn > u.enteredTurn)) return false;
+    return this.s.sides[u.side].coins >= n || (u.def.insanity && u.power > n);
+  }
+  fee(u, opts = {}) {
+    const d = u.def, n = d.fee ? d.fee.n : d.feeN, sd = this.s.sides[u.side];
+    if (!this.canFee(u) && !opts.force) this.log('费用不可用', { uid: u.uid, name: u.name }, true);
+    if (!this.spendCoins(u.side, n, u)) {
+      if (d.insanity && u.power > n) { this.log('癫狂', { uid: u.uid, name: u.name, n }); this.damage(u, n, { name: '癫狂' }, { ignoreArmor: true }); }
+      else { this.log('金币不足', { side: u.side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
+    }
+    if (d.cooldown != null) u.cd = d.cooldown;
+    sd.vars.usedOrderTurn = this.s.turn;                                 // 先机：费用也算
+    const run = d.fee && d.fee.run;
+    this.log('费用', { uid: u.uid, name: u.name, n, unmodeled: !run }, !run);
+    if (run && this.find(u.uid)) run(this.ctx(u), opts);
+  }
+  // 抓捕：把敌军单位移到己方同排并使其获得潜伏；已有潜伏则改为移除潜伏
+  seize(u, side, src) {
+    if (!u || !this.find(u.uid)) return;
+    const from = this.rowOf(u); from.splice(from.indexOf(u), 1);
+    this._place(u, side, u.row, null);
+    this.log('抓捕', { uid: u.uid, name: u.name, side, by: src && src.name });
+    if (u.status.spying) { u.status.spying = false; this.log('状态', { uid: u.uid, name: u.name, key: 'spying', val: false }); }
+    else this.addStatus(u, 'spying', true, src);
+    this.emit('moved', { unit: u, src, seized: true });
+  }
+  // 翻开：伏击的牌翻到正面
+  flip(u, src) {
+    if (!u || !u.status.ambush) return;
+    u.status.ambush = false;
+    this.log('翻开', { uid: u.uid, name: u.name, by: src && src.name });
+    this.emit('flipped', { unit: u, src });
   }
 
   boost(u, n, src) {
@@ -711,8 +822,13 @@ class Game {
     } else if (key === 'poison') {
       u.status.poison = (u.status.poison || 0) + 1;
       if (u.status.poison >= 2) { this.log('中毒摧毁', { uid: u.uid }); this.destroy(u, src); return; }
-    } else u.status[key] = val;
+    } else {
+      // 赏金：每一方同时只能有 1 个单位带赏金
+      if (key === 'bounty' && val) for (const v of this.allUnits(u.side)) if (v !== u) v.status.bounty = false;
+      u.status[key] = val;
+    }
     this.log('状态', { uid: u.uid, name: u.name, key, val: u.status[key], by: src && src.name });
+    if (key === 'lock' && val && u.status.ambush) this.flip(u, src);   // 伏击被锁定：失去能力并翻开
     if (key === 'shield') this.emit('shieldGained', { unit: u });
   }
 
@@ -752,6 +868,7 @@ class Game {
     const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
     this.s.sides[u.side].banished.push(u.name);
     this.log('放逐', { uid: u.uid, name: u.name, by: src && src.name });
+    if (u.status.bounty) this.gainCoins(OTHER[u.side], u.base, { name: '赏金' });
     this.emit('banished', { unit: u, src });
   }
   // 整排效果：同一排只留一个，新的替换旧的
@@ -785,6 +902,7 @@ class Game {
     const doomed = this.isDoomed(u);
     (doomed ? this.s.sides[u.side].banished : this.s.sides[u.side].grave).push(u.name);
     this.log('摧毁', { uid: u.uid, name: u.name, by: src && src.name });
+    if (u.status.bounty) this.gainCoins(OTHER[u.side], u.base, { name: '赏金' });
     // 遗愿：被摧毁并进入墓场时触发；佚亡（放逐）的不触发
     if (u.def.deathwish && !u.status.lock && !doomed) u.def.deathwish(this.ctx(u));
     this.emit('destroyed', { unit: u, src });
@@ -861,6 +979,8 @@ class Game {
   order(uid, opts = {}) {
     const u = this.find(uid);
     if (!u) return;
+    if ((!u.def.order || opts.fee) && (u.def.fee || u.def.feeN != null)) return this.fee(u, opts);
+    if (!u.def.order) { this.log('没有指令', { uid, name: u.name, unmodeled: true }, true); return; }
     if (!this.canOrder(u) && !opts.force) this.log('指令不可用', { uid, name: u.name }, true);
     u.orderUsed++;
     this.s.sides[u.side].vars.usedOrderTurn = this.s.turn;
@@ -925,6 +1045,16 @@ class Game {
     s.sides.me.passed = s.sides.op.passed = false;
     // 老兵：第二、三小局开始时基础战力 +1
     if (s.round > 0) for (const u of this.allUnits()) if (u.def.veteran) this.strengthen(u, u.def.veteran, { name: '老兵' });
+    if (s.round > 0) for (const sd of ['me', 'op']) {
+      const S = s.sides[sd];
+      // 金币：进入下一小局减半（向下取整）
+      if (S.coins) { S.coins = Math.floor(S.coins / 2); this.log('金币减半', { side: sd, coins: S.coins }); }
+      // 回响：小局开始时从墓场移到牌组顶端，并获得佚亡
+      for (let i = S.grave.length - 1; i >= 0; i--) {
+        const n = S.grave[i];
+        if (this.def(n).echo) { S.grave.splice(i, 1); S.deck.unshift(n); (S.echoed = S.echoed || []).push(n); this.log('回响', { side: sd, name: n }); }
+      }
+    }
     this.log('小局开始', { round: s.round + 1, first: s.active });
     this.emit('roundStart', { round: s.round });
     this.startTurn();
@@ -964,6 +1094,8 @@ class Game {
     if (u.timer != null) o.timer = u.timer;
     if (u.def.order && u.def.cooldown == null && u.def.charges != null) o.charges = Math.max(0, u.def.charges - u.orderUsed);
     if (u.def.cooldown != null) o.cd = u.cd || 0;
+    const fn = u.def.fee ? u.def.fee.n : u.def.feeN;
+    if (fn != null) o.fee = fn;
     return o;
   }
   // 上一局留场的单位（坚韧）带进这一局（对局簿逐局推算用）
@@ -984,7 +1116,7 @@ class Game {
         uid: u.uid, name: u.name, base: u.base, power: u.power, armor: u.armor,
         status: Object.fromEntries(Object.entries(u.status).filter(([, v]) => v)),
         unmodeled: u.unmodeled, canOrder: this.canOrder(u), ...this.counters(u) }))])),
-      score: this.score(sd), passed: this.s.sides[sd].passed, handCount: this.s.sides[sd].handCount,
+      score: this.score(sd), passed: this.s.sides[sd].passed, handCount: this.s.sides[sd].handCount, coins: this.s.sides[sd].coins,
       hazards: Object.fromEntries(ROWS.map(r => [r, this.s.hazards[sd][r] && { kind: this.s.hazards[sd][r].kind, turns: this.s.hazards[sd][r].turns }])),
     });
     return { round: this.s.round + 1, turn: this.s.turn, active: this.s.active, me: view('me'), op: view('op'), results: this.s.results };
@@ -1015,7 +1147,8 @@ else root.GwentEngine = API;
 'use strict';
 const isKnight = u => (u.tags || []).includes('骑士');
 const isElf = u => (u.tags || []).includes('精灵');
-const own = (c, d) => d.unit.side === c.side;
+// 己方打出：按打出者算（不忠牌落在对面半场，但仍是打出者“打出”的，ASSUME）
+const own = (c, d) => (d.by || d.unit.side) === c.side;
 // 手动指定目标：免疫的不能选，对方有卫士时只能选卫士（引擎 targetable）
 const T = (c, prompt, from) => c.pick({ prompt, from: c.targets(from) });
 
@@ -1337,6 +1470,15 @@ B['史凯利格风暴'] = HZ('风暴', 2);
 B['龙之梦'] = HZ('龙之梦', 3);
 B['晴空'] = { onPlay: (c, o) => { const row = (o && o.row) || 'm'; c.g.units(c.side).filter(u => u.row === row).forEach(u => c.boost(u, 1)); } };
 
+// ================= 辛迪加 · 金币系统示例 =================
+B['坑道钻机'] = {
+  fee: { n: 2, run: c => { const t = T(c, '坑道钻机：3 伤害', c.enemies()); if (t) c.damage(t, 3); } },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('罪行'), run: c => { if (c.self.cd > 0) c.self.cd--; } }],
+};
+B['大审讯官赫韦德'] = {
+  fee: { n: 2, run: c => { const row = c.g.rowOf(c.self); c.spawn('火誓狂热者', c.side, c.self.row, row.indexOf(c.self) + 1); } },
+};
+
 const API = { behaviors: B };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else root.GwentCards = API;
@@ -1375,8 +1517,10 @@ function sim(g,r,excl){
   const HZ=ENG.HAZARDS||{};
   // 目标来源：先用这一步自己的 tgts，再用“触发效果”记录里对应来源的目标（例如法利波的随机伤害）
   const takeFrom=(q,req,n,out)=>{while(q.length&&out.length<n){const u=unitByKey(q[0]);if(!u||!req.from.includes(u))break;out.push(u);q.shift();}};
+  let curPay=null;
   E.chooser=(req)=>{
     if(req.kind==="deck"){return dq.length?dq.shift():null;}
+    if(req.kind==="tribute")return curPay;      // 献金：记录里的“付了/没付”，没记则按规则默认
     const n=req.n||1,out=[];
     // 整排效果的随机结果只从“效果”记录（来源 = 效果名）里取
     if(HZ[req.source]){if(hzQ[req.source])takeFrom(hzQ[req.source],req,n,out);return out.length?out:null;}
@@ -1392,7 +1536,12 @@ function sim(g,r,excl){
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
   // 上一局的坚韧单位留场（老兵在小局开始时 +1）
   if(r>0&&g.log.some(x=>x.r===r-1)){const P=sim(g,r-1);
-    if(P)for(const sd of["me","op"])for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(u.status.resilience){const v=E.carryIn(u,sd,w);const k=P.u2key.get(u);if(k)bind(k,v);}}
+    if(P)for(const sd of["me","op"]){for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(u.status.resilience){const v=E.carryIn(u,sd,w);const k=P.u2key.get(u);if(k)bind(k,v);}
+      // 跨局延续：金币（小局开始时减半）、墓场、放逐、牌组里回响的牌、领袖/战术剩余充能
+      const A=P.E.s.sides[sd],B=E.s.sides[sd];B.coins=A.coins;B.grave=A.grave.slice();B.banished=A.banished.slice();
+      // 上一局结束时场上的非坚韧单位进墓场（佚亡的放逐）
+      for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(!u.status.resilience)(P.E.isDoomed(u)?B.banished:B.grave).push(u.name);B.deck=A.deck.slice();B.echoed=(A.echoed||[]).slice();
+      for(const[nm,h]of Object.entries(A.abilities||{})){const h2=E.addAbility(sd,nm,h.charges);h2.vars=JSON.parse(JSON.stringify(h.vars||{}));}}}
   E.s.round=r;
   E.startRound();
   const consumed=new Set();let acted=false;
@@ -1417,14 +1566,14 @@ function sim(g,r,excl){
     // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
     dq=subs.map(y=>y.c);
-    const before=new Set(E.allUnits());const t0=E.trace.length;
+    const before=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;
     const def=x.c?E.def(x.c):null;
     try{
     switch(x.a){
       case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
         if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});
           if(def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」没记放在哪排（用“整排效果”补上）",fix:true});}}
-        else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场"});if(u)bind(x.id,u);}
+        else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场",fromGrave:x.via==="墓场",player:side});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
       case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
       case "spawn":{if(def&&def.type==="special"){E.play(side,x.c,null,null,{spawned:true});}
@@ -1437,12 +1586,14 @@ function sim(g,r,excl){
       case "adj":{const u=unitByKey(x.uid);if(u){
         // 可以多项，逗号分隔：+2 / -3 / 7（战力），+盾 -盾 +锁 -锁 +坚 -坚 +遮 -遮（状态），甲3（护甲），活2 伤2（回合数，0 = 去掉）
         for(const v of String(x.v).split(/[,，\s]+/).filter(Boolean)){let m;
-          if((m=v.match(/^([+-])(盾|锁|坚|遮)$/))){const k={盾:"shield",锁:"lock",坚:"resilience",遮:"veil"}[m[2]];u.status[k]=m[1]==="+";E.log("手动状态",{name:u.name,key:k,val:u.status[k]});}
+          if((m=v.match(/^([+-])(盾|锁|坚|遮|潜|伏|赏)$/))){const k={盾:"shield",锁:"lock",坚:"resilience",遮:"veil",潜:"spying",伏:"ambush",赏:"bounty"}[m[2]];u.status[k]=m[1]==="+";E.log("手动状态",{name:u.name,key:k,val:u.status[k]});}
           else if((m=v.match(/^甲(\d+)$/)))u.armor=+m[1];
           else if((m=v.match(/^(活|伤)(\d+)$/))){u.status[m[1]==="活"?"vitality":"bleed"]=+m[2];}
           else{const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的修正「"+v+"」"});continue;}
             if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}}}
         if(x.armor!=null)u.armor=x.armor;}break;}
+      case "coin":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的金币修正「"+v+"」"});break;}
+        const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
       case "pass":{E.s.sides[side].passed=true;E.log("停牌",{side});E.endTurn();break;}
       case "fx":{if(!HZ[x.c])warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});
         if(!x.dur&&HZ[x.c])warns.push({id:x.id,m:"「"+x.c+"」没记持续回合，按 "+HZ[x.c].turns+" 回合算"});
@@ -1469,6 +1620,8 @@ function sim(g,r,excl){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+" 本回合不能用指令"});
       if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
+      if((t.type==="献金"||t.type==="费用")&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 的"+t.type+"效果未建模（用改战力修正）"});
+      if(t.type==="金币不足")warns.push({id:x.id,m:t.data.name+" 需要 "+t.data.need+" 金币，推算只有 "+t.data.coins+"（用“金币”修正）"});
       if(t.data&&t.data.unmodeled){unmod[t.data.name]=(unmod[t.data.name]||0)+1;}}
   }
   // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
@@ -1564,7 +1717,7 @@ function deckCode(d){const i=deckInfo(d);const L=[`【昆特卡组】${d.name}`,
 function collCode(){const L=["【昆特牌库】"];for(const f of ["NR","NE","MO","NG","ST","SK","SY"]){
   const all=C.filter(c=>c.f===f&&!isTactic(c)&&!isLeader(c)&&!c.token);const own=all.filter(c=>db.owned[c.n]>0);if(!own.length)continue;
   L.push(`${FN[f]}（${own.length}/${all.length} 种）：`+own.map(c=>c.n+(db.owned[c.n]>1?"×"+db.owned[c.n]:"")).join("、"));}return L.join("\n");}
-const ACT={adj:"改战力",play:"打出",order:"指令",leader:"领袖",tactic:"战术",effect:"效果",spawn:"生成",summon:"召唤",draw:"抽牌",fx:"整排效果",move:"移位",kill:"摧毁",mull:"换牌",pass:"停牌",note:"备注"};
+const ACT={coin:"金币",adj:"改战力",play:"打出",order:"指令",leader:"领袖",tactic:"战术",effect:"效果",spawn:"生成",summon:"召唤",draw:"抽牌",fx:"整排效果",move:"移位",kill:"摧毁",mull:"换牌",pass:"停牌",note:"备注"};
 const FX=["霜","雨","雾","风暴","龙之梦","血月","灾厄"];
 const ROWN={m:"近战",r:"远程",all:"整个半场"};
 const ART=a=>a?`https://gwent.one/image/gwent/assets/card/art/medium/${a}.jpg`:"";
@@ -1600,6 +1753,7 @@ function logText(x){const w=x.who==="me"?"我":"对";
     case "kill":return `${w}：摧毁 ${sideN(x.side)}的 ${x.c}`;
     case "note":return `${w}：备注 ${x.c}`;
     case "adj":return `${w}：修正 ${sideN(x.side)}的 ${x.c} ${/^\d+$/.test(x.v)?"= "+x.v:x.v}`;
+    case "coin":return `${w}：修正${sideN(x.side)}金币 ${/^\d+$/.test(x.v)?"= "+x.v:x.v}`;
     default:return `${w}：${ACT[x.a]||x.a}${x.c?" "+x.c:""}${tg}`;}}
 // give every entry a stable id; convert old index-based references
 function ensureIds(g){if(!g||g.log.every(x=>x.id))return;const idOf=i=>g.log[i]&&g.log[i].id;g.nextE=g.nextE||1;
@@ -1632,9 +1786,12 @@ function queue(...steps){ui.flow=[...steps,...(ui.flow||[])];}
 function nextStep(){ui.flow=(ui.flow||[]).slice(1);if(!ui.flow.length){ui.flow=null;doSwitch();if(["leader","pass","fx","note","summon"].includes(ui.act))ui.act="play";}ui.q="";ui.sel=[];rMatch();}
 function startCard(name,a,who,via){const c=BY[name];
   if(c&&(c.t==="特殊"||c.t==="战术")){const idx=pushLog({who,a,c:name,via:via||undefined});afterCard(idx,name,a,who);return;}
-  queue({t:"place",a,who,side:who,card:name,via});rMatch();}
+  // 不忠：放到出牌方的对面半场
+  const side=c&&/^不忠/.test(c.tx||"")?(who==="me"?"op":"me"):who;
+  queue({t:"place",a,who,side,card:name,via});rMatch();}
 function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];const id=g.log[idx].id;
   if(c&&a==="play"&&needsTarget(c,"play"))st.push({t:"target",id});
+  {const m=c&&a==="play"&&(c.tx||"").match(/献金\s*(\d+)/);if(m)st.push({t:"tribute",id,n:+m[1]});}
   if(c&&a==="play"&&pulls(c,"play"))st.push({t:"pull",who,parent:name});
   if(a==="play")st.push(...spawnStep(c,"play",who,name));
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
@@ -1674,7 +1831,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){const eu=u.eu;const last=g.log.filter(x=>x.r===VR()).pop();
       const st=eu?eu.status:{};const has=[st.shield?"盾":"",st.lock?"锁":"",st.resilience?"坚":"",st.veil?"遮":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:""].filter(Boolean).join(" ");
-      openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+(has?"，"+has:"")+"）。战力：+n / -n / 目标值；状态：-盾 +盾 -锁 +坚，甲3 设护甲，活2 伤2 设回合（0 去掉）。多项用逗号隔开。",st.shield?"-盾":(eu?String(eu.power):""),"记录",v=>{v=(v||"").trim().replace(/[，\s]+/g,",");if(!v)return;$("#dlg").close();
+      openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+(has?"，"+has:"")+"）。战力：+n / -n / 目标值；状态：-盾 +盾 -锁 +坚 ±潜 ±伏 ±赏，甲3 设护甲，活2 伤2 设回合（0 去掉）。多项用逗号隔开。",st.shield?"-盾":(eu?String(eu.power):""),"记录",v=>{v=(v||"").trim().replace(/[，\s]+/g,",");if(!v)return;$("#dlg").close();
         if(last&&last.id===u.uid&&last.a==="play"&&/^\d+$/.test(v)){last.pw=+v;persist();toast("落地战力 "+v);}
         else{const i=pushLog({who:ui.who,a:"adj",c:u.n,uid:u.uid,side:u.side,v});toast(logText(g.log[i]));}rMatch();});return true;}
     if(ui.act==="kill"){const i=pushLog({who:ui.who,a:"kill",c:u.n,uid:u.uid,side:u.side});toast(logText(g.log[i]));rMatch();return true;}
@@ -1684,6 +1841,9 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=[{t:"edit",id:D.edit}];rMatch();window.scrollTo(0,0);return true;}
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
+  if(D.trib!==undefined&&step&&step.t==="tribute"){const e=entry(step.id);if(e){e.pay=D.trib==="1";persist();}nextStep();return true;}
+  if(D.coinfix){const sd=D.coinfix;const S0=sim(g,VR());const cur=S0?S0.E.s.sides[sd].coins:0;
+    openDlg(sideN(sd)+"金币","推算现有 "+cur+" 个。输入 +n / -n 或实际数量：",String(cur),"记录",v=>{v=(v||"").trim();if(!v)return;$("#dlg").close();const i=pushLog({who:sd,a:"coin",side:sd,v});toast(logText(g.log[i]));rMatch();});return true;}
   if(D.hzfx){const [sd,w,k]=D.hzfx.split("|");const i=pushLog({who:sd,a:"effect",c:k,row:w});queue({t:"target",id:g.log[i].id});toast(logText(g.log[i]));rMatch();return true;}
   if(D.fxk){ui.fx.k=D.fxk;const H=ENG&&ENG.HAZARDS[D.fxk];if(H)ui.fx.dur=H.turns;rMatch();return true;}
   if(D.fxside){ui.fx.side=D.fxside;rMatch();return true;}
@@ -1723,8 +1883,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.do&&A[D.do]){A[D.do]();return true;}
   return false;}
 
-const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm,8/0=第8步带出的第1个单位) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
-const ACODE={adj:"J",draw:"D",play:"P",tactic:"T",effect:"E",spawn:"Y",summon:"S",order:"O",leader:"L",fx:"F",move:"V",kill:"K",mull:"X",pass:"-",note:"N"};
+const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) G金币修正(方 +n/-n/n) $付/$不付=献金 X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm,8/0=第8步带出的第1个单位) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
+const ACODE={coin:"G",adj:"J",draw:"D",play:"P",tactic:"T",effect:"E",spawn:"Y",summon:"S",order:"O",leader:"L",fx:"F",move:"V",kill:"K",mull:"X",pass:"-",note:"N"};
 function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};let n=0;g.log.forEach((x,i)=>{n++;num[x.id||i]=n;x._n=n;});
   const byIdx0=(k)=>{if(k==null)return"?";return num[k]!=null?num[k]:(typeof k==="number"&&g.log[k]?g.log[k]._n:"?");};
   // 由某步产生的单位（生成的衍生牌等）键为 “e8/0”，导出成 “8/0”
@@ -1736,6 +1896,8 @@ function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};
       else{if(x.a==="draw")p.push((x.cards||[]).join(","));if(x.c)p.push(x.c.replace(/\s+/g,"_"));if(x.into)p.push("+"+x.into);
         if(x.row)p.push((x.side&&x.side!==x.who?"X":"")+x.row+(x.pos??""));
         if(x.a==="adj")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"),x.v);
+        if(x.a==="coin")p.push(x.side==="me"?"A":"B",x.v);
+        if(x.pay!=null)p.push(x.pay?"$付":"$不付");
         if(x.pw!=null)p.push("="+x.pw);
         if(x.a==="move"||x.a==="kill")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"));
         const tg=(x.tgts||[]).map(t=>t.row?(t.row.startsWith("me")?"A":"B")+t.row.slice(-1):byIdx(t.uid));if(tg.length)p.push(">"+tg.join(","));else if(x.tgt)p.push(">"+x.tgt.replace(/\s+/g,""));
@@ -1792,7 +1954,8 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
     if(S){const rr=g.rounds[vr];const me=S.score.me.total,op=S.score.op.total;
       const cal=rr&&rr.me!==""&&rr.me!=null?`<span class="note">　真实 ${rr.me}:${rr.op}${(+rr.me!==me||+rr.op!==op)?`，差 ${me-rr.me>=0?"+":""}${me-rr.me} : ${op-rr.op>=0?"+":""}${op-rr.op}`:"，一致"}</span>`:"";
       const um=Object.entries(S.unmod);
-      h+=`<div class="sheet eng"><div class="score"><b class="sm">${me}</b><span>:</span><b class="so">${op}</b>${cal}</div>
+      const cm=S.E.s.sides.me.coins,co=S.E.s.sides.op.coins,coinUsed=cm||co||S.E.trace.some(t=>/金币|献金|费用/.test(t.type));
+      h+=`<div class="sheet eng"><div class="score"><b class="sm">${me}</b><span>:</span><b class="so">${op}</b>${cal}</div>${coinUsed?`<p class="note coins">金币　我方 <b>${cm}</b>　对方 <b>${co}</b></p>`:""}
         ${S.warns.length?`<details><summary class="note">引擎提示 ${S.warns.length} 条</summary>${S.warns.map(w=>`<div class="warn">${w.fix?`<button class="ghost" data-fixtgt="${w.id}">补目标</button>`:""}${esc(logText(entry(w.id)||{}).slice(0,24))}：${esc(w.m)}</div>`).join("")}</details>`:""}
         ${um.length?`<p class="note">未建模：${um.map(([n,k])=>esc(n)+(k>1?"×"+k:"")).join("、")}</p>`:""}</div>`;}
     const hz=S&&S.E&&S.E.s.hazards;
@@ -1801,7 +1964,7 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
 const unitFaceU=u=>{const e=u.eu;if(!e)return unitFace(u.n);const c=BY[u.n];const st=e.status||{};
       const cls=e.power>e.base?"up":e.power<e.base?"dn":"";
       const marks=[st.shield?"盾":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:"",st.lock?"锁":"",st.poison?"毒":"",st.veil?"遮":"",st.resilience?"坚":"",
-        e.timer!=null?"计"+e.timer:"",e.def.cooldown!=null&&e.cd>0?"冷"+e.cd:"",e.def.order&&e.def.cooldown==null&&(e.def.charges||1)>1?"充"+Math.max(0,e.def.charges-e.orderUsed):""].filter(Boolean).join(" ");
+        st.spying?"潜":"",st.ambush?"伏":"",st.bounty?"赏":"",e.timer!=null?"计"+e.timer:"",e.def.cooldown!=null&&e.cd>0?"冷"+e.cd:"",e.def.order&&e.def.cooldown==null&&(e.def.charges||1)>1?"充"+Math.max(0,e.def.charges-e.orderUsed):""].filter(Boolean).join(" ");
       return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled?`<span class="unm">?</span>`:""}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
 const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small class="upw">${c.pw}</small>`:"";};
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{
@@ -1832,6 +1995,9 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="target"){const e=entry(step.id);
         h+=`<h2>「${esc(e.c||ACT[e.a])}」的目标</h2><p class="note">可以多选单位或整排，没有目标就跳过。</p>${lanes("multi")}
         <div class="btns" style="margin-top:8px"><button class="primary" data-do="tgtDone" style="flex:1">完成${(ui.sel||[]).length?"（"+ui.sel.length+"）":""}</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
+      else if(step.t==="tribute"){const e=entry(step.id);const S0=S&&S.E?S.E.s.sides[e?e.who:"me"].coins:null;
+        h+=`<h2>「${esc(e?e.c:"")}」献金 ${step.n}：付了吗？</h2>${S0!=null?`<p class="note">推算${sideN(e?e.who:"me")}现有金币 ${S0}</p>`:""}
+        <div class="btns" style="margin-top:8px"><button class="primary" data-trib="1" style="flex:1">付了</button><button class="ghost" data-trib="0" style="flex:1">没付</button></div>`;}
       else if(step.t==="pull"){h+=`<h2>「${esc(step.parent)}」拉出了哪张？</h2>${searchBox("搜牌名")}<div id="resBox">${step.who==="me"&&!ui.q?deckGrid({deckOnly:true}):matchRes()}</div>
         <div class="btns" style="margin-top:8px"><button class="ghost" data-do="flowSkip">没拉出 / 跳过</button></div>`;}
       else if(step.t==="spawn"){h+=`<h2>「${esc(step.parent)}」生成了什么？</h2>${step.picks.length?`<p class="note">根据卡牌效果推测：</p><div class="grid">${step.picks.map(n=>tile(n,"","",`data-nm="${esc(n)}"`)).join("")}</div>`:""}
@@ -1880,7 +2046,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
          <div class="row"><div class="lab">持续回合（卡面写的回合数）</div><div class="step"><button data-fxdur="-1">−</button><output>${f.dur}</output><button data-fxdur="1">+</button></div></div>
          <button class="primary" data-do="fxRec">记录：${(f.who||ui.who)==="me"?"我":"对方"}施加 ${f.k} → ${sideN(f.side)}${ROWN[f.row]}</button>`;}
       else if(ui.act==="move"){h+=`<p class="note" style="margin:10px 0 4px">点要移动的单位（同排换位或换排都行）：</p>${lanes("pick")}`;}
-      else if(ui.act==="adj"){h+=`<p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7；-盾 去掉护盾，+盾 加上，甲3 设护甲。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
+      else if(ui.act==="adj"){h+=`<div class="btns" style="margin-top:8px"><button class="ghost" data-coinfix="me">修正我方金币</button><button class="ghost" data-coinfix="op">修正对方金币</button></div><p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7；-盾 去掉护盾，+盾 加上，甲3 设护甲。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
       else if(ui.act==="kill"){h+=`<p class="note" style="margin:10px 0 4px">点被摧毁的单位：</p>${lanes("pick")}`;}
       else if(ui.act==="note"){h+=`<div class="row"><input id="noteIn" placeholder="例如：对方洗回 2 张牌 / 我方被锁定" autocomplete="off"></div><button class="primary" data-do="noteRec">记录备注</button>`;}
       else h+=`<div class="row"><button class="primary" data-do="${ui.act}">${ui.who==="me"?"记录：我停牌":"记录：对方停牌"}</button></div>`;
