@@ -1,0 +1,22 @@
+# 每次推送 / PR 自动跑测试：打包产物是否最新、底层、卡牌、界面、第一局回放、全部卡牌冒烟
+name: 测试
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 打包产物是最新的（改了 src 要跑 node build.js 再提交）
+        run: node build.js && git diff --exit-code -- dist src/cardflags.js
+      - name: 底层、卡牌、界面、回放
+        run: npm test
+      - name: 全部卡牌冒烟
+        run: npm run smoke

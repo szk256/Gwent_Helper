@@ -36,4 +36,6 @@ html = html.replace(/<script src="([^"]+)"><\/script>/g, (_, f) => (used.push(f)
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, html);
+// 可安装网页（PWA）用的文件：放在网址上（如 GitHub Pages）时生效，本地打开 html 不受影响
+for (const f of ['manifest.webmanifest', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon.svg']) fs.copyFileSync(path.join(SRC, f), path.join(path.dirname(OUT), f));
 console.log(`已打包 ${used.join(' ')} → ${path.relative(__dirname, OUT)}（${(Buffer.byteLength(html) / 1024).toFixed(0)} KB）`);

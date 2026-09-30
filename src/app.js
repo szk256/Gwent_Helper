@@ -4,216 +4,6 @@ const C=RAW.map((r,i)=>({i,n:r[0],f:r[1],col:r[2],t:r[3],pw:r[4],pv:parseInt(r[5
 C.forEach(c=>{c.orig={pw:c.pw,pv:c.pv,tx:c.tx};c.token=c.ser==="token";});
 const EN2ZH={};C.forEach(c=>{if(c.en&&c.en!==c.n)EN2ZH[c.en]=c.n;});
 const BY={};C.forEach(c=>BY[c.n]=c);
-// ---------- 规则引擎接入：按记录逐步推算场面 ----------
-const ENG=(typeof GwentEngine!=="undefined")?GwentEngine:null;
-const ENGRAW=RAW;
-let simCache={key:"",res:null};
-// 未确认规则的覆盖值（校准用），见引擎 DEFAULT_RULES
-const SIM_RULES={};
-function sim(g,r,excl){
-  if(!ENG)return null;
-  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
-  if(simCache.key===key)return simCache.res;
-  const log=g.log.filter(x=>x.r===r&&x.id!==excl);
-  const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
-  E.loadData(ENGRAW);E.loadBehaviors(GwentCards.behaviors);
-  E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
-  const key2u={},u2key=new Map(),warns=[],unmod={};
-  const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
-  const unitByKey=k=>{const u=key2u[k];return u&&E.find(u.uid)?u:null;};
-  let tq=[],dq=[],effQ={},hzQ={};
-  const HZ=ENG.HAZARDS||{};
-  // 目标来源：先用这一步自己的 tgts，再用“触发效果”记录里对应来源的目标（例如法利波的随机伤害）
-  const takeFrom=(q,req,n,out)=>{while(q.length&&out.length<n){const u=unitByKey(q[0]);if(!u||!req.from.includes(u))break;out.push(u);q.shift();}};
-  let curPay=null,curX=null;
-  // 亢奋：先看这张牌打出时记的“成立/不成立”（旧记录），没有就由引擎按推算的手牌数判断
-  const frenzyOf=req=>{const i=log.indexOf(curX);for(let j=i;j>=0;j--){const y=log[j];if(y.c===req.source&&y.who===req.side&&y.fz!=null)return y.fz;}
-    return null;};   // 否则引擎按推算的手牌数（handCount）判断
-  // 我方牌组里还剩的牌（拉尔维克的埃兰）：卡组 − 打出/召唤过的 − 手牌（记了手牌时）
-  const dk=deckById(g.deck);
-  E.deckInfo=sd=>{if(sd!=="me"||!dk||!curX)return null;const left=Object.assign({},dk.cards);const take=n=>{const b=baseOf(n);if(left[b]>0)left[b]--;};
-    for(const y of g.log){if(y.id===curX.id)break;if(y.who==="me"&&(y.a==="play"||y.a==="summon")&&y.via!=="墓场")take(y.c);}
-    if(curX.who==="me"&&(curX.a==="play"||curX.a==="summon")&&curX.via!=="墓场")take(curX.c);
-    if(g.hand)myHand(g,curX.id).forEach(take);
-    const out=[];for(const[n,k]of Object.entries(left))for(let i=0;i<k;i++)out.push(n);return out;};
-  E.chooser=(req)=>{
-    if(req.kind==="deck"){return dq.length?dq.shift():null;}
-    if(req.kind==="tribute")return curPay;      // 献金：记录里的“付了/没付”，没记则按规则默认
-    if(req.kind==="frenzy")return frenzyOf(req);
-    if(req.kind==="deckCount")return curX&&curX.c===req.source&&curX.dn!=null?curX.dn:null;
-    const n=req.n||1,out=[];
-    // 整排效果的随机结果只从“效果”记录（来源 = 效果名）里取
-    if(HZ[req.source]){if(hzQ[req.source])takeFrom(hzQ[req.source],req,n,out);return out.length?out:null;}
-    takeFrom(tq,req,n,out);
-    if(out.length<n&&req.source&&effQ[req.source])takeFrom(effQ[req.source],req,n,out);
-    return out.length?out:null;};
-  const TURN=["play","leader","tactic","order","pass","spawn","summon"];
-  const isTurnAct=y=>TURN.includes(y.a)&&!y.via;
-  // 已建模的来源：它的“触发效果”记录只提供目标，效果由引擎结算
-  const modeled=nm=>{const d=nm&&E.def(nm);return !!(d&&!d.unmodeled);};
-  // 只在回合结束时触发的来源：记录到它的效果 = 该方回合已经结束
-  const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
-  const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
-  // 上一局的坚韧单位留场（老兵在小局开始时 +1）
-  let Pprev=null;
-  if(r>0&&g.log.some(x=>x.r===r-1)){const P=Pprev=sim(g,r-1);
-    if(P)for(const sd of["me","op"]){for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(u.status.resilience){const v=E.carryIn(u,sd,w);const k=P.u2key.get(u);if(k)bind(k,v);}
-      // 跨局延续：金币（小局开始时减半）、墓场、放逐、牌组里回响的牌、领袖/战术剩余充能
-      const A=P.E.s.sides[sd],B=E.s.sides[sd];B.coins=A.coins;B.grave=A.grave.slice();B.banished=A.banished.slice();
-      // 上一局结束时场上的非坚韧单位进墓场（佚亡的放逐）
-      for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(!u.status.resilience)(P.E.isDoomed(u)?B.banished:B.grave).push(u.name);B.deck=A.deck.slice();B.echoed=(A.echoed||[]).slice();
-      // 墓场里的计数（洞察之球）、牌组里单位的增益（埃兰）、最大耐性（校友会，ASSUME 跨小局保留）
-      B.graveWatch=JSON.parse(JSON.stringify(A.graveWatch||[]));B.deckBuff=JSON.parse(JSON.stringify(A.deckBuff||{}));if(A.vars.maxPat)B.vars.maxPat=Object.assign({},A.vars.maxPat);
-      for(const[nm,h]of Object.entries(A.abilities||{})){const h2=E.addAbility(sd,nm,h.charges);h2.vars=JSON.parse(JSON.stringify(h.vars||{}));}}}
-  E.s.round=r;
-  E.startRound();
-  // 手牌数推算：第一局起手 10 张；之后 = 上一局结束时的手牌（R 行记了就用记录，否则用推算）+ 3，上限 10。打出（不含牌组/墓场/生成）-1，“手牌”记录修正
-  {const P=Pprev;const R0=g.rounds&&g.rounds[r-1];
-    for(const sd of["me","op"]){const rec=R0&&R0[sd==="me"?"hm":"ho"];let prev=rec!=null&&rec!==""?+rec:P?P.E.s.sides[sd].handCount:null;
-      // 希里：己方输掉小局时回到手牌（在场上或墓场里）；R 行记了手牌就以记录为准
-      if((rec==null||rec==="")&&P&&R0){const lost=R0.res==="D"||(R0.res==="L")===(sd==="me");const A=P.E.s.sides[sd];
-        if(lost&&(A.grave.includes("希里")||P.E.allUnits(sd).some(u=>u.name==="希里")))prev=Math.min(E.rules.handLimit,prev+1);}
-      const S=E.s.sides[sd];S.handCount=r===0?E.rules.draws[0]:Math.min(E.rules.handLimit,(prev==null?Math.max(0,E.rules.draws[0]-4*r):prev)+E.rules.draws[r]);S.handKnown=true;}}
-  const consumed=new Set();let acted=false;
-  // 逐步记录：第几手（每方各自计数，换人行动算新的一手）和这一步结算后的比分，偏差报告用
-  const steps={},turnCnt={me:0,op:0};let lastTurn=null;
-  const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
-  const pushHz=y=>{(hzQ[y.c]=hzQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);};
-  for(let i=0;i<log.length;i++){const x=log[i];if(consumed.has(x.id))continue;
-    let side=x.who;
-    // 领袖记错方（记录时停在“对方”）：目标是另一方单位且另一方领袖同名时，按另一方推算
-    if(x.a==="leader"&&x.tgts&&x.tgts[0]&&x.tgts[0].uid!=null){const tu=unitByKey(x.tgts[0].uid);const other=side==="me"?"op":"me";const otherLeader=other==="me"?g.leader:g.opLeader;
-      if(tu&&tu.side===other&&x.c&&x.c===otherLeader){warns.push({id:x.id,m:"目标是"+sideN(other)+"单位，已按"+sideN(other)+"领袖推算（建议改记录的方）"});side=other;}}
-    // 换人行动 = 回合切换（触发效果、整排效果不算，它们可能在任一方回合里发生）
-    const turnAct=isTurnAct(x);
-    // 整排效果的命中记录可能记在回合行动前后：换回合结算整排效果前先备好
-    if(turnAct)for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];if(y.a==="effect"&&HZ[y.c]&&!consumed.has(y.id))pushHz(y);}
-    if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
-    else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
-    if(turnAct){effQ={};
-      // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
-      for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];
-        if(y.a==="effect"&&modeled(y.c)&&!endOnly(y.c)){(effQ[y.c]=effQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);}}}
-    tq=(x.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);
-    // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
-    const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
-    dq=subs.map(y=>y.c);
-    const before=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
-    const def=x.c?E.def(x.c):null;
-    try{
-    switch(x.a){
-      case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
-        if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});
-}
-        else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场",fromGrave:x.via==="墓场",player:side});if(u)bind(x.id,u);}
-        else E.log("不上场",{name:x.c});break;}
-      case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
-      case "spawn":{if(def&&def.type==="special"){E.play(side,x.c,null,null,{spawned:true});}
-        else if(x.row){const u=E.spawn(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
-      case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
-        if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
-      case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
-        const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});break;}
-      case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
-      case "kill":{const u=unitByKey(x.uid);if(u)E.destroy(u);break;}
-      case "adj":{const u=unitByKey(x.uid);if(u){
-        // 可以多项，逗号分隔：+2 / -3 / 7（战力），+盾 -盾 +锁 -锁 +坚 -坚 +遮 -遮（状态），甲3（护甲），活2 伤2（回合数，0 = 去掉）
-        for(const v of String(x.v).split(/[,，\s]+/).filter(Boolean)){let m;
-          if((m=v.match(/^([+-])(盾|锁|坚|遮|潜|伏|赏)$/))){const k={盾:"shield",锁:"lock",坚:"resilience",遮:"veil",潜:"spying",伏:"ambush",赏:"bounty"}[m[2]];u.status[k]=m[1]==="+";E.log("手动状态",{name:u.name,key:k,val:u.status[k]});}
-          else if((m=v.match(/^甲(\d+)$/)))u.armor=+m[1];
-          else if((m=v.match(/^(活|伤)(\d+)$/))){u.status[m[1]==="活"?"vitality":"bleed"]=+m[2];}
-          else{const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的修正「"+v+"」"});continue;}
-            if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}}}
-        if(x.armor!=null)u.armor=x.armor;}break;}
-      case "coin":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的金币修正「"+v+"」"});break;}
-        const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
-      case "pass":{E.pass(side);break;}
-      case "hand":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的手牌修正「"+v+"」"});break;}
-        const before=S2.handCount;S2.handCount=Math.max(0,Math.min(E.rules.handLimit,/^\+/.test(v)?S2.handCount+n:/^-/.test(v)?S2.handCount+n:n));E.log("手动手牌",{side:x.side||side,from:before,to:S2.handCount});break;}
-      case "fx":{if(!HZ[x.c])warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});
-        if(!x.dur&&HZ[x.c])warns.push({id:x.id,m:"「"+x.c+"」没记持续回合，按 "+HZ[x.c].turns+" 回合算"});
-        E.addHazard(x.side,x.row,x.c,x.dur||undefined);break;}
-      case "effect":{if(HZ[x.c]){pushHz(x);break;}
-        if(!modeled(x.c)){warns.push({id:x.id,m:"效果「"+(x.c||"")+"」未建模，请用改战力修正"});break;}
-        (effQ[x.c]=effQ[x.c]||[]).push(...tq);tq=[];
-        // 回合结束效果：记录到它时，该方回合已结束
-        const src=E.allUnits().find(u=>u.name===x.c);
-        if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
-        break;}
-    }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
-    // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排
-    if(x.a==="play"&&def&&def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」生成的整排效果没记在哪排（用“整排效果”补上）",fix:true});}
-    if(turnAct)acted=true;
-    if(turnAct&&side!==lastTurn){turnCnt[side]++;lastTurn=side;}
-    {const who=lastTurn||side;const cards=new Set();let wn=0;
-      for(const t of E.trace.slice(t0)){const d=t.data||{};if(d.by&&d.by!=="手动")cards.add(d.by);if(t.type==="打出"||t.type==="生成"||t.type==="召唤")cards.add(d.name);if(t.warn)wn++;}
-      if(x.c&&BY[x.c])cards.add(x.c);
-      steps[x.id]={who,n:turnCnt[who]||1,me:E.score("me").total,op:E.score("op").total,cards:[...cards].filter(Boolean),wn};}
-    // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
-    const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
-    for(const y of subs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
-        if(y.row&&(y.side||y.who)===u.side&&(u.row!==y.row||(y.pos!=null&&E.s.sides[u.side].rows[u.row].indexOf(u)!==y.pos)))relocate(u,y.row,y.pos);}}
-    fresh.forEach((u,k)=>bind(x.id+"/"+k,u));
-    // 落地战力：以整步结算完后看到的为准（包括牌组拉出的牌）
-    for(const y of [x,...subs]){if(y.pw==null)continue;const u=unitByKey(y.id);
-      if(u&&u.power!==y.pw){E.log("录入战力",{uid:u.uid,name:u.name,from:u.power,to:y.pw});u.power=y.pw;}}
-    // 提示：未建模、待选
-    for(const t of E.trace.slice(t0)){
-      if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true});
-      if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+" 本回合不能用指令"});
-      if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
-      if((t.type==="献金"||t.type==="费用")&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 的"+t.type+"效果未建模（用改战力修正）"});
-      if(t.type==="亢奋未知"&&t.data.name===x.c&&x.a==="play")warns.push({id:x.id,m:t.data.name+" 亢奋 "+t.data.n+" 是否成立没记，按"+(E.rules.frenzyDefault?"成立":"不成立")+"算",step:{t:"frenzy",id:x.id,n:t.data.n}});
-      if(t.type==="牌组单位数未知")warns.push({id:x.id,m:t.data.name+"：牌组里有几个单位没记，牌组增益没算",step:{t:"deckCount",id:x.id}});
-      if(t.type==="金币不足")warns.push({id:x.id,m:t.data.name+" 需要 "+t.data.need+" 金币，推算只有 "+t.data.coins+"（用“金币”修正）"});
-      if(t.data&&t.data.unmodeled){unmod[t.data.name]=(unmod[t.data.name]||0)+1;}}
-  }
-  // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
-  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn();}
-  {const R1=g.rounds&&g.rounds[r];if(R1&&log.length)for(const sd of["me","op"]){const rec=R1[sd==="me"?"hm":"ho"];
-    if(rec!=null&&rec!==""&&+rec!==E.s.sides[sd].handCount)warns.push({id:log[log.length-1].id,m:"推算"+sideN(sd)+"局末手牌 "+E.s.sides[sd].handCount+" 张，记录是 "+rec+" 张（中途抽牌、回手没记，用“修正手牌”补上）"});}}
-  const res={E,key2u,u2key,warns,unmod,steps,score:{me:E.score("me"),op:E.score("op")}};
-  simCache={key,res};return res;}
-// ---------- 偏差报告：真实比分（录屏核对的 C 记录、R 行局末比分）和推算逐步对比 ----------
-const NOTE_PRESETS=["失误","关键回合","该停牌","没算到","对面读牌","卡手","好操作","节奏亏"];
-function parseScore(v){const m=String(v||"").match(/(\d+)\s*[:：\s]\s*(\d+)/);return m?{me:+m[1],op:+m[2]}:null;}
-function stepLabel(st){return st?(st.who==="me"?"我":"对")+"第"+st.n+"手":"";}
-function devReport(g,r,S){if(!S||!S.steps)return null;const log=g.log.filter(x=>x.r===r);if(!log.length)return null;
-  const FL=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
-  const chk=[];log.forEach((x,i)=>{if(x.a==="real"){const v=parseScore(x.v);if(v&&S.steps[x.id])chk.push({i,id:x.id,real:v,eng:{me:S.steps[x.id].me,op:S.steps[x.id].op},lab:stepLabel(S.steps[x.id])});}});
-  const R=g.rounds[r];if(R&&R.me!==""&&R.me!=null&&R.op!==""&&R.op!=null)chk.push({i:log.length,id:"end",real:{me:+R.me,op:+R.op},eng:{me:S.score.me.total,op:S.score.op.total},lab:"局末"});
-  chk.forEach(c=>{c.dm=c.eng.me-c.real.me;c.dop=c.eng.op-c.real.op;c.ok=!c.dm&&!c.dop;});
-  const bad=chk.find(c=>!c.ok);const prevOk=bad?[...chk].reverse().find(c=>c.ok&&c.i<bad.i):null;
-  // 每一步的比分变化和可疑来源
-  let pm=0,po=0;const rows=log.map((x,i)=>{const st=S.steps[x.id];if(!st)return null;const d={i,x,st,dm:st.me-pm,dop:st.op-po};pm=st.me;po=st.op;
-    d.flags=st.cards.filter(n=>FL[n]||(ENG&&S.E.def(n).unmodeled)).map(n=>n+"（"+(FL[n]||"未建模")+"）");if(st.wn)d.flags.push("提示 "+st.wn+" 条");return d;}).filter(Boolean);
-  const range=bad?rows.filter(d=>d.i>(prevOk?prevOk.i:-1)&&d.i<=(bad.id==="end"?log.length:bad.i)):[];
-  const sus=range.filter(d=>d.flags.length||(bad.dm&&d.dm)||(bad.dop&&d.dop));
-  const sgn=n=>(n>0?"+":"")+n;
-  const txt=[];const html=[];
-  if(!chk.length){html.push(`<p class="note">还没有真实比分。复盘录屏时，在某一手之后点“录入真实比分”（或在 R 行填局末比分），就能定位从哪一步开始偏。</p>`);txt.push("（没有真实比分）");}
-  else{html.push(`<div class="dev">${chk.map(c=>`<div class="${c.ok?"ok":"bad"}">${esc(c.lab)}　真实 ${c.real.me}:${c.real.op}　推算 ${c.eng.me}:${c.eng.op}　${c.ok?"一致":"差 "+sgn(c.dm)+" : "+sgn(c.dop)}</div>`).join("")}</div>`);
-    chk.forEach(c=>txt.push(`${c.lab} 真实 ${c.real.me}:${c.real.op} 推算 ${c.eng.me}:${c.eng.op} ${c.ok?"一致":"差 "+sgn(c.dm)+":"+sgn(c.dop)}`));
-    if(bad){const from=prevOk?prevOk.lab+"之后":"本局开始";const to=bad.lab;
-      html.push(`<p class="note">偏差出现在 <b>${esc(from)} → ${esc(to)}</b> 之间（${range.length} 步）。${bad.dm?"我方"+(bad.dm>0?"多算":"少算")+" "+Math.abs(bad.dm)+"。":""}${bad.dop?"对方"+(bad.dop>0?"多算":"少算")+" "+Math.abs(bad.dop)+"。":""}可疑的步骤：</p>`);
-      txt.push(`偏差区间：${from} → ${to}`);
-      html.push(sus.length?`<div class="dev">${sus.map(d=>`<div>${esc(stepLabel(d.st))}　${esc(logText(d.x))}　<b>${sgn(d.dm)} : ${sgn(d.dop)}</b>${d.flags.length?`<br><small>${esc(d.flags.join("、"))}</small>`:""}</div>`).join("")}</div>`:`<p class="note">这段里没有标记为推测/未建模的牌，可能是记录漏了（对方落地战力、触发效果）。</p>`);
-      sus.forEach(d=>txt.push(`  ${stepLabel(d.st)} ${logText(d.x)} ${sgn(d.dm)}:${sgn(d.dop)}${d.flags.length?" ["+d.flags.join("、")+"]":""}`));}
-    else{html.push(`<p class="note">所有核对点都一致。</p>`);}}
-  const notes=rows.filter(d=>d.x.a==="note");
-  if(notes.length){html.push(`<p class="note">备注：</p><div class="dev">${notes.map(d=>`<div>${esc(stepLabel(d.st))}　${esc(d.x.c)}</div>`).join("")}</div>`);notes.forEach(d=>txt.push(`备注 ${stepLabel(d.st)} ${d.x.c}`));}
-  html.push(`<details><summary class="note">逐步比分（${rows.length} 步）</summary><div class="dev steps">${rows.map(d=>`<div class="${d.x.who}">${esc(stepLabel(d.st))}${d.x.t!=null?" · "+fmt(d.x.t):""}　${esc(logText(d.x))}　<b>${d.st.me}:${d.st.op}</b>${d.dm||d.dop?` <small>(${sgn(d.dm)}:${sgn(d.dop)})</small>`:""}${d.flags.length?` <small class="fl">${esc(d.flags.join("、"))}</small>`:""}</div>`).join("")}</div></details>`);
-  return {html:html.join(""),text:txt.join("\n"),bad:!!bad,n:chk.length};}
-// 场外的计数：墓场里的洞察之球、牌组里单位的增益（埃兰）
-function extraLine(E){const out=[];for(const sd of["me","op"]){const S=E.s.sides[sd];const p=[];
-  (S.graveWatch||[]).forEach(w=>p.push("墓场 "+(w.name==="Orb of Insight"?"洞察之球":w.name)+" 计"+(w.vars.count==null?3:w.vars.count)));
-  const db=Object.values(S.deckBuff||{}).reduce((a,L)=>a+L.reduce((x,y)=>x+y,0),0);if(db)p.push("牌组增益共 +"+db);
-  if(p.length)out.push(sideN(sd)+"："+p.join("，"));}
-  return out.length?`<p class="note coins">${esc(out.join("　"))}</p>`:"";}
-function simBoard(g,r,excl){const S=sim(g,r,excl);if(!S)return null;const R={me:{m:[],r:[]},op:{m:[],r:[]}},all={};
-  for(const s of["me","op"])for(const w of["m","r"])for(const u of S.E.s.sides[s].rows[w]){const k=S.u2key.get(u)||("?"+u.uid);const o={uid:k,n:u.name,side:s,row:w,eu:u};R[s][w].push(o);all[k]=o;}
-  return{R,all,F:g.log.filter(x=>x.r===r&&x.a==="fx"),S};}
-
 const isLeader=c=>c.t==="领袖能力", isTactic=c=>c.t==="战术";
 // 小局开始时历变的牌（用户确认：只有在手牌里才会变，在牌组里不变）：第 i 次历变变成 chain[i]；dev = 这一步要求赤诚（上一形态卡面写“赤诚：……历变”）
 const EVOLVE={"维拉克萨斯王子":[{n:"流放者维拉克萨斯"},{n:"维拉克萨斯国王",dev:true}],"奥贝伦王":[{n:"入侵者奥贝伦"}],"哈罗德·奎特":[{n:"好战者哈罗德"}],"新王艾思娜":[{n:"慈母艾思娜"}],"神童贾奎斯":[{n:"艾德斯伯格的贾奎斯"}],"篡位者 - 军官":[{n:"篡位者 - 将军"}]};
@@ -263,7 +53,10 @@ const DUAL_TAG={"火誓者":["NR"]};
 const dualOf=c=>{const out=new Set(DUAL[c.n]||[]);for(const[t,fs]of Object.entries(DUAL_TAG))if(c.f!=="NE"&&(c.tags||"").split(/[,、]\s*/).includes(t))fs.forEach(f=>{if(f!==c.f)out.add(f);});return[...out];};
 const inFac=(c,f)=>c.f===f||(c.f2||[]).includes(f);
 function applyEdits(){C.forEach(c=>{const e=db.edits[c.n];Object.assign(c,c.orig,{alias:"",f2:(e&&e.f2)||dualOf(c)});if(e){if(e.pv!=null)c.pv=e.pv;if(e.pw!=null)c.pw=e.pw;if(e.tx)c.tx=e.tx;c.alias=e.alias||"";}});}
-async function load(){try{const raw=await readRaw();if(raw)db=JSON.parse(raw);}catch(e){}
+// 放在网址上时注册离线缓存（可安装到桌面）；本地文件打开时跳过
+if(/^https?:/.test(location.protocol)&&"serviceWorker" in navigator&&/gwent_tracker\.html$|\/$/.test(location.pathname))navigator.serviceWorker.register("sw.js").catch(()=>{});
+async function load(){try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});}catch(e){}   // 申请持久存储，减少被浏览器自动清理
+try{const raw=await readRaw();if(raw)db=JSON.parse(raw);}catch(e){}
   if(!db.games.length&&!db.decks.length){for(const k of OLDKEYS){try{const s=localStorage.getItem(k);if(s){ui.oldData=s;break;}}catch(e){}}}
   if(migrate())persist();addCustom();applyEdits();
   if(!db.decks.find(d=>d.id===ui.deckSel))ui.deckSel=db.decks[0]?.id;setup.deck=ui.deckSel;
@@ -282,13 +75,29 @@ function search(q,pool,prio,facs){q=q.trim();if(!q)return[];const ql=q.toLowerCa
 function cardTag(c){return c?`<span class="tag ${c.col==="金"?"gold":"bronze"}">${c.col==="领袖"?"领":c.col}${c.pv?" "+c.pv:""}</span>`:"";}
 // opts.paste：导入类对话框显示“点击粘贴”；opts.file：显示选择文件
 function openDlg(title,note,text,okLabel,onOk,opts){opts=opts||{};$("#fileIn").classList.toggle("hidden",!opts.file);$("#dlgPaste").classList.toggle("hidden",!opts.paste);$("#dlgT").textContent=title;$("#dlgN").textContent=note;$("#dlgX").value=text;$("#dlgOk").textContent=okLabel;
-  $("#dlgOk").onclick=()=>{onOk($("#dlgX").value);};$("#dlg").showModal();}
-function copyOut(title,text){openDlg(title,"已尝试复制到剪贴板。没复制上的话，长按下面的内容全选复制。",text,"再复制一次",t=>copy(t));copy(text);}
+  $("#dlgOk").onclick=()=>{onOk($("#dlgX").value);};$("#dlg").showModal();
+  // 导入框：打开时直接读剪贴板填进去（省去点“点击粘贴”）；内容符合 opts.auto 时直接导入（导入本身会再确认）
+  if(opts.paste&&!text&&navigator.clipboard&&navigator.clipboard.readText)navigator.clipboard.readText().then(t=>{t=(t||"").trim();if(!t||$("#dlgX").value||!$("#dlg").open)return;
+    $("#dlgX").value=t;if(opts.auto&&opts.auto.test(t))onOk(t);else toast("已从剪贴板填入，确认后点「"+okLabel+"」");}).catch(()=>{});}
+// 导出：复制成功只提示，不弹框；浏览器不让写剪贴板时才弹框让你手动复制
+function copyOut(title,text,onDone){const fail=()=>openDlg(title,"浏览器不让写剪贴板，请全选下面的内容复制（Ctrl+A、Ctrl+C）。",text,"再复制一次",t=>copy(t));
+  try{navigator.clipboard.writeText(text).then(()=>{toast("已复制："+title);if(onDone)onDone();}).catch(fail);}catch(e){fail();}}
 function copy(t){try{navigator.clipboard.writeText(t).then(()=>toast("已复制")).catch(()=>{});}catch(e){}}
 $("#dlgNo").onclick=()=>$("#dlg").close();
 $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText();if(!t)return toast("剪贴板是空的");$("#dlgX").value=t;toast("已粘贴");}catch(e){$("#dlgX").focus();toast("浏览器不让读剪贴板，请在框里按 Ctrl+V");}};
 // 全部迁移：整个对局簿（卡组、对局、进行中的对局、牌库、改过的牌、自定义牌）
 const MIGHEAD="#GWMIG v1 昆特对局簿全部数据，用“全部导入”载入";
+// 备份：记录上次下载备份/迁移导出的时间，超过 7 天提醒
+function downloadBackup(){markBackup();const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");}
+// 录屏时间：接受 12:30、1:02:05、1230（= 12:30），返回规范写法；空返回 ""，格式不对返回 false
+function normVt(v){v=String(v||"").trim().replace(/：/g,":");if(!v)return "";let m;
+  if((m=v.match(/^(\d{1,2}):(\d{1,2}):(\d{2})$/)))return +m[1]+":"+m[2].padStart(2,"0")+":"+m[3];
+  if((m=v.match(/^(\d{1,3}):(\d{2})$/)))return +m[1]+":"+m[2];
+  if((m=v.match(/^(\d{1,3})(\d{2})$/)))return +m[1]+":"+m[2];return false;}
+function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
+function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
+function renderBackup(){const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
+  el.textContent=d==null?"还没有备份过":d===0?"今天已备份":"上次备份："+d+" 天前";el.classList.toggle("bad",!!has&&(d==null||d>=7));}
 function migText(){return MIGHEAD+"\n"+JSON.stringify(db);}
 function parseAll(txt){txt=(txt||"").trim();if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);return JSON.parse(txt);}
 
@@ -363,7 +172,7 @@ function myHand(g,uptoId){const h=[];for(const x of g.log){if(uptoId&&x.id===upt
   if(x.a==="draw")(x.cards||[x.c]).forEach(n=>h.push(n));
   else if(x.a==="mull"){const i=h.indexOf(x.c);if(i>=0)h.splice(i,1);if(x.into)h.push(x.into);}
   else if((x.a==="play"||x.a==="summon")&&!x.via){let i=h.indexOf(x.c);if(i<0)i=h.findIndex(n=>baseOf(n)===baseOf(x.c));if(i>=0)h.splice(i,1);}}return h;}
-function pushLog(e){const g=db.live;g.nextE=g.nextE||1;const x=Object.assign({r:VR(),id:"e"+(g.nextE++)},e);if(g.t0&&!ui.insertBefore&&ui.vr==null){x.t=Math.round((Date.now()-g.t0)/1000);g.lastT=Date.now();}
+function pushLog(e){const g=db.live;g.nextE=g.nextE||1;const x=Object.assign({r:VR(),id:"e"+(g.nextE++)},e);if(g.vtCur&&x.vt==null)x.vt=g.vtCur;   // 录屏时间：复盘时填的当前录屏位置，之后的记录都带上if(g.t0&&!ui.insertBefore&&ui.vr==null){x.t=Math.round((Date.now()-g.t0)/1000);g.lastT=Date.now();}
   if(ui.insertBefore){const i=g.log.findIndex(y=>y.id===ui.insertBefore);if(i>=0){x.r=g.log[i].r;g.log.splice(i,0,x);persist();return i;}ui.insertBefore=null;}
   g.log.push(x);persist();return g.log.length-1;}
 function queue(...steps){ui.flow=[...steps,...(ui.flow||[])];}
@@ -453,6 +262,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     tacticOp(){const i=pushLog({who:"op",a:"tactic",c:"战术"});ui.act="play";queue({t:"target",id:g.log[i].id});rMatch();},
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},
     fxRec(){const f=ui.fx;const i=pushLog({who:f.who||ui.who,a:"fx",c:f.k,side:f.side,row:f.row,dur:f.dur||null});ui.fx=null;ui.act="play";toast(logText(g.log[i]));rMatch();},
+    keysHelp(){alert(window.GwentKeysHelp||"");},
     goNote(){ui.act="note";rMatch();window.scrollTo&&window.scrollTo(0,0);},
     editPresets(){openDlg("常用备注","每行一个，点一下就记录。",(db.notePresets||NOTE_PRESETS).join("\n"),"保存",v=>{db.notePresets=String(v||"").split(/\n/).map(x=>x.trim()).filter(Boolean);if(!db.notePresets.length)delete db.notePresets;persist();$("#dlg").close();rMatch();});},
     realScore(){const S0=sim(g,VR());const cur=S0?S0.score.me.total+":"+S0.score.op.total:"";
@@ -471,6 +281,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
       persist();toast("已改为"+sideN(to));rMatch();},
     ePlace(){const e=entry(step.id);ui.flow=[{t:"place",editId:e.id,card:e.c,side:e.side||e.who,who:e.who,move:e.a==="move"}];rMatch();},
     eTgt(){const e=entry(step.id);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();},
+    eVt(){const e=entry(step.id);openDlg("录屏时间","这一步在录屏里的时间（例如 12:30 或 1:02:05），清空则去掉。",e.vt||"","保存",v=>{v=normVt(v);if(v===false)return toast("格式：分:秒，例如 12:30");if(v)e.vt=v;else delete e.vt;persist();$("#dlg").close();rMatch();});},
     eInsert(){ui.insertBefore=step.id;ui.flow=null;rMatch();toast("插入模式：新记录会放在这一步之前");},
     insertOff(){ui.insertBefore=null;rMatch();},
     handToggle(){g.hand=!g.hand;db.handPref=g.hand;persist();rMatch();}
@@ -478,7 +289,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.do&&A[D.do]){A[D.do]();return true;}
   return false;}
 
-const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) G金币修正(方 +n/-n/n) H手牌修正(方 +n/-n/n) C真实比分(我:对，录屏核对用) $付/$不付=献金 !亢/!不亢=亢奋是否成立 #n=牌组里的单位数(埃兰) X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm,8/0=第8步带出的第1个单位) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
+const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) G金币修正(方 +n/-n/n) H手牌修正(方 +n/-n/n) C真实比分(我:对，录屏核对用) ~录屏时间 $付/$不付=献金 !亢/!不亢=亢奋是否成立 #n=牌组里的单位数(埃兰) X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm,8/0=第8步带出的第1个单位) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
 const ACODE={real:"C",hand:"H",coin:"G",adj:"J",draw:"D",play:"P",tactic:"T",effect:"E",spawn:"Y",summon:"S",order:"O",leader:"L",fx:"F",move:"V",kill:"K",mull:"X",pass:"-",note:"N"};
 function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};let n=0;g.log.forEach((x,i)=>{n++;num[x.id||i]=n;x._n=n;});
   const byIdx0=(k)=>{if(k==null)return"?";return num[k]!=null?num[k]:(typeof k==="number"&&g.log[k]?g.log[k]._n:"?");};
@@ -493,6 +304,7 @@ function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};
         if(x.a==="adj")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"),x.v);
         if(x.a==="coin"||x.a==="hand")p.push(x.side==="me"?"A":"B",x.v);
         if(x.a==="real")p.push(x.v);
+        if(x.vt)p.push("~"+x.vt);
         if(x.pay!=null)p.push(x.pay?"$付":"$不付");
         if(x.fz!=null)p.push(x.fz?"!亢":"!不亢");
         if(x.dn!=null)p.push("#"+x.dn);
@@ -506,12 +318,12 @@ function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};
 function gameCode(g){const o=g.rounds?outcome(g.rounds):null;const L=[`【昆特对局】${g.date}｜${g.deckName} vs ${FN[g.fac]||g.fac}｜${g.coin?g.coin+"手":"先后手未记"}｜结果 ${o?o.w+":"+o.l+" "+o.res:"未完成"}`];
   g.rounds.forEach((r,ri)=>{const sc=(r.me!==""&&r.me!=null&&r.op!==""&&r.op!=null)?` 比分 ${r.me}:${r.op}`:"";const hd=(r.hm!=null&&r.ho!=null)?`｜结束时手牌 我${r.hm} 对${r.ho}`:"";L.push(`第${ri+1}局 ${{W:"赢",L:"输",D:"平"}[r.res]||"?"}${sc}${hd}`);
     let S0=null;try{S0=sim(g,ri);}catch(e){}
-    g.log.filter(x=>x.r===ri).forEach(x=>{const st=S0&&S0.steps&&S0.steps[x.id];L.push("  "+(st?"["+stepLabel(st)+" "+st.me+":"+st.op+"] ":"")+logText(x));});
+    g.log.filter(x=>x.r===ri).forEach(x=>{const st=S0&&S0.steps&&S0.steps[x.id];L.push("  "+(st?"["+stepLabel(st)+" "+st.me+":"+st.op+(x.vt?" 录屏 "+x.vt:"")+"] ":"")+logText(x));});
     const DR=S0?devReport(g,ri,S0):null;if(DR&&DR.n)L.push("  偏差报告：\n"+DR.text.split("\n").map(t=>"    "+t).join("\n"));});
   if(g.diff!=null&&!(g.rounds[0]&&g.rounds[0].hm!=null))L.push(`第一局结束牌差：${g.diff>0?"+":""}${g.diff}`);if(g.stuck?.length)L.push("卡手："+g.stuck.join("、"));if(g.note)L.push("备注："+g.note);return L.join("\n");}
 
 // ---------- render ----------
-function render(){$("#count").textContent=db.games.length+" 局";
+function render(){$("#count").textContent=db.games.length+" 局";renderBackup();
   document.querySelectorAll("nav button[data-t]").forEach(b=>b.classList.toggle("on",b.dataset.t===ui.tab));
   ["match","stats","deck","coll"].forEach(k=>$("#tab-"+k).classList.toggle("hidden",k!==ui.tab));
   ({match:rMatch,stats:rStats,deck:rDeck,coll:rColl})[ui.tab]();}
@@ -534,7 +346,7 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
    <div class="row"><div class="lab">对手阵营</div><div class="chips">${facChips(setup.fac,"sfac")}</div></div>
    <div class="row"><div class="lab">先后手</div><div class="seg">${["先","后"].map(v=>`<button data-scoin="${v}" class="${setup.coin===v?"on":""}">${v}手</button>`).join("")}</div></div>
    <button class="primary" data-do="start">开始记录</button></div>`;
-   h+=`<div class="btns" style="justify-content:space-between;align-items:center;margin:4px 0 6px"><h2 style="font-size:17px">历史对局</h2><div class="btns"><button class="ghost" data-do="exAll">导出全部对局</button><button class="ghost" data-do="migAll">全部迁移导出</button><button class="ghost" data-do="dl">下载备份</button><button class="ghost" data-do="impAll">全部导入</button></div></div>`;
+   h+=`<div class="btns" style="justify-content:space-between;align-items:center;margin:4px 0 6px"><h2 style="font-size:17px">历史对局</h2>${(()=>{const d=backupAge();return db.games.length&&(d==null||d>=7)?`<button class="ghost bad mbOnly" data-do="dl">${d==null?"还没备份":d+" 天没备份"}·下载</button>`:"";})()}<div class="btns"><button class="ghost" data-do="exAll">导出全部对局</button><button class="ghost" data-do="migAll">全部迁移导出</button><button class="ghost" data-do="dl">下载备份</button><button class="ghost" data-do="impAll">全部导入</button></div></div>`;
    h+=db.games.length?db.games.slice().reverse().map(x=>{const col={W:"var(--win)",L:"var(--loss)",D:"var(--draw)"};const r0=x.rounds[0]||{};
      const hand=(r0.hm!=null&&r0.ho!=null)?`首局手牌 ${r0.hm}:${r0.ho}`:(x.diff!=null?`牌差 ${x.diff>0?"+":""}${x.diff}`:"");
      return `<div class="item"><div class="gems">${x.rounds.map(r=>`<i class="gem" style="--c:${col[r.res]}"></i>`).join("")}</div>
@@ -544,7 +356,7 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
   ensureIds(g);
   const d=deckById(g.deck);const cur=g.cur;const o=outcome(g.rounds);const vr=VR();const editing=ui.vr!=null;
   const nR=Math.max(g.rounds.length+(o?0:1),1);
-  h+=`<div class="sheet"><div class="live-head"><h2>${esc(g.deckName)} vs ${FN[g.fac]}</h2><button class="ghost" data-do="abort">放弃</button></div>${g.t0&&!o?`<div class="clock" id="clock"></div>`:""}
+  h+=`<div class="sheet"><div class="live-head"><h2>${esc(g.deckName)} vs ${FN[g.fac]}</h2><span class="btns" style="margin:0"><button class="ghost pcOnly" data-do="keysHelp" title="电脑快捷键">快捷键 ?</button><button class="ghost" data-do="abort">放弃</button></span></div>${g.t0&&!o?`<div class="clock" id="clock"></div>`:""}
    <div class="rtabs">${Array.from({length:nR},(_,i)=>{const r=g.rounds[i];return `<button class="${i===vr?"on":""}" data-vr="${i}">第${i+1}局${r?" "+{W:"赢",L:"输",D:"平"}[r.res]:"·进行中"}</button>`;}).join("")}</div>
    ${editing?`<p class="note">正在查看/修改第${vr+1}局的记录，新记录会加到这一局。</p>`:""}</div>`;
   if(!o||editing){
@@ -626,7 +438,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
           ${placeable?`<button class="ghost" data-do="ePlace">改位置</button>`:""}
           ${["play","order","leader","summon"].includes(e.a)?`<button class="ghost" data-do="eTgt">改目标</button>`:""}
           <button class="ghost" data-do="eUp">↑ 上移</button><button class="ghost" data-do="eDown">↓ 下移</button>
-          <button class="ghost" data-do="eInsert">在这之前插入</button><button class="ghost bad" data-do="eDel">删除</button><button class="ghost" data-do="flowCancel">关闭</button></div>`;}}
+          <button class="ghost" data-do="eInsert">在这之前插入</button><button class="ghost" data-do="eVt">录屏时间${entry(step.id)?.vt?" "+esc(entry(step.id).vt):""}</button><button class="ghost bad" data-do="eDel">删除</button><button class="ghost" data-do="flowCancel">关闭</button></div>`;}}
       h+=`</div>`;
     }
     if(!step){
@@ -667,8 +479,8 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       h+=`</div>`;
     }
     const lg=g.log.map((x,i)=>[x,i]).filter(([x])=>x.r===vr);
-    h+=`<div class="sheet"><div class="btns" style="justify-content:space-between;align-items:center"><span class="lab" style="margin:0">第${vr+1}局记录 · 点一条可修改</span><span class="btns" style="margin:0"><button class="ghost" data-do="goNote">＋备注</button><button class="ghost" data-do="undo" ${lg.length?"":"disabled"}>↶ 撤销上一步</button></span></div>
-     <div class="log">${lg.length?lg.slice().reverse().map(([x,i])=>{const st=S&&S.steps&&S.steps[x.id];return `<div class="${x.who} ${ui.insertBefore===x.id?"ins":""}"><button class="le" data-edit="${x.id}">${st?`<small class="lmeta">${stepLabel(st)} · ${st.me}:${st.op}${x.t!=null?" · "+fmt(x.t):""}</small>`:""}${esc(logText(x).slice(2))}</button></div>`;}).join(""):`<p class="note">这一局还没有记录。</p>`}</div></div>`;
+    h+=`<div class="sheet"><div class="btns" style="justify-content:space-between;align-items:center"><span class="lab" style="margin:0">第${vr+1}局记录 · 点一条可修改</span><span class="btns" style="margin:0"><small class="note" style="align-self:center">录屏</small><input id="vtIn" class="vt" placeholder="mm:ss" value="${esc(g.vtCur||"")}" autocomplete="off" title="复盘录屏时填当前录屏时间，之后的记录都会带上（快捷键 R）"><button class="ghost" data-do="goNote">＋备注</button><button class="ghost" data-do="undo" ${lg.length?"":"disabled"}>↶ 撤销上一步</button></span></div>
+     <div class="log">${lg.length?lg.slice().reverse().map(([x,i])=>{const st=S&&S.steps&&S.steps[x.id];return `<div class="${x.who} ${ui.insertBefore===x.id?"ins":""}"><button class="le" data-edit="${x.id}">${st?`<small class="lmeta">${stepLabel(st)} · ${st.me}:${st.op}${x.vt?" · 录屏 "+esc(x.vt):x.t!=null?" · "+fmt(x.t):""}</small>`:""}${esc(logText(x).slice(2))}</button></div>`;}).join(""):`<p class="note">这一局还没有记录。</p>`}</div></div>`;
     if(!o&&vr===cur){const p=g.pend;const hmAuto=g.hand?myHand(g).length:null;
     h+=`<div class="sheet"><h2>第${cur+1}局结束</h2><div class="row"><div class="lab">结果</div><div class="seg">${["W","L","D"].map(k=>`<button class="${k} ${p.res===k?"on":""}" data-rres="${k}">${{W:"赢",L:"输",D:"平"}[k]}</button>`).join("")}</div></div>
      <div class="row"><div class="lab">本局结束时的手牌数${hmAuto!=null?`（按记录我方是 ${hmAuto} 张，不填就用这个）`:""}</div><div class="seg"><input id="hMe" inputmode="numeric" placeholder="我方手牌" value="${p.hm??""}"><input id="hOp" inputmode="numeric" placeholder="对方手牌" value="${p.ho??""}"></div></div>
@@ -684,6 +496,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
      <div class="row"><div class="lab">备注</div><textarea id="gNote" rows="2">${esc(g.note)}</textarea></div>
      <div class="btns"><button class="primary" data-do="finish" style="flex:1">保存对局</button><button class="ghost" data-do="undoRound">改上一局结果</button></div></div>`;}
   $("#tab-match").innerHTML=h;
+  {const vi=$("#vtIn");if(vi)vi.onchange=()=>{const v=normVt(vi.value);if(v===false){toast("录屏时间格式：分:秒，例如 12:30");return;}db.live.vtCur=v||undefined;vi.value=v||"";persist();toast(v?"之后的记录带上录屏 "+v:"已清除录屏时间");};}
   bindSearch("#q",v=>ui.q=v,()=>{const b=$("#resBox");if(!b)return;if(!ui.q.trim()){rMatch();return;}b.innerHTML=matchRes();});
   const bd=$("#bdet");if(bd)bd.ontoggle=()=>{ui.showBoard=bd.open;};
   const num=v=>{v=String(v).trim();return v===""?null:(isNaN(+v)?null:+v);};
@@ -825,21 +638,23 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       if(g.rounds.length===1)g.diff=(p.hm!=null&&p.ho!=null)?p.hm-p.ho:null;g.pend={res:null,me:"",op:"",hm:null,ho:null};g.cur=g.rounds.length;
       if(!outcome(g.rounds)){ui.who=g.rounds[g.rounds.length-1].res==="W"?"op":"me";toast(`进入第${g.cur+1}局`);}persist();rMatch();window.scrollTo(0,0);},
     undoRound(){const r=g.rounds.pop();g.cur=g.rounds.length;g.pend={res:r.res,me:r.me,op:r.op,hm:r.hm,ho:r.ho};persist();rMatch();},
-    finish(){ui.vr=null;ui.flow=null;ui.insertBefore=null;const o=outcome(g.rounds);const {pend,cur,...rest}=g;db.games.push({...rest,res:o.res});db.live=null;persist();render();toast("已保存");},
+    finish(){ui.vr=null;ui.flow=null;ui.insertBefore=null;const o=outcome(g.rounds);const {pend,cur,...rest}=g;db.games.push({...rest,res:o.res});db.live=null;persist();render();toast("已保存");
+      // 记完一局：超过 7 天没备份就提醒下载
+      const d=backupAge();if(d==null||d>=7)setTimeout(()=>{if(confirm("已保存。"+(d==null?"还没有备份过":"距上次备份 "+d+" 天")+"，现在下载一份备份文件吗？"))downloadBackup();},300);},
     abort(){if(!confirm("放弃这局记录？已记的步骤会丢失。"))return;db.live=null;persist();render();},
     exAll(){if(!db.games.length)return toast("还没有对局");copyOut("全部对局代码",LEGEND+"\n"+db.games.map(gameCodeC).join("\n"));},
     backup(){copyOut("完整备份",JSON.stringify(db));},
-    migAll(){copyOut("全部迁移导出",migText());},
+    migAll(){copyOut("全部迁移导出",migText(),markBackup);},
     impAll(){const fi=$("#fileIn");fi.onchange=async()=>{const f=fi.files[0];if(!f)return;$("#dlgX").value=await f.text();fi.value="";};
       openDlg("全部导入","粘贴“全部迁移导出”的内容（点“点击粘贴”），或选择下载的备份文件。会替换这个浏览器里现有的全部数据。","","导入并替换",txt=>{let d;try{d=parseAll(txt);}catch(err){return toast("内容格式不对");}
         const n=d&&d.games?d.games.length:0,k=d&&d.decks?d.decks.length:0;
         if(!confirm(`导入 ${k} 个卡组、${n} 局对局${d&&d.live?"和 1 局进行中的对局":""}，替换现有数据（现有 ${db.decks.length} 个卡组、${db.games.length} 局）？`))return;
-        if(!importObj(d))return toast("内容格式不对");persist();$("#dlg").close();ui.deckSel=db.decks[0]?.id;setup.deck=ui.deckSel;ui.statA=db.decks[0]?.id;ui.statB=db.decks[db.decks.length-1]?.id;render();toast("已导入");},{paste:true,file:true});},
-    dl(){const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");},
+        if(!importObj(d))return toast("内容格式不对");persist();$("#dlg").close();ui.deckSel=db.decks[0]?.id;setup.deck=ui.deckSel;ui.statA=db.decks[0]?.id;ui.statB=db.decks[db.decks.length-1]?.id;render();toast("已导入");},{paste:true,file:true,auto:/^(#GWMIG|\{)/});},
+    dl(){downloadBackup();},
     importOld(){importData(ui.oldData);ui.oldData=null;},
     restore(){const fi=$("#fileIn");fi.onchange=async()=>{const f=fi.files[0];if(!f)return;$("#dlgX").value=await f.text();fi.value="";};
       openDlg("恢复备份","点下面「选择文件」载入下载的备份，或者直接粘贴备份内容。旧版对局簿的备份也可以导入。","","导入",txt=>{try{const d=JSON.parse(txt);
-        if(!importObj(d))throw 0;persist();$("#dlg").close();render();toast("已导入");}catch(err){toast("备份内容格式不对");}},{paste:true,file:true});},
+        if(!importObj(d))throw 0;persist();$("#dlg").close();render();toast("已导入");}catch(err){toast("备份内容格式不对");}},{paste:true,file:true,auto:/^\{/});},
     newDeck(){const d={id:db.nextId++,name:"新卡组",f:"NR",leader:"",tactic:"",cards:{}};db.decks.push(d);ui.deckSel=d.id;persist();rDeck();},
     dupDeck(){const s=deckById(ui.deckSel);if(!s)return;const d={...JSON.parse(JSON.stringify(s)),id:db.nextId++,name:s.name+" 副本"};db.decks.push(d);ui.deckSel=d.id;persist();rDeck();toast("已复制，改好后记得改名");},
     delDeck(){if(db.decks.length<2)return toast("至少保留一个卡组");if(!confirm("删除这个卡组？对局记录会保留。"))return;db.decks=db.decks.filter(x=>x.id!=ui.deckSel);ui.deckSel=db.decks[0].id;persist();rDeck();},
@@ -853,7 +668,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
         let k=1,n=l;if((m=l.match(/^(\d)\s*[×xX*]\s*(.+?)(（.*）)?$/))){k=+m[1];n=m[2];}else if((m=l.match(/^(.+?)\s*[×xX*]\s*(\d)$/))){n=m[1];k=+m[2];}
         n=n.trim();if(BY[n]){if(!isLeader(BY[n]))d.cards[n]=(d.cards[n]||0)+k;else d.leader=n;}else if(idx===0&&!d.name.startsWith("【"))d.name=n;else miss.push(n);});
       const fs=Object.keys(d.cards).map(n=>BY[n].f).filter(f=>f!=="NE");if(fs.length)d.f=fs[0];
-      db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true});},
+      db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true,auto:/^【昆特卡组】/});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
     cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};rColl();},
