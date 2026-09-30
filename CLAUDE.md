@@ -41,6 +41,7 @@
 - 和谐（`harmony`，`uniquePrimary` 按第一个类别判断，`harmonySelf` 未确认）、共生（`symbiosis`，己方打出“自然”牌时生成游荡的树人，战力 = 共生数量；ASSUME 每张自然牌只生成 1 个）、事件 `passed`（停牌）、`side.vars.lastUnit`（上一个打出的单位）、`vars.trapsRound`。
 - 成长（`growth`，事件 `growth`）、`triggerDeathwish`（触发遗愿）、`drain`（汲食）、事件 `statusGained`、`s.lastDestroyTurn`、`side.vars.played[类别]`（本局己方打出过的各类别张数）。
 - 翼守（`flanking`，只与 1 张牌相邻：近战排回合结束能力再触发一次，远程排 +1 护甲；`flankActive`）、同化（`assimilate`，打出生成/创造出来的牌时增益；`cardPlayed` 带 `spawned`）、`swap`（互换位置）、`side.vars.leaderTurn`、`vars.lastEnemyBoost`。
+- 斯凯利格：`cards.js` 的 `berserk(x, run)`（狂暴，战力降到 x 以下触发一次）、`raid`（征战伤害，`vars.raidBonus` 高地领主 +1）、`bt(c,n)`（战狂）；引擎 `runHazardOnce`（立即结算一次整排效果）。
 - 会生成整排效果的牌（刺骨冰霜、艾瑞汀、纳吉尔法船员等）在行为里写 `hazardCard:{kind,turns}`（`cards.js` 的 `HZ` / `HZ2`），引擎不自己放，放在哪排按对局簿的“整排效果”记录；打出后界面直接进入整排效果，没记时提示。
 - 陷阱：`cards.js` 的 `trap({trigger, spring, timer})`——打出时背面朝上，条件满足自动翻开结算；手动翻开在对局簿里按“指令”记录。
 - 卡牌脚本约定（`cards.js` 顶部）：`T` 手动目标、`R` 随机结果、`fromDeck` 牌组/墓场/创造出的牌名（来自记录里带出的后续）、`noop` 只影响手牌/牌组/墓场的效果（场面靠后续记录和落地战力）。

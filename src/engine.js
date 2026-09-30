@@ -656,6 +656,11 @@ class Game {
       this.log('整排效果', { side, row: r, kind, turns: this.s.hazards[side][r].turns, by: src && src.name, unmodeled: !H });
     }
   }
+  // 立即结算一次整排效果（不减回合），“触发所有剩余雨和风暴”用
+  runHazardOnce(side, r) {
+    const h = this.s.hazards[side][r]; if (!h) return; const H = HAZARDS[h.kind];
+    if (H) H.run(this, this.s.sides[side].rows[r].filter(u => u.def.type !== 'artifact'), h);
+  }
   _pickExtreme(us, dir, h) {
     if (!us.length) return null;
     const v = dir > 0 ? Math.max(...us.map(u => u.power)) : Math.min(...us.map(u => u.power));

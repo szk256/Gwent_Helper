@@ -989,6 +989,11 @@ class Game {
       this.log('整排效果', { side, row: r, kind, turns: this.s.hazards[side][r].turns, by: src && src.name, unmodeled: !H });
     }
   }
+  // 立即结算一次整排效果（不减回合），“触发所有剩余雨和风暴”用
+  runHazardOnce(side, r) {
+    const h = this.s.hazards[side][r]; if (!h) return; const H = HAZARDS[h.kind];
+    if (H) H.run(this, this.s.sides[side].rows[r].filter(u => u.def.type !== 'artifact'), h);
+  }
   _pickExtreme(us, dir, h) {
     if (!us.length) return null;
     const v = dir > 0 ? Math.max(...us.map(u => u.power)) : Math.min(...us.map(u => u.power));
@@ -2517,6 +2522,320 @@ B['毒蛇学派猎魔人'] = { deploy: c => { const t = T(c, '毒蛇学派猎魔
 B['毒蛇学派猎魔人学徒'] = {};
 B['毒蛇学派猎魔人炼金师'] = { deployRow: { m: noop } };
 B['毒蛇学派猎魔人导师'] = { deploy: noop };
+
+
+// ================= 斯凯利格 · 批量补全 =================
+const SIREN = '尖啸女海妖', BEAR = '异变巨熊', CROW = '乌鸦';
+const bt = (c, n) => c.g.bloodthirst(c.side, n);                                        // 战狂 N
+const raid = (c, t, n) => c.damage(t, n + (c.g.s.sides[c.side].vars.raidBonus || 0));   // 征战牌伤害（高地领主 +1）
+const isDamaged = u => u.power < u.base;
+// 狂暴 X：战力降到 X 或以下时触发一次
+const berserk = (x, run) => ({ on: 'damaged', when: (c, d) => d.unit === c.self && c.self.power <= x && !c.self.vars.bz, run: c => { c.self.vars.bz = true; run(c); } });
+const berserkDeploy = (x, run) => c => { if (c.self.power <= x && !c.self.vars.bz) { c.self.vars.bz = true; run(c); } };
+const healN = (c, u, n) => { if (!u || u.power >= u.base) return 0; const k = Math.min(n, u.base - u.power); u.power += k; c.g.log('治疗', { name: u.name, n: k }); c.g.emit('healed', { unit: u, n: k, src: c.self }); return k; };
+
+// 领袖
+B['战斗狂热'] = { order: c => c.spawnPlay('致幻菌菇'),
+  abilities: [] };
+B['荣耀圣焰'] = { order: c => { const n = fromDeck(c, '荣耀圣焰：移到墓场的单位'); const t = T(c, '荣耀圣焰：伤害', c.enemies()); if (n) c.g.s.sides[c.side].grave.push(n); if (n && t) c.damage(t, c.g.def(n).base || 0); } };
+B['野猪冲锋'] = { charges: 2, order: c => { const t = T(c, '野猪冲锋：3 伤害', c.enemies()); if (t) c.damage(t, 3); } };
+B['鸣镝动怒'] = { charges: 3, order: (c, o) => {
+  const u = c.g.spawn(SIREN, c.foe, (o && o.row) || 'm', null, c.self); if (u) c.damage(u, 1);
+  if (c.self.charges === 0 && !c.self.vars.done) { c.self.vars.done = true; c.spawnPlay('背亲者恩约夫', 'm'); }
+} };
+B['怒海汹涛'] = HZ2('雨', 2, { charges: 2, order: (c, o) => c.g.spawn(SIREN, c.side, (o && o.row) || 'm', null, c.self) });
+B['鲁莽乱舞'] = { charges: 2, order: c => c.g.choose({ kind: 'random', prompt: '鲁莽乱舞：4 点随机分摊', from: c.enemies(), n: 4, source: c.self.name }).slice(0, 4).forEach(u => c.damage(u, 1, { ignoreArmor: true })) };
+B['巨熊仪式'] = { charges: 5, order: (c, o) => {
+  const t = T(c, '巨熊仪式：1 伤害', c.allies()); if (t) c.damage(t, 1);
+  if (c.self.charges === 0 && !c.self.vars.done) { c.self.vars.done = true; c.g.spawn(BEAR, c.side, (o && o.row) || 'm', null, c.self); }
+} };
+B['背亲者恩约夫'] = { deploy: c => { const u = c.g.spawn(SIREN, c.foe, c.self.row, null, c.self); if (u) c.damage(u, 1); } };
+
+// 神器
+B['无尽航行'] = {
+  deploy: c => { c.self.chapter = 0; c.g.spawn('比约恩的战船', c.side, c.self.row, posRight(c), c.self); },
+  abilities: [
+    { on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '水手') && c.self.chapter < 2, run: c => {
+      c.self.chapter++; c.g.log('剧情推进', { name: c.self.name, chapter: c.self.chapter });
+      if (c.self.chapter === 2) { const b = c.allies().find(u => u.name === '比约恩的战船');
+        if (b) { c.purify(b); c.heal(b); c.g.strengthen(b, 5, c.self); b.bonusCharges++; } else c.g.spawn('比约恩的战船', c.side, c.self.row, posRight(c), c.self); }
+    } },
+  ],
+};
+B['海恩卡维赫'] = { deploy: c => { const n = fromDeck(c, '海恩卡维赫：生成并打出的熊学派'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); }, order: c => c.adjacent().forEach(u => healN(c, u, 2)) };
+B['盖迪尼斯的阴影下'] = {
+  deploy: c => { c.self.chapter = 0; c.g.spawn('鸦母布道者', c.side, c.self.row, posRight(c), c.self); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('德鲁伊') && c.self.chapter < 2, run: c => {
+    c.self.chapter++; c.g.log('剧情推进', { name: c.self.name, chapter: c.self.chapter }); c.spawnPlay(c.self.chapter === 1 ? '乌鸦眼块茎' : '致幻菌菇', c.self.row);
+  } }],
+};
+B['凯尔卓'] = {
+  deploy: c => { const n = fromDeck(c, '凯尔卓：创造并打出的奎特家族'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); },
+  order: c => { const a = T(c, '凯尔卓：6 护甲的友军', c.allies()); if (!a) return; c.armor(a, 6); const e = T(c, '凯尔卓：交锋的敌军', c.enemies()); if (e) c.g.clash(a, e); },
+};
+B['斯瓦勃洛图腾'] = {
+  deploy: c => { const row = c.g.rowOf(c.self); c.g.spawn('斯瓦勃洛狂信者', c.side, c.self.row, row.indexOf(c.self), c.self); c.g.spawn('斯瓦勃洛狂信者', c.side, c.self.row, c.g.rowOf(c.self).indexOf(c.self) + 1, c.self); },
+  order: c => { const t = T(c, '图腾：2 伤害友军', c.allies()); if (t) c.damage(t, 2); },
+};
+
+// 特殊牌
+B['血鹰'] = { onPlay: (c, o) => { const t = T(c, '血鹰：2 伤害', c.enemies()); if (t) raid(c, t, 2); const n = fromDeck(c, '血鹰：从牌组打出的战士'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['冠军的冲锋'] = { onPlay: c => { const t = T(c, '冠军的冲锋：目标', c.g.units()); if (!t) return; if (bt(c, 3)) c.destroy(t); else raid(c, t, 5); } };
+B['幻觉'] = { onPlay: (c, o) => { const n = fromDeck(c, '幻觉：生成并打出'); if (n) c.spawnPlay(n, (o && o.row) || 'm', o && o.pos); } };
+B['巨蝎煎药'] = { onPlay: c => { const t = T(c, '巨蝎煎药：1×6 的单位', c.g.units()); if (t) for (let i = 0; i < 6; i++) c.damage(t, 1); } };   // 另一选项“随机分摊”用改战力
+B['魔法罗盘'] = { onPlay: (c, o) => { const n = fromDeck(c, '魔法罗盘：打出的牌'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['海军霸权'] = { onPlay: (c, o) => { const n = fromDeck(c, '海军霸权：创造并打出的船只'); if (n) c.spawnPlay(n, (o && o.row) || 'm', o && o.pos); } };
+B['海之祭礼'] = { onPlay: (c, o) => { const k = c.allies().length; c.g.units().slice().forEach(u => c.damage(u, 1)); const u = c.g.spawn(SIREN, c.side, (o && o.row) || 'm', null, c); if (u && k) c.boost(u, k); } };
+B['突袭船队'] = { onPlay: (c, o) => { const t = T(c, '突袭船队：重伤 4', c.enemies()); if (t) c.status(t, 'bleed', 4); const n = fromDeck(c, '突袭船队：打出的船只'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['回复'] = { onPlay: c => { const t = T(c, '回复：治愈的友军', c.allies()); if (!t) return; const n = Math.max(0, t.base - t.power); c.heal(t); if (n) c.boost(t, n); } };
+B['茜格德莉法的仪式'] = { onPlay: (c, o) => { const n = fromDeck(c, '仪式：从墓场召唤的单位'); if (!n) return; const u = c.summon(n, c.side, (o && o.row) || 'm'); if (u) c.status(u, 'doomed', true); } };
+B['史璀伯格符文石'] = { onPlay: (c, o) => { const n = fromDeck(c, '史璀伯格符文石：创造并打出'); if (n) c.spawnPlay(n, o && o.row, o && o.pos); } };
+B['衔尾蛇面具'] = { order: c => { c.g.spawn(CROW, c.side, 'm', null, c.self); c.g.spawn(CROW, c.side, 'm', null, c.self); } };
+B['登舰作战'] = { onPlay: c => { const t = T(c, '登舰作战：2 伤害', c.enemies()); if (t) raid(c, t, 2); } };   // 战狂 2 时从手牌打出水手：按记录
+B['披盔贯甲'] = { onPlay: (c, o) => { const t = T(c, '披盔贯甲：2 伤害', c.enemies()); if (t) raid(c, t, 2);
+  for (let i = 0; i < 3; i++) { const u = c.g.spawn('猎魔人学徒', c.side, (o && o.row) || 'm', null, c); if (u) { c.damage(u, 1); c.armor(u, 1); } } } };
+B['乌鸦眼块茎'] = { onPlay: (c, o) => { const k = c.allies().some(u => has(u, '德鲁伊')) ? 3 : 2; for (let i = 0; i < k; i++) c.g.spawn(CROW, c.side, (o && o.row) || 'm', null, c); } };
+B['狂野搭档'] = { onPlay: c => { const u = c.g.spawn('史凯利格野狼', c.foe, 'm', null, c); if (u) c.damage(u, 1); } };
+B['弗蕾雅的祝福'] = { onPlay: (c, o) => { const n = fromDeck(c, '弗蕾雅的祝福：从墓场打出'); if (!n) return; const u = c.g.play(c.side, n, (o && o.row) || 'm', o && o.pos, { fromGrave: true }); if (u) c.status(u, 'doomed', true); } };
+B['巨斧挥击'] = { onPlay: c => { const t = T(c, '巨斧挥击：目标', c.g.units()); if (t) raid(c, t, bt(c, 2) ? 6 : 4); } };
+B['致幻菌菇'] = { onPlay: c => { const t = T(c, '致幻菌菇：目标', c.g.units()); if (!t) return; c.damage(t, 3); if (c.g.find(t.uid)) c.boost(t, 9); } };
+B['原始野性'] = { onPlay: c => { const t = T(c, '原始野性：2 伤害', c.enemies()); if (t) raid(c, t, 2); }, deathblow: c => c.g.spawn(BEAR, c.side, 'm', null, c) };
+B['震骇猛击'] = { onPlay: c => { const t = T(c, '震骇猛击：目标', c.g.units()); if (t) raid(c, t, t.armor > 0 ? 7 : 5); } };
+B['女海妖之泪'] = HZ2('雨', 2, { onPlay: (c, o) => c.g.spawn(SIREN, c.side, (o && o.row) || 'm', null, c) });
+B['群岛战争'] = { onPlay: c => { const t = T(c, '群岛战争：2 伤害', c.enemies()); if (t) raid(c, t, 2); } };   // 致死从墓场打出战士：按记录
+
+// 金色单位
+B['阿纳哈德'] = { deploy: c => { const n = c.g.units().filter(isDamaged).length; if (n) c.armor(c.self, n); } };
+B['亚恩瓦德'] = { deploy: c => { const t = T(c, '亚恩瓦德：变成巨熊', c.allies().filter(u => u !== c.self && isDamaged(u))); if (t) c.transform(t, BEAR); } };
+B['亚提斯'] = {
+  deploy: c => { const n = fromDeck(c, '亚提斯：打出的 4 人口呓语'); if (n) c.playFromDeck(n, c.self.row, posRight(c)); },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => c.self.row === 'r' && d.unit !== c.self, run: (c, d) => { const n = Math.floor(d.unit.power / 2); if (n) c.damage(d.unit, n); } }],
+};
+B['“三目者”艾克索'] = { deployRow: {
+  m: c => c.spawnPlay('乌鸦眼块茎', c.self.row),
+  r: c => c.adjacent().filter(u => u.name === CROW).forEach(u => c.transform(u, '信鸦')),
+} };
+B['碧尔娜·布兰'] = { deploy: noop };
+B['“风暴之子”比约恩'] = { deploy: c => { const t = T(c, '比约恩：交锋', c.enemies()); if (t) c.clash(t); }, order: c => { if (bt(c, 2)) c.shuffleBack(c.self); } };
+B['“阿蓝”卢戈'] = { abilities: [{ on: 'damaged', when: (c, d) => d.unit === c.self && d.dealt > 0, run: c => { const t = R(c, '阿蓝卢戈：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }] };
+B['海之新娘'] = { deploy: c => { const n = fromDeck(c, '海之新娘：从墓场打出的炼金'); if (n) c.g.play(c.side, n, c.self.row, null, { fromGrave: true }); } };
+B['凯瑞丝·奎特'] = { deployRow: {
+  m: c => c.g.spawn('德拉蒙家族持盾女卫', c.side, c.self.row, posRight(c), c.self),
+  r: c => c.g.spawn('德拉蒙家族女王卫队', c.side, c.self.row, posRight(c), c.self),
+} };
+B['凯瑞丝：无所畏惧'] = { order: c => { const a = T(c, '凯瑞丝：完全治愈', c.allies().filter(isDamaged)); if (!a) return; const n = a.base - a.power; c.heal(a);
+  const b = T(c, '凯瑞丝：造成治愈量伤害的友军', c.allies().filter(u => u !== a)); if (b && n) c.damage(b, n); } };
+B['珊瑚'] = { order: noop };   // 丢弃触发的随机伤害：按记录
+B['腐化的佛兰明妮卡'] = { deploy: c => { const n = new Set(c.g.s.sides[c.side].grave.filter(x => (c.g.def(x).tags || []).includes('野兽'))).size; if (n) c.boost(c.self, 2 * n); } };
+B['刀剑盟约'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.power <= 6, run: c => c.armor(c.self, 1) }] };
+B['克拉茨·奎特'] = {
+  deploy: noop,
+  order: c => { const t = T(c, '克拉茨：1 伤害', c.g.units()); if (t) c.damage(t, 1); },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && c.adjacent().includes(d.unit) && (has(d.unit, '水手') || has(d.unit, '船只')), run: (c, d) => { const t = lowestOf(c, c.enemies(), '克拉茨：最低敌军并列'); if (t) c.g.clash(d.unit, t); } }],
+};
+B['乌鸦之母'] = { deploy: c => { c.g.spawn(CROW, c.side, c.self.row, posRight(c), c.self); c.g.spawn(CROW, c.side, c.self.row, posRight(c), c.self); } };
+B['“双刃”达葛'] = { abilities: [{ on: 'damaged', when: (c, d) => d.unit.side === c.foe && c.self.row === 'm' && d.dealt > 0, run: c => c.boost(c.self, 1) }] };
+B['迪兰'] = { deployRow: { r: c => c.damage(c.self, 3) } };
+B['巨熊'] = {};   // “同排无法获得增益”：ASSUME 未实现
+B['邓戈·费特'] = { deploy: c => { if (!bt(c, 1)) return; const t = T(c, '邓戈：锁定', c.enemies()); if (t) c.lock(t); } };
+B['多纳·印达'] = { deploy: c => { const t = T(c, '多纳：伤害', c.enemies()); if (t) c.damage(t, bt(c, 2) ? 4 : 2); } };
+B['龙龟'] = { abilities: [
+  { on: 'damaged', when: (c, d) => d.unit === c.self, run: (c, d) => { const lost = (c.self.vars.ar == null ? c.self.def.armor : c.self.vars.ar) - c.self.armor; c.self.vars.ar = c.self.armor; if (lost > 0) c.boost(c.self, lost); } },
+  { on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.armor > 0, run: c => { c.armor(c.self, 1); c.self.vars.ar = c.self.armor; } },
+] };
+B['德莱格·波·德乌'] = { deploy: noop, order: noop };
+B['埃斯特·图尔赛克'] = { deploy: noop };
+B['莫斯萨克'] = { deployRow: { r: c => { const n = fromDeck(c, '莫斯萨克：从牌组打出的炼金'); if (n) c.playFromDeck(n, c.self.row); } } };
+B['佛卡夏'] = { deploy: c => { const n = fromDeck(c, '佛卡夏：从墓场打出的单位'); if (!n) return; const u = c.g.play(c.side, n, c.self.row, posRight(c), { fromGrave: true }); if (u) c.status(u, 'doomed', true); } };   // 雨：用“整排效果”记
+B['富马尔'] = { deploy: c => c.spawnPlay('女海妖之泪'), order: c => { for (const r of ['m', 'r']) { const h = c.g.s.hazards[c.foe][r]; if (h && h.kind === '雨') { c.g.addHazard(c.foe, r, '风暴', h.turns, c.self); break; } } } };
+B['格德'] = { deploy: c => { const u = c.g.spawn(SIREN, c.foe, c.self.row, null, c.self); c.g.s.sides[c.foe].rows[c.self.row].slice().forEach(x => c.damage(x, 1)); void u; } };
+B['大野猪'] = { deployRow: {
+  m: c => { const n = c.g.units().filter(isDamaged).length; if (n) c.boost(c.self, n); },
+  r: c => { const t = T(c, '大野猪：参考的受伤单位', c.g.units().filter(u => u !== c.self && isDamaged(u))); if (t) c.boost(c.self, t.base - t.power); },
+} };
+B['格雷密斯特'] = { order: c => { if (c.self.row !== 'r') return; const t = T(c, '格雷密斯特：净化', c.g.units()); if (t) c.purify(t); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('炼金'), run: c => { c.self.orderUsed = 0; } }] };
+B['哈罗德·霍兹诺特'] = {
+  deploy: c => { for (let i = 0; i < 3; i++) c.g.spawn('哈罗德的伙伴', c.side, otherRow(c.self.row), null, c.self); },
+  order: c => { const t = T(c, '霍兹诺特：1 伤害友军', c.allies()); if (t) c.damage(t, 1); },
+};
+B['哈罗德的伙伴'] = { deathwish: c => { const t = R(c, '哈罗德的伙伴：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } };
+B['哈罗德·奎特'] = { deploy: c => { const n = fromDeck(c, '哈罗德：从墓场打出的铜色战士'); c.damage(c.self, 2); if (!n) return; const u = c.g.play(c.side, n, c.self.row, posRight(c), { fromGrave: true }); if (u) c.status(u, 'doomed', true); } };
+B['好战者哈罗德'] = { deploy: c => { const n = fromDeck(c, '哈罗德：从墓场打出的铜色战士'); if (!n) return; const u = c.g.play(c.side, n, c.self.row, posRight(c), { fromGrave: true }); if (u) c.status(u, 'doomed', true); } };
+B['汉姆多尔'] = { deploy: c => { const p = T(c, '汉姆多尔：选对方一排（点该排的单位）', c.enemies()); if (!p) return; const row = c.g.rowOf(p); const n = row.length;
+  c.g.choose({ kind: 'random', prompt: '汉姆多尔：' + n + ' 点随机分摊', from: row.slice(), n, source: c.self.name }).slice(0, n).forEach(u => c.damage(u, 1)); } };
+B['海科亚·德拉蒙'] = {
+  order: c => { if (c.self.row !== 'm') return; const p = T(c, '海科亚：选对方一排（点该排的单位）', c.enemies()); if (!p) return;
+    c.g.choose({ kind: 'random', prompt: '海科亚：3 点随机分摊', from: c.g.rowOf(p).slice(), n: 3, source: c.self.name }).slice(0, 3).forEach(u => c.damage(u, 1)); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.orderUsed === 0, run: c => { const t = R(c, '海科亚：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } }],
+};
+B['海琳'] = { deploy: c => c.allies().filter(u => has(u, '人类')).forEach(u => c.boost(u, 1)) };
+B['佛兰明妮卡'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => c.g.rowOf(c.self).filter(u => u !== c.self).forEach(u => healN(c, u, 1)) }] };
+B['哈尔玛·奎特'] = { deployRow: { m: c => { const n = fromDeck(c, '哈尔玛：放逐的墓场单位'); const t = T(c, '哈尔玛：伤害', c.enemies()); if (!n) return; const gr = c.g.s.sides[c.side].grave, i = gr.indexOf(n); if (i >= 0) { gr.splice(i, 1); c.g.s.sides[c.side].banished.push(n); } if (t) c.damage(t, c.g.def(n).base || 0); } } };
+B['哈尔玛：海上恶狼'] = {
+  deployRow: { m: c => { const t = T(c, '哈尔玛：交锋', c.enemies()); if (t) c.clash(t); } },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('征战'), run: c => {
+    [c.self, ...c.adjacent().filter(u => has(u, '水手') || has(u, '船只'))].forEach(u => { const a = u.armor; if (a) { u.armor = 0; c.boost(u, a); } });
+  } }],
+};
+B['“黑手”霍格'] = {
+  deploy: c => { const t = T(c, '霍格：2 伤害', c.g.units().filter(u => u !== c.self)); if (t) c.damage(t, 2); },
+  abilities: [
+    { on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '船只'), run: (c, d) => c.boost(d.unit, 1) },
+    { on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '水手'), run: c => { const t = R(c, '霍格：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } },
+  ],
+};
+B['希姆'] = { deploy: c => { const t = T(c, '希姆：交换战力的受伤单位', c.g.units().filter(u => u !== c.self && isDamaged(u))); if (!t) return; const a = c.self.power, b = t.power; c.setPower(c.self, b); c.setPower(t, a); } };
+B['贝哈文的朱诺德'] = { deploy: c => { const t = T(c, '朱诺德：摧毁受伤敌军', c.enemies().filter(isDamaged)); if (t) c.destroy(t); } };
+B['茱塔·迪门'] = { deploy: c => { if (c.g.units().every(u => u === c.self || u.power < c.self.power)) c.damage(c.self, 6); } };
+B['坎比'] = { deploy: noop };
+B['凯尔派'] = HZ2('雨', 0, { abilities: [{ on: 'damaged', when: (c, d) => d.unit.side === c.foe && d.src && (d.src.name === '雨' || d.src.name === '风暴'), run: c => { const t = R(c, '凯尔派：随机野兽 +1', c.allies().filter(u => has(u, '野兽') && !c.g.isBoosted(u))); if (t) c.boost(t, 1); } }] });
+B['布兰王'] = { deploy: noop };   // 溢出伤害加成：用改战力
+B['“无情者”克努特'] = {
+  order: c => { const a = T(c, '克努特：伤害的友军', c.allies()); if (!a) return; const n = Math.floor(a.power / 2); c.damage(a, n); const e = T(c, '克努特：伤害的敌军', c.enemies()); if (e && n) c.damage(e, n); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.power <= 5, run: c => { c.self.orderUsed = 0; } }],
+};
+B['克拉肯'] = HZ2('风暴', 3, { deploy: c => c.g.choose({ prompt: '克拉肯：移到同排的 3 个敌军', from: c.targets(c.enemies()), n: 3, upTo: true, source: c.self.name })
+  .forEach(t => { if (t.row !== c.self.row) c.move(t, c.self.row); c.damage(t, 2); }) });
+B['“快嘴”古德蒙'] = { deployRow: { r: c => { const S = c.g.s.sides[c.side]; const g0 = S.grave; S.grave = S.deck; S.deck = g0; c.g.log('交换墓场与牌组', {}); } } };
+B['“疯子”卢戈'] = { deployRow: { m: c => { const n = 2 * c.enemies().filter(isDamaged).length; const t = T(c, '疯子卢戈：伤害', c.enemies()); if (t && n) c.damage(t, n); } } };
+B['梅路辛'] = HZ2('雨', 2, {
+  deploy: c => c.status(c.self, 'veil', true),
+  order: c => c.damage(c.self, 2),
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { const adj = c.adjacent(); adj.forEach(u => c.damage(u, 1)); if (adj.length) c.g.strengthen(c.self, adj.length, c.self); if (adj.some(u => has(u, '呓语'))) c.self.orderUsed = 0; } }],
+});
+B['莫克瓦格'] = {};
+B['莫克瓦格：恐惧之心'] = { deploy: c => { const t = T(c, '莫克瓦格：伤害', c.enemies()); if (!t) return; for (let i = 0; i < 20 && c.g.find(t.uid) && !isDamaged(t); i++) c.damage(t, 1); } };
+B['奥拉夫'] = { order: c => { const n = 2 * Math.max(0, c.self.base - c.self.power); if (n) c.boost(c.self, n); } };
+B['欧特克尔'] = { deployRow: { r: c => { if (c.self.power > 1) c.damage(c.self, c.self.power - 1, { ignoreArmor: true }); } } };
+B['永生的里奥根'] = { deploy: c => { for (const r of ['m', 'r']) { const h = c.g.s.hazards[c.foe][r]; if (h && (h.kind === '雨' || h.kind === '风暴')) for (let k = h.turns; k > 0 && k !== Infinity; k--) c.g.runHazardOnce(c.foe, r); } } };
+B['西格瓦尔德'] = { order: c => { const n = c.self.status.bleed || 0; const t = T(c, '西格瓦尔德：伤害', c.g.units().filter(u => u !== c.self)); if (!t) return; c.damage(t, n); c.purify(c.self);
+  if (t.side === c.side) c.boost(c.self, n); else c.damage(c.self, n); } };
+B['史凯裘'] = { abilities: [berserk(5, c => c.destroy(c.self))] };
+B['史裘达尔·德拉蒙'] = { deploy: c => { const t = T(c, '史裘达尔：伤害', c.enemies()); if (t) c.damage(t, c.self.base); } };
+B['索佛'] = { deployRow: { m: c => { c.enemies().filter(isDamaged).forEach(u => c.damage(u, 1)); c.status(c.self, 'immune', true); } } };   // 召唤野兽到对面：按记录
+function svalblod(c) { c.g.units().filter(u => u !== c.self).forEach(u => c.damage(u, 1)); }
+B['斯瓦勃洛'] = { deploy: svalblod, abilities: [{ on: 'unitEnter', when: (c, d) => d.unit.side === c.side && d.unit.name === BEAR, run: svalblod }] };
+B['斯凡瑞吉·图尔赛克'] = { deploy: noop };
+B['海上恶魔'] = {
+  order: c => { const a = c.self.armor; c.self.armor = 0; const t = T(c, '海上恶魔：伤害', c.enemies()); if (t && a) c.damage(t, a); },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '水手'), run: c => c.armor(c.self, 1) }],
+};
+B['提尔：英格瓦屠戮者'] = { deploy: c => { const t = T(c, '提尔：伤害', c.enemies()); if (t) { const n = Math.abs(t.base - t.power); if (n) c.damage(t, n); } }, deathblow: c => c.status(c.self, 'resilience', true) };
+B['泰格威·图尔赛克'] = { deploy: c => { const t = T(c, '泰格威：破裂', c.enemies()); if (t) c.status(t, 'rupture', true); } };
+B['乌达瑞克'] = { order: c => { if (c.self.power > 7) return; const t = T(c, '乌达瑞克：设为自身战力', c.enemies()); if (t) c.setPower(t, c.self.power); } };
+B['乌弗海登'] = { deploy: c => { const t = T(c, '乌弗海登：目标', c.enemies()); if (!t) return; const ts = bt(c, 3) ? [t, ...c.adjacent(t)] : [t]; ts.map(u => [u, Math.floor(u.power / 2)]).forEach(([u, n]) => { if (n) c.damage(u, n); }); } };
+B['乌鲁拉'] = {
+  order: c => { const t = T(c, '乌鲁拉：2 伤害', c.g.units()); if (t) c.damage(t, 2); },
+  abilities: [{ on: 'damaged', when: (c, d) => d.unit.side === c.foe && d.src && d.src.side === c.side && has(d.src, '战士') && !(d.src && d.src.name === '乌鲁拉追加'), run: (c, d) => c.g.damage(d.unit, 1, { name: '乌鲁拉追加', side: c.side, tags: [] }, { ignoreArmor: true }) }],
+};
+B['维伯约恩'] = { deployRow: { m: c => { const n = fromDeck(c, '维伯约恩：从牌组打出的征战'); if (n) c.playFromDeck(n, c.self.row); } } };
+B['维尔卡战士'] = { abilities: [berserk(2, c => c.transform(c.self, '斯瓦勃洛勇士'))] };
+B['斯瓦勃洛勇士'] = { order: c => { const t = T(c, '斯瓦勃洛勇士：摧毁友军', c.allies().filter(u => u !== c.self)); if (t) c.destroy(t); c.heal(c.self); } };
+B['海上野猪'] = { deployRow: { m: c => { c.enemies().filter(isDamaged).forEach(u => c.damage(u, 1)); c.enemies().forEach(u => c.damage(u, 1)); } } };
+B['尤娜'] = {
+  order: c => { const t = T(c, '尤娜：治愈 2', c.allies().filter(isDamaged)); if (t) healN(c, t, 2); },
+  abilities: [{ on: 'damaged', when: (c, d) => c.adjacent().includes(d.unit), run: c => { c.self.bonusCharges++; } }],
+};
+B['尤斯提雅那·奎特'] = { deploy: c => { const n = c.self.base; c.damage(c.self, n); c.g.choose({ kind: 'random', prompt: '尤斯提雅那：' + n + ' 点随机分摊', from: c.enemies(), n, source: c.self.name }).slice(0, n).forEach(u => c.damage(u, 1)); } };
+
+// 铜色单位
+B['奎特家族盔甲匠'] = { deploy: noop };
+B['奎特家族盾牌匠'] = {
+  order: c => { const t = T(c, '盾牌匠：1 增益', c.allies()); if (t) c.boost(t, 1); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('战士'), run: c => { c.self.bonusCharges++; } }],
+};
+B['奎特家族巨剑士'] = { deploy: c => c.damage(c.self, 6), abilities: [{ on: 'damaged', when: (c, d) => d.unit.side === c.foe && d.dealt > 0, run: c => healN(c, c.self, 1) }] };
+B['奎特家族作战长船'] = { abilities: [{ on: 'unitPlayed', when: (c, d) => foePlays(c, d) && c.self.row === 'm', run: (c, d) => c.damage(d.unit, 1) }] };
+B['奎特家族勇士'] = { deployRow: { m: c => c.g.choose({ kind: 'random', prompt: '奎特家族勇士：3 点随机分摊', from: c.enemies(), n: 3, source: c.self.name }).slice(0, 3).forEach(u => c.damage(u, 1)) } };
+B['奎特家族突袭者'] = { deploy: c => { if (bt(c, 3)) c.self.zeal = true; }, order: c => { const t = T(c, '突袭者：2 伤害', c.g.units()); if (t) c.damage(t, 2); } };
+B['奎特家族战吼者'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && bt(c, 1), run: c => c.boost(c.self, 1) }] };
+B['奎特家族战士'] = { deploy: (c, o) => { const t = T(c, '奎特家族战士：目标', c.enemies()); if (!t) return; if (o && o.fromGrave) c.damage(t, 3); else c.status(t, 'bleed', 3); } };
+B['鮟鱇鱼'] = {};
+B['装甲战舰'] = { abilities: [
+  { on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.armor === 0, run: c => c.armor(c.self, 2) },
+  { on: 'armorBroken', when: (c, d) => d.unit === c.self, run: c => c.boost(c.self, bt(c, 2) ? 2 : 1) },
+] };
+B['熊学派猎魔人'] = { deploy: c => c.damage(c.self, 3) };
+B['熊学派猎魔人学徒'] = { deploy: c => c.damage(c.self, 4), abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { if (isDamaged(c.self)) healN(c, c.self, 1); else c.armor(c.self, 1); } }] };
+B['熊学派猎魔人导师'] = { deploy: c => { const n = c.allies().filter(u => u !== c.self && isDamaged(u)).length; if (n) c.boost(c.self, n); } };
+B['熊学派猎魔人军需官'] = { order: c => { const t = T(c, '军需官：1 伤害友军', c.allies()); if (t) c.damage(t, 1); c.g.spawn('猎魔人学徒', c.side, c.self.row, posRight(c), c.self); } };
+B['造船工'] = {
+  deploy: c => { const t = T(c, '造船工：2 护甲', c.allies().filter(u => u !== c.self)); if (t) c.armor(t, 2); if (c.allies().some(u => has(u, '船只'))) c.self.zeal = true; },
+  order: c => { const t = T(c, '造船工：1 护甲', c.allies()); if (t) c.armor(t, 1); },
+};
+B['布洛克瓦尔家族弓箭手'] = { deployRow: { r: c => { const n = c.enemies().filter(isDamaged).length; const t = T(c, '弓箭手：伤害', c.enemies()); if (t && n) c.damage(t, n); } } };
+B['布洛克瓦尔家族猎人'] = {
+  order: c => { if (c.self.row !== 'r') return; const t = T(c, '猎人：1 伤害', c.g.units()); if (t) c.damage(t, 1); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('野兽'), run: c => c.reduceCd(c.self, 1) }],
+};
+B['布洛克瓦尔家族战士'] = { deploy: c => { const hit = []; let n = 3;
+  for (let i = 0; i < 5 && n > 0; i++) { const t = T(c, '布洛克瓦尔战士：' + n + ' 伤害', c.enemies().filter(u => !hit.includes(u))); if (!t) break; const was = isDamaged(t); hit.push(t); c.damage(t, n); if (!was) break; n--; } } };
+B['鸦母德鲁伊'] = { order: c => { const cr = T(c, '鸦母德鲁伊：放逐的乌鸦', c.allies().filter(u => u.name === CROW)); if (cr) c.banish(cr); const n = fromDeck(c, '鸦母德鲁伊：从墓场打出的炼金'); if (n) c.g.play(c.side, n, c.self.row, null, { fromGrave: true }); } };
+B['鸦母布道者'] = { abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('炼金'), run: c => c.boost(c.self, c.g.cohort(c.self) ? 2 : 1) }] };
+B['信鸦'] = {};
+B['疯癫水手'] = HZ2('灾厄', 1, { deploy: noop });   // 灌注的“遗愿：灾厄”：死亡时用“整排效果”记
+B['迪门家族水手（Dimun Corsair）'] = {
+  order: c => { const t = T(c, '迪门水手：移除护甲', c.allies().filter(u => u.armor > 0)); if (!t) return; const n = Math.min(2, t.armor); t.armor -= n; c.boost(c.self, n); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('船只'), run: c => c.reduceCd(c.self, 1) }],
+};
+B['迪门家族轻型长船'] = { order: c => { if (c.self.row !== 'r') return; c.damage(c.self, 1); const t = T(c, '轻型长船：1 伤害', c.enemies()); if (t) c.damage(t, 1); } };
+B['迪门家族水手（Dimun Pirate）'] = { deploy: noop };
+B['迪门家族船长'] = { deploy: c => { if (bt(c, 2)) c.self.zeal = true; }, order: c => { const t = T(c, '船长：1 伤害', c.g.units()); if (t) c.damage(t, 1); } };
+B['迪门家族走私贩'] = {
+  deploy: c => { if (c.adjacent().some(u => has(u, '船只'))) c.g.spawn(c.self.name, c.side, c.self.row, posRight(c), c.self); },
+  order: c => { const t = T(c, '走私贩：1 伤害', c.g.units()); if (t) c.damage(t, 1); },
+};
+B['迪门家族战船'] = { abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '水手'), run: c => { c.damage(c.self, 1); const t = R(c, '战船：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } }], deathwish: noop };
+B['不光彩的争斗者'] = { deploy: c => { if (bt(c, 1)) c.lock(c.self); }, abilities: [berserk(3, c => c.destroy(c.self))] };
+B['德拉蒙家族狂战士'] = { abilities: [
+  { on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { c.damage(c.self, 1); const t = R(c, '狂战士：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } },
+  berserk(3, c => c.transform(c.self, BEAR)),
+] };
+B['德拉蒙家族女王卫队'] = { order: c => { if (c.self.power <= 3) c.g.spawn(c.self.name, c.side, c.self.row, posRight(c), c.self); } };
+B['德拉蒙家族持盾女卫'] = {};   // 受伤时召唤同名：按记录
+B['德拉蒙家族村民'] = { deploy: c => { const r = rightOf(c); if (r) c.status(r, 'bleed', 4); const t = T(c, '村民：重伤 4', c.enemies()); if (t) c.status(t, 'bleed', 4); } };
+B['德拉蒙家族好战分子'] = { deploy: c => {
+  const t = T(c, bt(c, 5) ? '好战分子：选一排（点该排的单位）' : '好战分子：中间的敌军', c.enemies()); if (!t) return;
+  const ts = bt(c, 5) ? c.g.rowOf(t).slice() : [t, ...c.adjacent(t)]; ts.forEach(u => c.damage(u, 1));
+} };
+B['船葬'] = {};
+B['海之歌者'] = {
+  deploy: c => { const t = T(c, '海之歌者：治愈 2', c.allies().filter(u => u !== c.self && isDamaged(u))); if (t) healN(c, t, 2); },
+  abilities: [{ on: 'healed', when: (c, d) => d.unit.side === c.side && c.g.s.active === c.side && c.self.vars.t !== c.g.s.turn, run: c => { c.self.vars.t = c.g.s.turn; c.g.spawn(SIREN, c.side, c.self.row, posRight(c), c.self); } }],
+};
+B['隐士'] = { deploy: c => c.damage(c.self, 4), abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.power <= 6, run: c => { const r = rightOf(c); if (r) c.damage(r, 1); healN(c, c.self, 2); } }] };
+B['海玫家族草药医生'] = { deployRow: { r: c => { const t = T(c, '草药医生：治疗 3 并 +3', c.allies().filter(u => u !== c.self)); if (t) { healN(c, t, 3); c.boost(t, 3); } } } };
+B['海玫家族保卫者'] = { abilities: [{ on: 'damaged', when: (c, d) => c.adjacent().includes(d.unit) && d.unit.side === c.side, run: c => c.boost(c.self, 1) }] };
+B['海玫家族诗人'] = { deployRow: { r: noop } };
+B['海玫家族女矛手'] = { deploy: c => { const t = T(c, '女矛手：2 伤害', c.enemies()); if (t) c.damage(t, 2); c.damage(c.self, 2); } };
+B['高地领主'] = { deploy: c => { c.g.s.sides[c.side].vars.raidBonus = (c.g.s.sides[c.side].vars.raidBonus || 0) + 1; } };
+B['小女海妖'] = HZ2('雨', 2, { deploy: c => { if (c.g.cohort(c.self)) c.g.strengthen(c.self, 2, c.self); }, order: c => c.damage(c.self, 4) });
+B['梅路辛教徒'] = HZ2('雨', 2, { order: noop, abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
+  const h = c.g.s.hazards[c.foe][c.self.row]; if (!h) return;
+  if (h.kind === '风暴') c.adjacent().forEach(u => c.boost(u, 1)); else if (h.kind === '雨') { const r = rightOf(c); if (r) c.boost(r, 1); }
+} }] });
+B['海之信使'] = { abilities: [{ on: 'damaged', when: (c, d) => d.unit.side === c.foe && d.src && (d.src.name === '雨' || d.src.name === '风暴') && d.dealt > 0, run: (c, d) => c.boost(c.self, d.dealt) }] };
+B['暴怒的熊'] = { deploy: c => { const t = T(c, '暴怒的熊：2 伤害友军', c.allies().filter(u => u !== c.self)); if (t) c.damage(t, 2); } };
+B['恶熊'] = { deploy: c => { c.self.bonusCharges += c.g.s.sides[c.side].grave.filter(n => n === '恶熊').length; }, order: c => { const t = T(c, '恶熊：重伤 2', c.enemies()); if (t) c.status(t, 'bleed', 2); } };
+B['海巨蟒'] = { deploy: c => { const t = T(c, '海巨蟒：3 伤害', c.enemies()); if (t) c.damage(t, 3); } };   // 增益按雨/风暴触发次数：用改战力
+B['海鸥'] = { deploy: c => c.g.choose({ prompt: '海鸥：3 个单位各 1', from: c.targets(c.g.units().filter(u => u !== c.self)), n: 3, upTo: true, source: c.self.name }).forEach(u => c.damage(u, 1)) };
+B['斯瓦勃洛屠夫'] = { deploy: c => { const a = T(c, '屠夫：2 伤害友军', c.allies().filter(u => u !== c.self)); if (a) c.damage(a, 2); const t = T(c, '屠夫：重伤 3', c.enemies()); if (t) c.status(t, 'bleed', 3); } };
+B['斯瓦勃洛邪教徒'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { const row = c.g.rowOf(c.self), i = row.indexOf(c.self); if (row[i - 1]) healN(c, row[i - 1], 1); if (row[i + 1]) c.damage(row[i + 1], 1); } }] };
+B['斯瓦勃洛狂信者'] = { abilities: [berserk(2, c => c.transform(c.self, BEAR))] };
+B['斯瓦勃洛牧师'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { const r = rightOf(c); if (r) c.damage(r, 1); c.boost(c.self, 2); } }] };
+B['斯瓦勃洛破坏者'] = { deployRow: { m: c => { const t = T(c, '破坏者：2 伤害', c.enemies()); if (!t) return; c.damage(t, 2); if (bt(c, 2) && c.g.find(t.uid)) c.status(t, 'bleed', 2); } } };
+B['“恐怖海狼”持斧者'] = { deploy: c => { const t = T(c, '持斧者：2 伤害', c.enemies()); if (t) c.damage(t, 2); }, abilities: [{ on: 'armorBroken', when: (c, d) => d.unit === c.self, run: c => { const t = R(c, '持斧者：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }] };
+B['恐狼勇士'] = { deploy: c => { const t = T(c, '恐狼勇士：2 伤害', c.g.units().filter(u => u !== c.self)); if (!t) return; c.damage(t, 2); if (t.side === c.side) c.boost(c.self, 4); } };
+B['图尔赛克家族斧兵'] = { deployRow: { m: c => { const t = T(c, '斧兵：目标', c.g.units().filter(u => u !== c.self && isDamaged(u))); if (t) c.damage(t, t.base - t.power); } } };
+B['图尔赛克家族驯兽师'] = {
+  deploy: c => { const n = new Set(c.allies().filter(u => has(u, '野兽')).map(u => u.name)).size; if (n) c.boost(c.self, n); },
+  order: c => { const n = Math.max(0, c.self.power - c.self.base); if (!n) return; c.damage(c.self, n);
+    c.g.choose({ prompt: '驯兽师：' + n + ' 个敌军各 1', from: c.targets(c.enemies()), n, upTo: true, source: c.self.name }).forEach(u => c.damage(u, 1)); },
+};
+B['图尔赛克家族好斗分子'] = {};
+B['图尔赛克家族老兵'] = { deploy: c => c.damage(c.self, 3), abilities: [berserk(3, c => c.heal(c.self))] };
+B['捕鲸枪'] = { deploy: c => { const t = T(c, '捕鲸枪：移排', c.enemies()); if (!t) return; c.move(t, otherRow(t.row)); c.damage(t, c.g.rowOf(t).length); } };
 
 // ================= 北方王国 · 对手用过的 =================
 B['工程解决方案'] = { charges: 1, order: c => { const t = T(c, '工程解决方案目标', c.g.units(c.side)); if (t) { c.boost(t, 4); c.status(t, 'shield', true); } } };

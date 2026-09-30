@@ -154,5 +154,24 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   ok(cow.side === 'me' && cow.status.spying, '牛尸：落到对面并获得潜伏');
   g.s.active = 'me'; g.endTurn(); ok(a.status.poison === 1 && !g.find(cow.uid), '牛尸：回合结束相邻中毒、摧毁自身');
 }
+
+// ---------- 斯凯利格 ----------
+{ // 狂暴：斯瓦勃洛狂信者战力 ≤2 时变成异变巨熊
+  const g = game(); const f = P(g, 'op', '斯瓦勃洛狂信者', 'm'); g.damage(f, 1); ok(f.name === '斯瓦勃洛狂信者', '狂暴：3 时不触发');
+  g.damage(f, 1); ok(f.name === '异变巨熊', '狂暴 2：变成异变巨熊');
+}
+{ // 战狂 + 征战：巨斧挥击在 2 个受伤敌军时 6 伤害；高地领主让征战 +1
+  const g = game(); const a = P(g, 'me', '寒冰巨人', 'm'), b = P(g, 'me', '科德温骑士', 'm'); g.damage(a, 1); g.damage(b, 1);
+  P(g, 'op', '高地领主', 'r'); const t = P(g, 'me', '老矛头', 'r'); g.chooser = () => [t]; g.play('op', '巨斧挥击', null, null, { player: 'op' });
+  ok(t.power === 5, '巨斧挥击：战狂 2 → 6，高地领主 +1 → 7 伤害');
+}
+{ // 致幻菌菇：3 伤害后 +9
+  const g = game(); const t = P(g, 'op', '寒冰巨人', 'm'); g.chooser = () => [t]; g.play('op', '致幻菌菇', null, null, { player: 'op' });
+  ok(t.power === 13, '致幻菌菇：7-3+9');
+}
+{ // 乌鸦眼块茎：控制德鲁伊时 3 只乌鸦
+  const g = game(); P(g, 'op', '莫斯萨克', 'm'); g.play('op', '乌鸦眼块茎', null, null, { player: 'op', row: 'r' });
+  ok(g.units('op').filter(u => u.name === '乌鸦').length === 3, '乌鸦眼块茎：有德鲁伊 → 3 只乌鸦');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
