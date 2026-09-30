@@ -6,7 +6,8 @@ const path = require('path');
 const html = fs.readFileSync(path.join(__dirname, 'dist', 'gwent_tracker.html'), 'utf8');
 let fails = 0; const ok = (c, m) => { if (!c) { fails++; console.log('✗', m); } else console.log('✓', m); };
 const dom = new JSDOM(html, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'http://localhost/' });
-const w = dom.window; w.scrollTo = () => {}; w.alert = () => {}; w.confirm = () => true;
+const w = dom.window; w.scrollTo = () => {};
+w.HTMLDialogElement.prototype.showModal = function () { this.open = true; }; w.HTMLDialogElement.prototype.close = function () { this.open = false; }; w.alert = () => {}; w.confirm = () => true;
 const live = (log, extra) => w.eval(`db.live=Object.assign({id:1,date:"2026-09-30",deck:null,deckName:"测试",myF:"NR",leader:"皇家激励",fac:"ST",coin:"先",opLeader:null,cur:0,rounds:[],
   pend:{res:null,me:"",op:"",hm:null,ho:null},stuck:[],note:"",log:${JSON.stringify(log.map(x => Object.assign({ r: 0 }, x)))},nextE:${log.length + 1}},${JSON.stringify(extra || {})});ui.tab="match";ui.who="me";ui.act="play";ui.flow=null;render();`);
 setTimeout(() => {
@@ -52,6 +53,18 @@ setTimeout(() => {
     S = w.eval('sim(db.live,1)'); ok(!S.E.s.sides.me.rows.m.some(u => u.isTactic) && !S.E.s.sides.me.grave.includes('战术'), '战术牌：第二局没有，也不进墓场');
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
     ok(!w.eval('sim(db.live,0)').E.s.sides.me.rows.m.some(u => u.isTactic), '战术牌：旧对局（没有 tacCard）不放');
+    // 月度补丁：对局按日期用当时的版本
+    w.eval(`GwentPatches.PATCHES.push({date:'2099-01-01',title:'测试补丁',cards:[{n:'科德温骑士',pw:[5,6]}]});GwentPatches.applyAll(RAW);`);
+    live([{ id: 'e1', who: 'me', a: 'play', c: '寒冰巨人', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }], { date: '2098-12-31' });
+    const kOld = w.eval('sim(db.live,0)').key2u.e2.power;
+    live([{ id: 'e1', who: 'me', a: 'play', c: '寒冰巨人', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }], { date: '2099-01-02' });
+    const kNew = w.eval('sim(db.live,0)').key2u.e2.power;
+    ok(kNew === kOld + 1, '补丁：补丁后的对局用新战力，之前的对局用旧战力（' + kOld + ' → ' + kNew + '）');
+    ok(/2099-01-01 战力 5→6/.test((w.eval('openCard(BY["科德温骑士"]),document.getElementById("cdEn").textContent'))), '补丁：卡牌详情显示改动历史');
+    w.eval(`GwentPatches.PATCHES.pop();document.getElementById("cdlg").close&&document.getElementById("cdlg").close();`);
+    // 版本号：侧边栏显示构建号和卡牌数据版本；迁移导出带上
+    ok(/构建 [0-9a-f]{7} · 卡牌数据 v14\.9\.0/.test(w.document.getElementById('verInfo').textContent), '版本：侧边栏显示构建号和卡牌数据版本');
+    ok(/^#GWMIG v1 .*构建 [0-9a-f]{7}/.test(w.eval('migText()')), '版本：迁移导出带构建号');
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }

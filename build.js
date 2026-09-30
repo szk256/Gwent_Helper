@@ -33,9 +33,12 @@ const used = [];
 // 用函数做替换，避免 JS 内容里的 $& $1 之类被当成替换模式
 html = html.replace(/<link rel="stylesheet" href="([^"]+)">/g, (_, f) => (used.push(f), inline('style', f, read(f))));
 html = html.replace(/<script src="([^"]+)"><\/script>/g, (_, f) => (used.push(f), inline('script', f, read(f) + '\n')));
+// 构建号：所有内嵌内容的哈希（内容不变就不变，CI 检查 dist 是否最新时不会误报），界面和导出里显示
+const BUILD = require('crypto').createHash('sha256').update(html).digest('hex').slice(0, 7);
+html = html.replace('<head>', `<head>\n<script>window.GWENT_BUILD=${JSON.stringify(BUILD)};</script>`);
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, html);
 // 可安装网页（PWA）用的文件：放在网址上（如 GitHub Pages）时生效，本地打开 html 不受影响
 for (const f of ['manifest.webmanifest', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon.svg']) fs.copyFileSync(path.join(SRC, f), path.join(path.dirname(OUT), f));
-console.log(`已打包 ${used.join(' ')} → ${path.relative(__dirname, OUT)}（${(Buffer.byteLength(html) / 1024).toFixed(0)} KB）`);
+console.log(`构建 ${BUILD}：已打包 ${used.join(' ')} → ${path.relative(__dirname, OUT)}（${(Buffer.byteLength(html) / 1024).toFixed(0)} KB）`);

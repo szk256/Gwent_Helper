@@ -309,3 +309,4 @@ details.sheet>summary{cursor:pointer}
 input.vt{width:108px;padding:6px 8px;font-size:13px}
 /* 键盘选中的搜牌结果 */
 #resBox .kb{outline:2px solid var(--gold);outline-offset:2px}
+#verInfo{font-size:11px;opacity:.7;margin-top:2px}

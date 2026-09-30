@@ -4,6 +4,7 @@ const E = require('./src/engine.js');
 const B = require('./src/cards.js').behaviors;
 const fs = require('fs');
 eval(fs.readFileSync('./src/data.js', 'utf8').replace('const RAW', 'global.RAW'));
+require('./src/patches.js').applyAll(RAW);
 
 const only = process.argv.slice(2);
 const names = only.length ? only : Object.keys(B);

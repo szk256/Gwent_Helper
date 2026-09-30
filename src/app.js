@@ -86,6 +86,10 @@ function copy(t){try{navigator.clipboard.writeText(t).then(()=>toast("已复制"
 $("#dlgNo").onclick=()=>$("#dlg").close();
 $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText();if(!t)return toast("剪贴板是空的");$("#dlgX").value=t;toast("已粘贴");}catch(e){$("#dlgX").focus();toast("浏览器不让读剪贴板，请在框里按 Ctrl+V");}};
 // 全部迁移：整个对局簿（卡组、对局、进行中的对局、牌库、改过的牌、自定义牌）
+// 版本：构建号（打包时按内容生成，调试页面是“开发版”）+ 卡牌数据版本（patches.js 最新一条，没有则基线）
+const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
+const dataVer=()=>{const P=typeof GwentPatches!=="undefined"?GwentPatches:null;if(!P)return "?";const l=P.PATCHES.slice().sort((a,b)=>a.date<b.date?-1:1).pop();return "v"+((l&&l.ver)||P.BASE.ver);};
+const verText=()=>"构建 "+BUILD+" · 卡牌数据 "+dataVer();
 const MIGHEAD="#GWMIG v1 昆特对局簿全部数据，用“全部导入”载入";
 // 备份：记录上次下载备份/迁移导出的时间，超过 7 天提醒
 function downloadBackup(){markBackup();const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");}
@@ -98,9 +102,9 @@ function recTactic(who){const g=db.live;const nm=who==="me"?(deckById(g.deck)?.t
   queue({t:"target",id:g.log[i].id},...(who==="me"?spawnStep(BY[nm],"leader","me"):[]));rMatch();}
 function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
-function renderBackup(){const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
+function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
   el.textContent=d==null?"还没有备份过":d===0?"今天已备份":"上次备份："+d+" 天前";el.classList.toggle("bad",!!has&&(d==null||d>=7));}
-function migText(){return MIGHEAD+"\n"+JSON.stringify(db);}
+function migText(){return MIGHEAD+"（"+verText()+"）\n"+JSON.stringify(db);}
 function parseAll(txt){txt=(txt||"").trim();if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);return JSON.parse(txt);}
 
 // ---------- export codes ----------
@@ -298,7 +302,7 @@ function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};
   const byIdx0=(k)=>{if(k==null)return"?";return num[k]!=null?num[k]:(typeof k==="number"&&g.log[k]?g.log[k]._n:"?");};
   // 由某步产生的单位（生成的衍生牌等）键为 “e8/0”，导出成 “8/0”
   const byIdx=(k)=>{if(typeof k==="string"&&k.includes("/")){const [a,b]=k.split("/");return byIdx0(a)+"/"+b;}return byIdx0(k);};
-  const L=[`G ${g.date} ${g.deckName}|${g.leader||"-"} vs ${g.fac}|${g.opLeader||"-"} ${g.coin||"?"} ${o.w}:${o.l}`];
+  const L=[`G ${g.date} ${g.deckName}|${g.leader||"-"} vs ${g.fac}|${g.opLeader||"-"} ${g.coin||"?"} ${o.w}:${o.l}${g.ver?" 构建:"+g.ver.build+"/"+g.ver.data:""}`];
   g.rounds.forEach((r,ri)=>{L.push(`R${ri+1} ${r.res} ${r.me||"-"}:${r.op||"-"} ${r.hm??"-"}:${r.ho??"-"}${r.sec!=null?" "+r.sec:""}`);
     g.log.forEach((x,i)=>{if(x.r!==ri)return;const p=[x._n,x.who==="me"?"A":"B",(ACODE[x.a]||x.a)+(x.fix?"!":"")];
       if(x.a==="fx")p.push(x.c,(x.side==="me"?"A":"B")+(x.row==="all"?"*":x.row)+(x.dur?"/"+x.dur:""));
@@ -318,7 +322,7 @@ function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};
       L.push(p.join(" "));});});
   if(g.stuck?.length)L.push("STUCK "+g.stuck.join(","));if(g.note)L.push("NOTE "+g.note.replace(/\n/g," "));
   g.log.forEach(x=>delete x._n);return L.join("\n");}
-function gameCode(g){const o=g.rounds?outcome(g.rounds):null;const L=[`【昆特对局】${g.date}｜${g.deckName} vs ${FN[g.fac]||g.fac}｜${g.coin?g.coin+"手":"先后手未记"}｜结果 ${o?o.w+":"+o.l+" "+o.res:"未完成"}`];
+function gameCode(g){const o=g.rounds?outcome(g.rounds):null;const L=[`【昆特对局】${g.date}｜${g.deckName} vs ${FN[g.fac]||g.fac}｜${g.coin?g.coin+"手":"先后手未记"}｜结果 ${o?o.w+":"+o.l+" "+o.res:"未完成"}${g.ver?"｜构建 "+g.ver.build+"，卡牌数据 "+g.ver.data:""}`];
   g.rounds.forEach((r,ri)=>{const sc=(r.me!==""&&r.me!=null&&r.op!==""&&r.op!=null)?` 比分 ${r.me}:${r.op}`:"";const hd=(r.hm!=null&&r.ho!=null)?`｜结束时手牌 我${r.hm} 对${r.ho}`:"";L.push(`第${ri+1}局 ${{W:"赢",L:"输",D:"平"}[r.res]||"?"}${sc}${hd}`);
     let S0=null;try{S0=sim(g,ri);}catch(e){}
     g.log.filter(x=>x.r===ri).forEach(x=>{const st=S0&&S0.steps&&S0.steps[x.id];L.push("  "+(st?"["+stepLabel(st)+" "+st.me+":"+st.op+(x.vt?" 录屏 "+x.vt:"")+"] ":"")+logText(x));});
@@ -359,7 +363,7 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
   ensureIds(g);
   const d=deckById(g.deck);const cur=g.cur;const o=outcome(g.rounds);const vr=VR();const editing=ui.vr!=null;
   const nR=Math.max(g.rounds.length+(o?0:1),1);
-  h+=`<div class="sheet"><div class="live-head"><h2>${esc(g.deckName)} vs ${FN[g.fac]}</h2><span class="btns" style="margin:0"><button class="ghost pcOnly" data-do="keysHelp" title="电脑快捷键">快捷键 ?</button><button class="ghost" data-do="abort">放弃</button></span></div>${g.t0&&!o?`<div class="clock" id="clock"></div>`:""}
+  h+=`<div class="sheet"><div class="live-head"><h2>${esc(g.deckName)} vs ${FN[g.fac]}</h2>${g.ver&&g.ver.build!==BUILD?`<small class="note" title="开这局时的版本">构建 ${esc(g.ver.build)} 开局</small>`:""}<span class="btns" style="margin:0"><button class="ghost pcOnly" data-do="keysHelp" title="电脑快捷键">快捷键 ?</button><button class="ghost" data-do="abort">放弃</button></span></div>${g.t0&&!o?`<div class="clock" id="clock"></div>`:""}
    <div class="rtabs">${Array.from({length:nR},(_,i)=>{const r=g.rounds[i];return `<button class="${i===vr?"on":""}" data-vr="${i}">第${i+1}局${r?" "+{W:"赢",L:"输",D:"平"}[r.res]:"·进行中"}</button>`;}).join("")}</div>
    ${editing?`<p class="note">正在查看/修改第${vr+1}局的记录，新记录会加到这一局。</p>`:""}</div>`;
   if(!o||editing){
@@ -538,6 +542,7 @@ function rStats(){if(!db.decks.length){$("#tab-stats").innerHTML=`<p class="note
   const stT=(R,name)=>{const e=Object.entries(R.stuck).sort((x,y)=>y[1]-x[1]).slice(0,8);return `<div class="sheet"><h2>最常卡手：${esc(name)}</h2>${e.length?`<table><tr><th>牌</th><th>次数</th><th>占对局</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td><td>${pct(k,R.n)}</td></tr>`).join("")}</table>`:`<p class="note">还没有卡手记录。</p>`}</div>`;};
   const opT=R=>{const e=Object.entries(R.opp).sort((x,y)=>y[1]-x[1]).slice(0,10);return e.length?`<div class="sheet"><h2>对手最常打出的牌</h2><table><tr><th>牌</th><th>次数</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td></tr>`).join("")}</table></div>`:"";};
   h+=cardT(a,na)+stT(a,na);if(!same)h+=cardT(b,nb)+stT(b,nb);h+=opT(a);
+  h+=`<p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
   $("#tab-stats").innerHTML=h;$("#stA").onchange=e=>{ui.statA=+e.target.value;rStats();};$("#stB").onchange=e=>{ui.statB=+e.target.value;rStats();};}
 
 function deckRes(d){const pool=C.filter(c=>!isLeader(c)&&!isTactic(c)&&!c.token&&(!ui.deckOwned||db.owned[c.n]));
@@ -635,7 +640,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
     if(k>0)d.cards[n]=k;else delete d.cards[n];persist();rDeck();return;}
   const act=D.do;if(!act)return;
   ({start(){if(!setup.fac)return toast("选一下对手阵营");const d=deckById(setup.deck)||deckById($("#sDeck")?.value);if(!d)return toast("先建一个卡组");
-      db.live={id:Date.now(),tacCard:true,date:new Date().toISOString().slice(0,10),deck:d.id,deckName:d.name,myF:d.f,leader:d.leader,fac:setup.fac,coin:setup.coin,rounds:[],cur:0,pend:{res:null,me:"",op:"",hm:null,ho:null},diff:null,opLeader:null,hand:!!db.handPref,t0:Date.now(),rt0:Date.now(),lastT:Date.now(),log:[],stuck:[],note:""};
+      db.live={id:Date.now(),tacCard:true,ver:{build:BUILD,data:dataVer()},date:new Date().toISOString().slice(0,10),deck:d.id,deckName:d.name,myF:d.f,leader:d.leader,fac:setup.fac,coin:setup.coin,rounds:[],cur:0,pend:{res:null,me:"",op:"",hm:null,ho:null},diff:null,opLeader:null,hand:!!db.handPref,t0:Date.now(),rt0:Date.now(),lastT:Date.now(),log:[],stuck:[],note:""};
       ui.who=setup.coin==="后"?"op":"me";ui.act="play";ui.q="";setup.fac=null;setup.coin=null;persist();rMatch();},
     endRound(){const p=g.pend;if(!p.res)return toast("选一下本局结果");if(p.hm==null&&g.hand)p.hm=myHand(g).length;ui.vr=null;const now=Date.now();g.rounds.push({res:p.res,me:p.me,op:p.op,hm:p.hm??null,ho:p.ho??null,sec:g.rt0?Math.round((now-g.rt0)/1000):null});g.rt0=now;g.lastT=now;
       if(g.rounds.length===1)g.diff=(p.hm!=null&&p.ho!=null)?p.hm-p.ho:null;g.pend={res:null,me:"",op:"",hm:null,ho:null};g.cur=g.rounds.length;
@@ -696,7 +701,8 @@ function openCard(c){$("#cdN").textContent=c.n;
   const drawF2=()=>{$("#cdF2").innerHTML=["NR","MO","NG","ST","SK","SY"].filter(x=>x!==c.f).map(x=>`<button class="chip fac ${f2.includes(x)?"on":""}" style="--c:var(--${x})" data-f2="${x}">${FN[x]}</button>`).join("");
     $("#cdF2").querySelectorAll("[data-f2]").forEach(b=>b.onclick=()=>{const x=b.dataset.f2;f2=f2.includes(x)?f2.filter(y=>y!==x):[...f2,x];drawF2();});};
   $("#cdF2row").classList.toggle("hidden",c.f==="NE"||isLeader(c));drawF2();
-  $("#cdEn").textContent=c.txe?"游戏当前英文描述（数值以这个为准，上面的中文描述可能是旧版本）：\n"+c.txe:"";
+  const hist=typeof GwentPatches!=="undefined"?GwentPatches.history(c.n):[];
+  $("#cdEn").textContent=(c.txe?"游戏当前英文描述（数值以这个为准，上面的中文描述可能是旧版本）：\n"+c.txe:"")+(hist.length?(c.txe?"\n\n":"")+"平衡改动：\n"+hist.map(h=>h.date+" "+[h.pw?"战力 "+h.pw.join("→"):"",h.pv?"粮草 "+h.pv.join("→"):"",h.tx||h.txe?"效果改动":"",h.note||""].filter(Boolean).join("，")).join("\n"):"");
   $("#cdOk").onclick=()=>{const pv=parseInt($("#cdPv").value),pw=$("#cdPw").value.trim(),tx=$("#cdTx").value.trim(),al=$("#cdAl").value.trim();const e={};
     if(!isNaN(pv)&&pv!==c.orig.pv)e.pv=pv;if(pw&&pw!==String(c.orig.pw))e.pw=pw;if(tx&&tx!==c.orig.tx)e.tx=tx;if(al)e.alias=al;const d2=dualOf(c);if(f2.slice().sort().join()!==d2.slice().sort().join())e.f2=f2;
     if(Object.keys(e).length)db.edits[c.n]=e;else delete db.edits[c.n];applyEdits();persist();$("#cdlg").close();render();toast("已保存修改");};
