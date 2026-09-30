@@ -54,7 +54,19 @@ def reader():
 
 def scan_frame(m, im):
     import layout
-    ent = {'rows': board.names(m, board.scan(m, im)), 'sharp': sharpness(im), 'show': None,
+    det = board.scan(m, im, detail=True)
+    rows = board.names(m, {r: [c[:3] for c in cs] for r, cs in det.items()})
+    pws = {}
+    for r, cs in det.items():
+        if r == '手牌':
+            continue
+        out = []
+        for x, art, _v, y, h in cs:
+            c = m.by_art[art][0]
+            base = int(c['power']) if str(c['power']).isdigit() else None
+            out.append(reader().power(im, x, y, h, base) if c['type'] == '单位' else None)
+        pws[r] = out
+    ent = {'rows': rows, 'pw': pws, 'sharp': sharpness(im), 'show': None,
            'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'lead': reader().leader(im),
            'turn': reader().turn(im)}
     sc = detect.showcase(im)
@@ -78,6 +90,13 @@ def _scan_path(p):
     return os.path.basename(p), scan_frame(_W, im)
 
 
+def save_json(path, obj):
+    """先写临时文件再替换，中途被打断也不会把缓存写坏。"""
+    with open(path + '.tmp', 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(path + '.tmp', path)
+
+
 def scan_dir(m, d, jobs=1):
     cache = os.path.join(d, 'scan.json')
     done = {}
@@ -86,7 +105,7 @@ def scan_dir(m, d, jobs=1):
             done = json.load(f)
     frames = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=frame_time)
     t0 = time.time()
-    todo = [p for p in frames if 'rows' not in (done.get(os.path.basename(p)) or {})]
+    todo = [p for p in frames if 'pw' not in (done.get(os.path.basename(p)) or {})]
     if jobs > 1 and len(todo) > 20:
         import multiprocessing as mp
         with mp.Pool(jobs, _init_worker) as pool:
@@ -94,12 +113,11 @@ def scan_dir(m, d, jobs=1):
                 done[k] = ent
                 if (i + 1) % 100 == 0:
                     print(f'  扫描 {i + 1}/{len(todo)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
-                    with open(cache, 'w', encoding='utf-8') as f:
-                        json.dump(done, f, ensure_ascii=False)
+                    save_json(cache, done)
     for i, p in enumerate(frames):
         k = os.path.basename(p)
         ent = done.get(k)
-        if ent is not None and 'rows' in ent:
+        if ent is not None and 'pw' in ent:
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent:  # 旧缓存：补读总分、领袖、回合（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
                 ent['score'] = reader().scores(im)
@@ -107,7 +125,7 @@ def scan_dir(m, d, jobs=1):
                 ent['turn'] = reader().turn(im)
             continue
         im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
-        if ent is not None:  # 旧缓存只有各排牌名：补上清晰度和展示
+        if ent is not None and False:  # （旧缓存格式不再兼容：没有战力的重扫）
             e2 = {'rows': ent, 'sharp': sharpness(im), 'show': None}
             sc = detect.showcase(im)
             if sc is not None:
@@ -119,10 +137,8 @@ def scan_dir(m, d, jobs=1):
             done[k] = scan_frame(m, im)
         if (i + 1) % 50 == 0:
             print(f'  扫描 {i + 1}/{len(frames)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
-            with open(cache, 'w', encoding='utf-8') as f:
-                json.dump(done, f, ensure_ascii=False)
-    with open(cache, 'w', encoding='utf-8') as f:
-        json.dump(done, f, ensure_ascii=False)
+            save_json(cache, done)
+    save_json(cache, done)
     return [(frame_time(p), done[os.path.basename(p)]) for p in frames]
 
 
@@ -143,13 +159,22 @@ class Tracker:
         self.vanish_since = None
         self.blur_seen = False
         self.lead = {}
+        self.extra = {}      # (时间, 牌名, 排) -> {'pos': 排内第几个（从 0 数）, 'pw': 落地战力}
+        self.cur = None
         self.shows = []      # [(时间, 名)] 还没对上进场的展示
         self.events = []     # [(时间, 类型, 方, 名, 排)]
 
     def emit(self, t, kind, row, name):
         self.events.append((t, kind, SIDES[row], name, row))
+        if kind in ('打出', '进场') and self.cur and row in self.cur.get('rows', {}):
+            names = self.cur['rows'][row]
+            if name in names:
+                i = len(names) - 1 - names[::-1].index(name)   # 同名取最右边那张（多半是新来的）
+                pw = (self.cur.get('pw') or {}).get(row) or []
+                self.extra[(t, name, row)] = {'pos': i, 'pw': pw[i] if i < len(pw) else None}
 
     def update(self, t, ent):
+        self.cur = ent
         if ent.get('show') and (not self.shows or self.shows[-1][1] != ent['show'] or t - self.shows[-1][0] > 3):
             self.shows.append((t, ent['show']))
         sc = ent.get('score') or (None, None)
@@ -240,7 +265,9 @@ class Tracker:
         row, name = k
         side = SIDES[row]
         # 同一排的同名牌离场后不久又出现：多半是识别闪烁（画面糊、被挡），撤销那次离场
-        for i in range(len(self.events) - 1, -1, -1):
+        # ——除非展示框刚看到对方打出这张牌（真的又打了一张）
+        shown = side == '对方' and any(s[1] == name and -3 <= t - s[0] <= self.SHOW_S for s in self.shows)
+        for i in range(len(self.events) - 1 if not shown else -1, -1, -1):
             e = self.events[i]
             if t - e[0] > self.REENTER_S:
                 break
@@ -274,7 +301,7 @@ class Tracker:
             s = next((s for s in self.shows if s[1] == name and -3 <= t - s[0] <= self.SHOW_S), None)
             if s:
                 self.shows.remove(s)
-                self.emit(s[0], '打出', row, name)
+                self.emit(t, '打出', row, name)  # 用落地时间（展示比落地早，AI 还要选目标）
                 return
         self.emit(t, '进场', row, name)
 
@@ -285,7 +312,7 @@ class Tracker:
             return
         self.emit(t, '离场', row, name)
 
-    def snapshot(self, transient=5.0):
+    def snapshot(self, transient=8.0):
         """当前时间线（不改内部状态，实时显示用）：没落到场上的展示记为“展示”；进场后几秒内就离场的去掉。"""
         ev = sorted(self.events + [(t, '展示', '对方', n, '') for t, n in self.shows], key=lambda e: e[0])
         drop = set()
@@ -299,7 +326,7 @@ class Tracker:
                 drop |= {i, j}
         return [e for i, e in enumerate(ev) if i not in drop]
 
-    def finish(self, transient=5.0):
+    def finish(self, transient=8.0):
         self.events = self.snapshot(transient)
         self.shows = []
         return self.events

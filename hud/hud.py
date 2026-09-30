@@ -195,8 +195,9 @@ class BoardWatcher(threading.Thread):
             events = self.tr.snapshot()
             scores = export.stable_scores(self.states)
             runs = export.turn_runs(self.states)
+            extra = dict(self.tr.extra)
         return export.build_game(events, scores, date, {c['name']: c for c in (self.m.cards if self.m else [])},
-                                 my_deck=my_deck, runs=runs)
+                                 my_deck=my_deck, runs=runs, extra=extra)
 
 
 class App:

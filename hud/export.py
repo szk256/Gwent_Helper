@@ -85,7 +85,7 @@ def infer_passes(log, runs):
 
 
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
-               runs=None):
+               runs=None, extra=None):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。"""
     log, rounds = [], []
@@ -100,11 +100,22 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         s = int(t - t_start)
         return f'{s // 60}:{s % 60:02d}'
 
+    extra = extra or {}
+    step_t = [0.0]   # 最近一手（打出 / 领袖）的时间
+
     def push(x, t):
         nonlocal n
+        ex = extra.get((t, x.get('c'), cur_row[0])) if x['a'] in ('play', 'summon') else None
+        if ex:
+            if ex.get('pos') is not None and x.get('row'):
+                x['pos'] = ex['pos']
+            if ex.get('pw') is not None:
+                x['pw'] = ex['pw']
         n += 1
         x.update(id=f'e{n}', r=r, vt=vt(t), ts=t)
         log.append(x)
+        if x['a'] in ('play', 'leader'):
+            step_t[0] = t
         if x['a'] in ('play', 'summon') and x.get('row'):
             recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}[x['row']], '打出' if x['a'] == 'play' else '进场'))
 
@@ -113,7 +124,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         nonlocal si, last_real, pending_step, round_score
         best = None
         while si < len(scores) and scores[si][0] <= upto:
-            best = scores[si]
+            if scores[si][0] >= step_t[0] + 1.0:  # 这一手之后至少 1 秒读到的才算（总分更新有延迟）
+                best = scores[si]
             si += 1
         if best:
             round_score = best[1]
@@ -138,7 +150,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 return n2
         return None
 
+    cur_row = [None]
     for t, kind, side, name, row in events:
+        cur_row[0] = row
         c = cards_by_name.get(name, {})
         if my_deck and side == '我方' and name and name not in my_deck and c.get('set') != 'token':
             continue
@@ -236,7 +250,7 @@ def main():
     spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
     my_deck = deck.load(spec, m.cards)
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
-                      runs=turn_runs(states))
+                      runs=turn_runs(states), extra=tr.extra)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)

@@ -61,10 +61,8 @@ def mask_power(bgr):
     white = (s < 55) & (v > 140)
     green = (h >= 35) & (h <= 90) & (s > 50) & (v > 110)
     red = ((h <= 8) | (h >= 172)) & (s > 120) & (v > 120)
-    m = (white | green | red).astype(np.uint8)
-    # 去掉菱形边框这类细线（数字笔画粗）
-    k = max(2, bgr.shape[0] // 22)
-    return cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+    # 菱形边框这类细斜线由 glyphs() 按像素占比去掉（开运算会把 8 中间的细横线腐蚀掉）
+    return (white | green | red).astype(np.uint8)
 
 
 def diamond(bgr):
@@ -75,11 +73,17 @@ def diamond(bgr):
     n, lab, st, _ = cv2.connectedComponentsWithStats(navy, 8)
     if n <= 1:
         return bgr
-    i = 1 + int(st[1:, cv2.CC_STAT_AREA].argmax())
-    x, y, w, hh = st[i, :4]
-    if w < bgr.shape[1] * 0.35 or hh < bgr.shape[0] * 0.35:
+    # 数字把深蓝底切成几块：取所有够大的块合起来的外框
+    big = [i for i in range(1, n) if st[i, cv2.CC_STAT_AREA] >= 0.02 * navy.size]
+    if not big:
         return bgr
-    return bgr[y:y + hh, x:x + w]
+    x0 = min(st[i, 0] for i in big)
+    y0 = min(st[i, 1] for i in big)
+    x1 = max(st[i, 0] + st[i, 2] for i in big)
+    y1 = max(st[i, 1] + st[i, 3] for i in big)
+    if x1 - x0 < bgr.shape[1] * 0.5 or y1 - y0 < bgr.shape[0] * 0.5:
+        return bgr  # 框得太小（深蓝底被光效盖住），用原来的区域
+    return bgr[y0:y1, x0:x1]
 
 
 def rhombus(mask, margin=0.8):
@@ -111,6 +115,8 @@ def glyphs(mask, min_rel_h=0.55, min_h=6):
         else:
             groups.append([x, y, w, h, [i]])
     comps = [g for g in groups if g[3] >= min_h]
+    # 细斜线（菱形边框）在外框里的像素占比很低，数字不会这么低
+    comps = [g for g in comps if np.isin(lab[g[1]:g[1] + g[3], g[0]:g[0] + g[2]], g[4]).mean() >= 0.3]
     if not comps:
         return []
     top = max(c[3] for c in comps)
@@ -128,6 +134,18 @@ def glyphs(mask, min_rel_h=0.55, min_h=6):
     return out
 
 
+def badge_color(b):
+    """战力数字的颜色：white（= 基础战力）/ green（增益过，大于基础）/ red（受伤，小于基础）/ None。"""
+    hsv = cv2.cvtColor(b, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    inner = rhombus(np.ones(h.shape, np.uint8)).astype(bool)
+    white = ((s < 55) & (v > 140) & inner).sum()
+    green = ((h >= 35) & (h <= 90) & (s > 50) & (v > 110) & inner).sum()
+    red = (((h <= 8) | (h >= 172)) & (s > 120) & (v > 120) & inner).sum()
+    best = max((white, 'white'), (green, 'green'), (red, 'red'))
+    return best[1] if best[0] > 0.03 * inner.sum() else None
+
+
 def power_crop(frame, cx, cy, h):
     """场上牌左上角的战力菱形（略放宽，diamond() 再按深蓝底精确找）。"""
     H, W = frame.shape[:2]
@@ -140,17 +158,41 @@ class Reader:
     def __init__(self):
         d = np.load(TPL_PATH)
         self.tpl, self.lab = d['tpl'], d['lab']
+        # 战力专用模板（power_train.py 用白色数字自动标注训练）；缺的数字补上总分模板
+        if 'ptpl' in d.files:
+            have = set(int(x) for x in d['plab'])
+            extra = np.isin(self.lab, [k for k in range(10) if k not in have])
+            self.ptpl = np.concatenate([d['ptpl'], self.tpl[extra]])
+            self.plab = np.concatenate([d['plab'], self.lab[extra]])
+        else:
+            self.ptpl = self.plab = None
 
-    def classify(self, g):
-        diff = np.abs(self.tpl - g[None]).mean((1, 2))
-        i = int(diff.argmin())
-        return int(self.lab[i]), float(diff[i])
+    def ranked(self, g, power=False, k=4):
+        """[(数字, 误差)]，按误差从小到大，每个数字只取最近的一个。"""
+        tpl, lab = (self.ptpl, self.plab) if power and self.ptpl is not None else (self.tpl, self.lab)
+        diff = np.abs(tpl - g[None]).mean((1, 2))
+        best = {}
+        for i in np.argsort(diff):
+            d = int(lab[i])
+            if d not in best:
+                best[d] = float(diff[i])
+            if len(best) >= k:
+                break
+        return sorted(best.items(), key=lambda x: x[1])
 
-    def number(self, mask, max_err=0.3, **kw):
+    def classify(self, g, power=False):
+        tpl, lab = (self.ptpl, self.plab) if power and self.ptpl is not None else (self.tpl, self.lab)
+        diff = np.abs(tpl - g[None]).mean((1, 2))
+        idx = np.argsort(diff)[:3]
+        vals = lab[idx]
+        best = int(np.bincount(vals).argmax())
+        return best, float(diff[idx[vals == best]].min())
+
+    def number(self, mask, max_err=0.3, power=False, **kw):
         gs = glyphs(mask, **kw)
         if not gs:
             return None
-        cls = [self.classify(g) for _x, g, _b in gs]
+        cls = [self.classify(g, power) for _x, g, _b in gs]
         # 数字在同一条基线上：以最像数字的字形为准
         ref = gs[int(np.argmin([e for _d, e in cls]))][2]
         rt, rb = ref[1], ref[1] + ref[3]
@@ -158,13 +200,13 @@ class Reader:
         ds = []
         for (x, _g, (bx, by, bw, bh)), c in zip(gs, cls):
             if abs(by - rt) <= tol and abs(by + bh - rb) <= tol:
-                ds.append(c)
+                ds.append((1, c[1]) if bw < 0.36 * bh else c)  # “1”是唯一特别窄的数字（宽高比约 0.25–0.32）
             elif by < rb and by + bh > rt and min(by + bh, rb) - max(by, rt) > 0.8 * ref[3]:
                 # 粘着火焰等碎块：按基准的上下边界裁掉多余部分再认
                 sub = mask[rt:rb, bx:bx + bw]
                 g2 = glyphs(sub, min_h=int(0.7 * ref[3]))
                 if len(g2) == 1:
-                    ds.append(self.classify(g2[0][1]))
+                    ds.append(self.classify(g2[0][1], power))
         if not ds or len(ds) > 3 or any(e > max_err for _d, e in ds):
             return None
         return int(''.join(str(d) for d, _e in ds))
@@ -195,13 +237,35 @@ class Reader:
         return tuple(self.number(mask_lead(crop(frame, L[k])), min_h=int(0.2 * crop(frame, L[k]).shape[0]))
                      if L.get(k) else None for k in ('lead_op', 'lead_me'))
 
-    def power(self, frame, cx, cy, h):
-        """场上一张牌的战力：cx, cy, h 为画面比例（board.scan(detail=True) 给的中心和高度）。特殊牌 / 神器没有数字，返回 None。"""
+    def power(self, frame, cx, cy, h, base=None):
+        """场上一张牌的战力：cx, cy, h 为画面比例（board.scan(detail=True) 给的中心和高度）。特殊牌 / 神器没有数字，返回 None。
+        base（基础战力）已知时用颜色约束：白色 = 基础战力（直接返回），绿色 > 基础，红色 < 基础；读数不符合就换候选。"""
         b = power_crop(frame, cx, cy, h)
         if b.size == 0:
             return None
         b = diamond(b)
-        return self.number(rhombus(mask_power(b)), min_h=max(4, int(b.shape[0] * 0.3)))
+        col = badge_color(b)
+        if col == 'white' and base is not None:
+            return base
+        v = self.number(rhombus(mask_power(b)), power=True, min_h=max(4, int(b.shape[0] * 0.3)))
+        if base is None or col not in ('green', 'red'):
+            return v
+        ok = (lambda x: x > base) if col == 'green' else (lambda x: x < base)
+        if v is not None and ok(v):
+            return v
+        # 换候选：每个字形取前几名，找满足颜色约束、总误差最小的组合
+        gs = glyphs(rhombus(mask_power(b)), min_h=max(4, int(b.shape[0] * 0.3)))
+        if not 1 <= len(gs) <= 2:
+            return None
+        cands = [[(1, 0.0)] if bb[2] < 0.36 * bb[3] else self.ranked(g, True) for _x, g, bb in gs]
+        best = None
+        for combo in (cands[0] if len(cands) == 1 else [(a, b2) for a in cands[0] for b2 in cands[1]]):
+            ds = [combo] if len(cands) == 1 else list(combo)
+            val = int(''.join(str(d) for d, _e in ds))
+            err = sum(e for _d, e in ds)
+            if ok(val) and err < 0.6 and (best is None or err < best[1]):
+                best = (val, err)
+        return best[0] if best else None
 
 
 def build(d):
