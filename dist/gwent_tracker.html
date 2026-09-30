@@ -558,7 +558,7 @@ class Game {
     for (const sd of sides) for (const r of ROWS) out.push(...this.s.sides[sd].rows[r]);
     return out;
   }
-  units(side) { return this.allUnits(side).filter(u => u.def.type !== 'artifact'); }
+  units(side) { return this.allUnits(side).filter(u => u.def.type !== 'artifact' && !u.isTactic); }
   find(uid) { return this.allUnits().find(u => u.uid === uid) || null; }
   rowOf(u) { return this.s.sides[u.side].rows[u.row]; }
   adjacent(u) {
@@ -939,6 +939,17 @@ class Game {
     u.power = o.keepPower ? p : u.base;
     this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
     this.checkBless(u);
+  }
+  // 战术牌（用户确认）：第一局先手方近战排最左边放 1 张战术牌，占位置（算相邻），不算单位、不计分；用掉即离场，小局结束也离场，不进墓场
+  placeTactic(side, name) {
+    const u = this.makeUnit(name || '战术', side); u.isTactic = true; u.power = u.base = 0; u.origin = 'tactic';
+    this.s.sides[side].rows.m.unshift(u); u.row = 'm'; u.side = side; u.enteredTurn = -1;
+    this.log('战术牌', { side, name: u.name, uid: u.uid });
+    return u;
+  }
+  removeTactic(side) {
+    const row = this.s.sides[side].rows.m, i = row.findIndex(u => u.isTactic);
+    if (i >= 0) { const u = row.splice(i, 1)[0]; this.log('战术牌离场', { side, name: u.name }); }
   }
   // 手牌张数（对局簿推算亢奋、“手牌不满”用）：抽牌 +n（超过上限的丢弃），弃牌 -n
   draw(side, n, src) {
@@ -4175,12 +4186,14 @@ function sim(g,r,excl){
       // 跨局延续：金币（小局开始时减半）、墓场、放逐、牌组里回响的牌、领袖/战术剩余充能
       const A=P.E.s.sides[sd],B=E.s.sides[sd];B.coins=A.coins;B.grave=A.grave.slice();B.banished=A.banished.slice();
       // 上一局结束时场上的非坚韧单位进墓场（佚亡的放逐）
-      for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(!u.status.resilience)(P.E.isDoomed(u)?B.banished:B.grave).push(u.name);B.deck=A.deck.slice();B.echoed=(A.echoed||[]).slice();
+      for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(!u.status.resilience&&!u.isTactic)(P.E.isDoomed(u)?B.banished:B.grave).push(u.name);B.deck=A.deck.slice();B.echoed=(A.echoed||[]).slice();
       // 墓场里的计数（洞察之球）、牌组里单位的增益（埃兰）、最大耐性（校友会，ASSUME 跨小局保留）
       B.graveWatch=JSON.parse(JSON.stringify(A.graveWatch||[]));B.deckBuff=JSON.parse(JSON.stringify(A.deckBuff||{}));if(A.vars.maxPat)B.vars.maxPat=Object.assign({},A.vars.maxPat);
       for(const[nm,h]of Object.entries(A.abilities||{})){const h2=E.addAbility(sd,nm,h.charges);h2.vars=JSON.parse(JSON.stringify(h.vars||{}));}}}
   E.s.round=r;
   E.startRound();
+  // 战术牌：只在第一局，先手方近战排最左边（新对局才有 g.tacCard，旧记录的位置不受影响）
+  let tacU=null;if(r===0&&g.tacCard&&(g.coin==="先"||g.coin==="后")){const fs=g.coin==="先"?"me":"op";tacU=E.placeTactic(fs,fs==="me"?(deckById(g.deck)?.tactic||"战术"):"战术");bind("tac",tacU);}
   // 手牌数推算：第一局起手 10 张；之后 = 上一局结束时的手牌（R 行记了就用记录，否则用推算）+ 3，上限 10。打出（不含牌组/墓场/生成）-1，“手牌”记录修正
   {const P=Pprev;const R0=g.rounds&&g.rounds[r-1];
     for(const sd of["me","op"]){const rec=R0&&R0[sd==="me"?"hm":"ho"];let prev=rec!=null&&rec!==""?+rec:P?P.E.s.sides[sd].handCount:null;
@@ -4227,7 +4240,8 @@ function sim(g,r,excl){
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
       case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
-        const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});break;}
+        const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
+        if(x.a==="tactic")E.removeTactic(side);break;}   // 战术牌用掉即离场
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
       case "kill":{const u=unitByKey(x.uid);if(u)E.destroy(u);break;}
       case "adj":{const u=unitByKey(x.uid);if(u){
@@ -4427,6 +4441,8 @@ function normVt(v){v=String(v||"").trim().replace(/：/g,":");if(!v)return "";le
   if((m=v.match(/^(\d{1,2}):(\d{1,2}):(\d{2})$/)))return +m[1]+":"+m[2].padStart(2,"0")+":"+m[3];
   if((m=v.match(/^(\d{1,3}):(\d{2})$/)))return +m[1]+":"+m[2];
   if((m=v.match(/^(\d{1,3})(\d{2})$/)))return +m[1]+":"+m[2];return false;}
+function recTactic(who){const g=db.live;const nm=who==="me"?(deckById(g.deck)?.tactic||"战术"):"战术";const i=pushLog({who,a:"tactic",c:nm});ui.act="play";
+  queue({t:"target",id:g.log[i].id},...(who==="me"?spawnStep(BY[nm],"leader","me"):[]));rMatch();}
 function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
 function renderBackup(){const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
@@ -4554,6 +4570,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.u!==undefined){const {all}=board(g);const u=all[D.u]||all[+D.u];if(!u)return true;
     if(D.umode==="multi"){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.uid===u.uid);if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
     // 指令、触发效果属于点到的单位那一方（打完牌后界面已切到对方，我方接着用指令也不会记错）
+    if(ui.act==="order"&&u.eu&&u.eu.isTactic){recTactic(u.side);return true;}   // 点场上的战术牌 = 用战术
     if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){const eu=u.eu;const last=g.log.filter(x=>x.r===VR()).pop();
@@ -4591,8 +4608,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     noPlace(){const i=pushLog({who:step.who,a:step.a,c:step.card,via:step.via||undefined});afterCard(i,step.card,step.a,step.who);},
     retYes(){ui.flow=[{t:"place",a:"summon",who:"me",side:"me",card:step.card,via:"墓场"},...ui.flow.slice(1)];rMatch();},
     leader(){const i=pushLog({who:"me",a:"leader",c:g.leader||null});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[g.leader],"leader","me"));rMatch();},
-    tactic(){const nm=deckById(g.deck)?.tactic||"战术";const i=pushLog({who:"me",a:"tactic",c:nm});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[nm],"leader","me"));rMatch();},
-    tacticOp(){const i=pushLog({who:"op",a:"tactic",c:"战术"});ui.act="play";queue({t:"target",id:g.log[i].id});rMatch();},
+    tactic(){recTactic("me");},
+    tacticOp(){recTactic("op");},
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},
     fxRec(){const f=ui.fx;const i=pushLog({who:f.who||ui.who,a:"fx",c:f.k,side:f.side,row:f.row,dur:f.dur||null});ui.fx=null;ui.act="play";toast(logText(g.log[i]));rMatch();},
     keysHelp(){alert(window.GwentKeysHelp||"");},
@@ -4712,7 +4729,7 @@ const unitFaceU=u=>{const e=u.eu;if(!e)return unitFace(u.n);const c=BY[u.n];cons
       const cls=e.power>e.base?"up":e.power<e.base?"dn":"";
       const marks=[st.shield?"盾":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:"",st.lock?"锁":"",st.poison?"毒":"",st.veil?"遮":"",st.resilience?"坚":"",
         st.spying?"潜":"",st.ambush?"伏":"",st.bounty?"赏":"",e.timer!=null?"计"+e.timer:"",e.def.cooldown!=null&&e.cd>0?"冷"+e.cd:"",e.def.order&&e.def.cooldown==null&&((e.def.charges!=null?e.def.charges:1)+(e.bonusCharges||0))!==1?"充"+Math.max(0,(e.def.charges!=null?e.def.charges:1)+(e.bonusCharges||0)-e.orderUsed):"",e.pat!=null?"耐"+e.pat:"",e.vars&&e.vars.count!=null?"倒"+e.vars.count:"",st.immune&&!e.def.status?.immune?"免":""].filter(Boolean).join(" ");
-      return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled?`<span class="unm">?</span>`:""}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
+      return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"&&!e.isTactic?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled&&!e.isTactic?`<span class="unm">?</span>`:""}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
 const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small class="upw">${c.pw}</small>`:"";};
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{
       const us=RR[s][r];let inner="";
@@ -4965,7 +4982,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
     if(k>0)d.cards[n]=k;else delete d.cards[n];persist();rDeck();return;}
   const act=D.do;if(!act)return;
   ({start(){if(!setup.fac)return toast("选一下对手阵营");const d=deckById(setup.deck)||deckById($("#sDeck")?.value);if(!d)return toast("先建一个卡组");
-      db.live={id:Date.now(),date:new Date().toISOString().slice(0,10),deck:d.id,deckName:d.name,myF:d.f,leader:d.leader,fac:setup.fac,coin:setup.coin,rounds:[],cur:0,pend:{res:null,me:"",op:"",hm:null,ho:null},diff:null,opLeader:null,hand:!!db.handPref,t0:Date.now(),rt0:Date.now(),lastT:Date.now(),log:[],stuck:[],note:""};
+      db.live={id:Date.now(),tacCard:true,date:new Date().toISOString().slice(0,10),deck:d.id,deckName:d.name,myF:d.f,leader:d.leader,fac:setup.fac,coin:setup.coin,rounds:[],cur:0,pend:{res:null,me:"",op:"",hm:null,ho:null},diff:null,opLeader:null,hand:!!db.handPref,t0:Date.now(),rt0:Date.now(),lastT:Date.now(),log:[],stuck:[],note:""};
       ui.who=setup.coin==="后"?"op":"me";ui.act="play";ui.q="";setup.fac=null;setup.coin=null;persist();rMatch();},
     endRound(){const p=g.pend;if(!p.res)return toast("选一下本局结果");if(p.hm==null&&g.hand)p.hm=myHand(g).length;ui.vr=null;const now=Date.now();g.rounds.push({res:p.res,me:p.me,op:p.op,hm:p.hm??null,ho:p.ho??null,sec:g.rt0?Math.round((now-g.rt0)/1000):null});g.rt0=now;g.lastT=now;
       if(g.rounds.length===1)g.diff=(p.hm!=null&&p.ho!=null)?p.hm-p.ho:null;g.pend={res:null,me:"",op:"",hm:null,ho:null};g.cur=g.rounds.length;
