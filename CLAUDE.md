@@ -23,11 +23,15 @@
 
 ## 引擎结构（gwent_engine.js）
 - 单位：`{uid,name,side,row,def,base,power,armor,tags,status,infused,blessFired,enteredTurn,orderUsed,zeal,origin}`。`origin` 为 hand / deck / summon / spawn。
-- 积木：`play` `summon` `spawn` `boost` `damage` `addArmor` `addStatus` `reset` `setPower` `strengthen` `move` `destroy` `lock` `infuse` `purify` `duel` `useAbility`（领袖、战术）`order`。
-- 事件：`unitEnter` `unitPlayed` `cardPlayed` `boosted` `damaged` `shieldLost` `shieldGained` `armorBroken` `blessed` `destroyed` `deathblow` `moved` `turnStart` `turnEnd` `roundStart` `roundEnd`。锁定的单位不响应。
+- 积木：`play` `summon` `spawn` `boost` `damage` `addArmor` `addStatus` `reset` `setPower` `strengthen` `move` `destroy` `banish` `lock` `infuse` `purify` `heal` `duel` `clash`（交锋）`consume`（吞噬）`addHazard`（整排效果）`useAbility`（领袖、战术）`order` `carryIn`（坚韧留场）。
+- 事件：`unitEnter` `unitPlayed` `cardPlayed` `boosted` `damaged` `healed` `shieldLost` `shieldGained` `armorBroken` `blessed` `destroyed` `banished` `deathblow` `moved` `turnStart` `turnEnd` `roundStart` `roundEnd`。锁定的单位不响应（包括灌注）。
+- 通用关键词从卡面读：整段只有关键词的（护盾、佚亡、免疫、坚韧、遮蔽、卫士、列阵、狂热、老兵、冷却 X、充能 X，可用顿号连写）直接变成状态/属性；只有这些的牌算已建模。
+- 手动指定目标统一用 `targetable` / 卡牌里的 `T()`：免疫不能选；对方排上有卫士时只能选卫士。
+- 状态：`rupture`（破裂，回合结束受基础战力伤害）；计时 `def.timer={n,run}`（己方回合结束 -1，归零触发）。
+- 整排效果 `HAZARDS`（霜、雨、雾、风暴、龙之梦、血月、灾厄）：拥有者回合开始时结算，每排一个，新的替换旧的，持续回合按卡面，结算后 -1。随机结果走 `choose`（来源 = 效果名）。
 - 选择：`choose(req)` 统一处理目标、随机结果、牌组里拉出的牌；没有输入时记“待选”。
 - 可调规则在 `DEFAULT_RULES`，未确认的规则都放这里。
-- 对局簿里用 `manualRounds:true`，每局单独推算（坚韧跨局还没做）。
+- 对局簿里用 `manualRounds:true`，每局单独推算；第 2、3 局开头把上一局推算结束时带坚韧的单位 `carryIn` 进来（绑定原来的记录编号），老兵在小局开始时 +1。
 
 ## 对局簿接入（gwent_tracker.html 里的 sim / simBoard）
 - `sim(g, r)` 把第 r 局的记录逐条喂给引擎：换人行动即回合切换；由某张牌带出的后续记录（`via` 为该牌名的 spawn / summon / play）作为这张牌的选择输入，并对应到引擎自动产生的单位。
@@ -38,6 +42,7 @@
 - 落地战力 `pw` 在整步结算完后覆盖（包括牌组拉出的牌）。
 - 已结束的一局最后一方没记停牌时，补一次停牌。
 - 未确认规则的覆盖值放 `SIM_RULES`（校准用）。
+- 整排效果：`fx` 记录交给引擎（`addHazard`，没记回合数按卡面默认）。打出刺骨冰霜等整排效果牌后界面直接进入整排效果，只需点排；雨、血月、灾厄等随机命中在“效果”面板里点“××命中”再选单位（记为 `effect`，`c` = 效果名，进 `hzQ`）。整排效果牌后面没记 `fx` 时提示。
 - 修改记录里可“改成对方/我方”（连同这张牌带出的后续记录一起改）。
 - 界面：指令、触发效果记为点到的单位那一方；领袖、战术面板两方按钮都列出（打完牌界面会自动切到对方，以前会把我方领袖记成对方）。
 - 导出码目标 `8/0` = 第 8 步带出的第 1 个单位（以前导出成 `?`）。
@@ -60,6 +65,9 @@
 - **落难的少女**：打出时触发序章；之后己方每**打出** 1 个骑士推进一章。召唤、生成的不算打出。
 - **无畏者布朗温**：免疫，不能被手动指定。
 - **战术优势**：指令，使 1 个友军单位获得 5 点增益。
+- **整排效果**：有固定回合数（按卡面）。当前数据库里没有增益型整排效果，晴空是即时增益（己方同排 +1）。
+- **遗愿**：被摧毁进墓场才触发，佚亡（放逐）的不触发。
+- **净化**：移除所有状态，包括护盾和灌注；免疫是卡牌自带，保留。
 - **雷纳德·奥多**：神赐/指令“使所有受到增益的友军单位 +1”不包括他自己（`reynardSelf:false`）。
 
 ## 尚未确认（做成参数或标 ASSUME，靠比分校准，不要猜着改死）
@@ -70,8 +78,11 @@
   - 拉多维德皇家护卫的激励（暂按附加在指令上，自身 +2 护甲）。
   - 神殿守卫“相邻的 3 个”。
   - 贝罗恒王（暂按设为 6）以及它和雷纳德谁先结算。
+- 引擎 `DEFAULT_RULES` 新增的未确认项：`spawnBanished`（生成的牌一律放逐）、`purifyKeepsDoomed`、`resilienceKeepsDamage`（坚韧留场保留伤害，只去增益）、`timerRepeats`、`dragonDreamOnLast`（龙之梦在最后一回合爆炸）、`knightSummonSelf`。
+- 维里赫德旅先锋远程“同排每有 1 个友军精灵”暂不算自己。
+- 游侠骑士“每有 1 个相邻受伤单位受到 1 点伤害”暂按逐点结算。
 - 麦莉远程“对 4 个单位造成 1 点伤害”：敌方单位不足 4 个时是否重复命中。
-- 骑士册封打出科德温骑士：用户确认落地 8（=5+科德温自身 3），引擎算 14。骑士册封“每控制 1 名骑士 +1”在那一步没生效，原因未明，需用户看游戏内骑士册封的说明。
+- 骑士册封：卡面按“场上每有 1 名骑士 +1”没问题；是否算被拉出的骑士自己（`knightSummonSelf`，暂为 true）：2026-09-30 对局引擎 14、用户当时记 13，不算自己才对得上。
 
 ## 校准现状
 2026-09-30 对局（对北方王国·皇家激励）第一局真实 82:51（R 行填的 59:49 不是终局比分）。记录到第 45 步，引擎 77:49。第二局记录不完整；第 53–55 步方记错（领袖已自动纠正；第 55 步拉多维德皇家护卫是我方打的，需在对局簿里用“改成我方”改记录）。
@@ -108,7 +119,7 @@ R1 W 46:24 4:5
 1. 用户实际用新版记录几局，根据反馈加快记录流程（尤其对面部署伤害的点选）。
 2. 用新对局的比分校准上面“尚未确认”的各项。
 3. 补全卡牌：先补对手常见阵营的常见牌；从“当前英文效果”批量半自动转换，转不了的标未建模。局末按出现次数列出未建模牌。
-4. 坚韧跨局、整排效果（霜、雨、雾、风暴等）、神器留场的细节。
+4. 神器留场的细节（计时、充能显示）；统御、威势、夜宴等条件关键词做成引擎查询。
 5. 偏差报告：局末比分对不上时，列出逐步比分，指出可能出错的那段效果。
 
 ## 测试

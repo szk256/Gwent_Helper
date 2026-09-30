@@ -17,7 +17,36 @@ const DEFAULT_RULES = {
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
   reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
+  spawnBanished: true,        // 生成的牌离场时一律放逐（未确认；卡面写“佚亡”的一定放逐）
+  purifyKeepsDoomed: true,    // 净化是否保留佚亡（未确认）
+  resilienceKeepsDamage: true,// 坚韧留场时保留受到的伤害，只去掉增益（未确认）
+  knightSummonSelf: true,     // 骑士册封“己方每控制 1 名骑士”是否算被拉出的骑士自己（未确认）
+  timerRepeats: true,         // 计时归零触发后重新计时（未确认）
+  dragonDreamOnLast: true,    // 龙之梦在最后一个回合开始时爆炸（未确认）
 };
+
+// ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
+// turns：卡面给的持续回合数；每次结算后 -1，归零移除
+const HAZARDS = {
+  '霜':   { turns: 3, run: (g, us, h) => { const t = g._pickExtreme(us, 1, h); if (t) g.damage(t, 2, h); } },
+  '雨':   { turns: 3, run: (g, us, h) => g.choose({ kind: 'random', prompt: '雨：2 个随机单位', from: us, n: 2, upTo: true, source: h.name }).forEach(u => g.damage(u, 1, h)) },
+  '雾':   { turns: 3, run: (g, us, h) => { const t = g._pickExtreme(us, -1, h); if (t) g.damage(t, 2, h); } },
+  '风暴': { turns: 2, run: (g, us, h) => us.forEach(u => g.damage(u, 1, h)) },
+  '龙之梦': { turns: 3, run: (g, us, h) => { if (h.turns === 1 || !g.rules.dragonDreamOnLast) us.forEach(u => g.damage(u, 3, h)); } },
+  '血月': { turns: 2, run: (g, us, h) => {
+    const t = us.length === 1 ? us[0] : g.choose({ kind: 'random', prompt: '血月：随机单位', from: us, source: h.name })[0];
+    if (!t) return;
+    if (t.status.bleed > 0) g.damage(t, 2, h); else g.addStatus(t, 'bleed', 2, h);
+  } },
+  '灾厄': { turns: 2, run: (g, us, h) => {
+    // 3 点伤害随机分摊：逐点结算（每点单独过护盾、护甲）
+    const hits = us.length === 1 ? [us[0], us[0], us[0]] : g.choose({ kind: 'random', prompt: '灾厄：3 点随机分摊（可重复）', from: us, n: 3, source: h.name });
+    hits.slice(0, 3).forEach(u => g.damage(u, 1, h));
+  } },
+};
+// 卡面只写关键词的段落（“护盾。”“佚亡。”），读数据时直接变成状态/属性
+const KW_STATUS = { '护盾': 'shield', '佚亡': 'doomed', '免疫': 'immune', '坚韧': 'resilience', '遮蔽': 'veil', '卫士': 'defender' };
+const KW_FLAG = { '列阵': 'formation', '狂热': 'zeal' };
 
 const OTHER = { me: 'op', op: 'me' };
 const ROWS = ['m', 'r'];
@@ -56,6 +85,8 @@ class Game {
     const data = this.data && this.data[name];
     const beh = this.behaviors && this.behaviors[name];
     const d = Object.assign({ name, base: 0, abilities: [] }, data || {}, beh || {});
+    d.status = Object.assign({}, data && data.status, beh && beh.status);
+    if (!d.abilities) d.abilities = [];
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
     if (!data) d.unknown = true;
     this.cards[name] = d;
@@ -67,11 +98,28 @@ class Game {
     for (const r of RAW) {
       const n = v => (v === '-' || v === '' ? 0 : +v);
       const text = r[8] || '';
-      this.data[r[0]] = {
+      const d = this.data[r[0]] = {
         name: r[0], fac: r[1], color: r[2], type: TYPE[r[3]] || r[3], base: n(r[4]), prov: n(r[5]),
         tags: (r[7] || '').split(/[,、]\s*/).filter(Boolean), text, en: r[9], textEn: r[10], set: r[11], armor: n(r[13]),
-        vanilla: r[3] === '单位' && text.trim() === '',
+        status: {},
       };
+      // 通用关键词：整段只有关键词的直接读出来；全部读完的牌视为已建模（白板）
+      let rest = 0;
+      const kw = (seg, apply) => {
+        let m;
+        if (KW_STATUS[seg]) { if (apply) d.status[KW_STATUS[seg]] = true; }
+        else if (KW_FLAG[seg]) { if (apply) d[KW_FLAG[seg]] = true; }
+        else if ((m = seg.match(/^老兵\s*(\d*)$/))) { if (apply) d.veteran = +(m[1] || 1); }
+        else if ((m = seg.match(/^冷却[：:]\s*(\d+)$/))) { if (apply) d.cooldown = +m[1]; }
+        else if ((m = seg.match(/^充能[：:]\s*(\d+)$/))) { if (apply) d.charges = +m[1]; }
+        else return false;
+        return true;
+      };
+      for (const seg of text.split(/\s*\/\s*/).map(x => x.replace(/[。.．\s]+$/, '').trim()).filter(Boolean)) {
+        const parts = seg.split(/\s*[、，,]\s*/);          // “坚韧、护盾.”
+        if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
+      }
+      d.vanilla = r[3] === '单位' && rest === 0;
     }
   }
   loadBehaviors(map) { this.behaviors = Object.assign(this.behaviors || {}, map); this.cards = {}; }
@@ -83,8 +131,8 @@ class Game {
     (this.handlers[evt] || []).forEach(fn => fn(data, this));
     // 场上单位自带的监听（卡牌能力），锁定的单位不响应
     for (const u of this.allUnits()) {
-      if (u.status.lock || !u.def.abilities) continue;
-      for (const ab of u.def.abilities) {
+      if (u.status.lock) continue;
+      for (const ab of u.def.abilities || []) {
         if (ab.on === evt && (!ab.when || ab.when(this.ctx(u), data))) ab.run(this.ctx(u), data);
       }
       for (const inf of u.infused) {
@@ -106,6 +154,14 @@ class Game {
   adjacent(u) {
     const row = this.rowOf(u), i = row.indexOf(u);
     return [row[i - 1], row[i + 1]].filter(Boolean);
+  }
+  // 手动指定目标：免疫的不能选；对方排上有卫士时只能选卫士
+  targetable(us, bySide) {
+    return us.filter(u => {
+      if (u.status.immune) return false;
+      if (!bySide || u.side === bySide || u.status.defender) return true;
+      return !this.rowOf(u).some(v => v !== u && v.status.defender && !v.status.lock);
+    });
   }
   isBoosted(u) { return u.power > u.base; }               // 已确认：当前战力高于基础战力
   isDamaged(u) { return u.power < u.base; }
@@ -159,6 +215,8 @@ class Game {
       playFromDeck: (name, row, pos, o) => g.play(u.side, name, row, pos, Object.assign({ fromDeck: true, by: u }, o)),
       pick: (req) => g.choose(Object.assign({ source: u && u.name }, req))[0] || null,
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
+      targets: us => g.targetable(us, u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
+      clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
     };
   }
 
@@ -170,7 +228,7 @@ class Game {
       base: d.base || 0, power: d.base || 0, armor: d.armor || 0,
       tags: d.tags || [], status: Object.assign({}, d.status || {}),
       infused: [], blessFired: {}, enteredTurn: this.s.turn, orderUsed: 0,
-      zeal: !!d.zeal, unmodeled: !!d.unmodeled, origin: null,
+      zeal: !!d.zeal, unmodeled: !!d.unmodeled, origin: null, timer: d.timer ? d.timer.n : null,
     };
   }
 
@@ -305,6 +363,46 @@ class Game {
     if (diff > 0) this.boost(u, diff, src); else if (diff < 0) this.damage(u, -diff, src, { ignoreArmor: true, ignoreShield: true });
   }
 
+  // 治愈：当前战力低于基础战力时恢复到基础战力
+  heal(u, src) { if (!u || u.power >= u.base) return; const n = u.base - u.power; u.power = u.base; this.log('治愈', { uid: u.uid, name: u.name, n, by: src && src.name }); this.emit('healed', { unit: u, n, src }); }
+  // 交锋：双方同时以自身战力伤害对方
+  clash(a, b) {
+    if (!a || !b) return;
+    const pa = a.power, pb = b.power;
+    this.log('交锋', { a: a.name, b: b.name });
+    this.damage(b, pa, a); this.damage(a, pb, b);
+  }
+  // 吞噬：摧毁目标（在墓场则放逐），自身获得其战力
+  consume(a, b) {
+    if (!a || !b) return;
+    const p = b.power;
+    this.log('吞噬', { a: a.name, b: b.name, n: p });
+    this.destroy(b, a);
+    this.boost(a, p, a);
+  }
+  // 放逐：离场但不算被摧毁，不触发遗愿
+  banish(u, src) {
+    if (!u || !this.find(u.uid)) return;
+    const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
+    this.s.sides[u.side].banished.push(u.name);
+    this.log('放逐', { uid: u.uid, name: u.name, by: src && src.name });
+    this.emit('banished', { unit: u, src });
+  }
+  // 整排效果：同一排只留一个，新的替换旧的
+  addHazard(side, row, kind, turns, src) {
+    const rows = row === 'all' ? ROWS : [row];
+    const H = HAZARDS[kind];
+    for (const r of rows) {
+      this.s.hazards[side][r] = { name: kind, kind, turns: turns != null ? turns : (H ? H.turns : Infinity), unknown: !H };
+      this.log('整排效果', { side, row: r, kind, turns: this.s.hazards[side][r].turns, by: src && src.name, unmodeled: !H });
+    }
+  }
+  _pickExtreme(us, dir, h) {
+    if (!us.length) return null;
+    const v = dir > 0 ? Math.max(...us.map(u => u.power)) : Math.min(...us.map(u => u.power));
+    const c = us.filter(u => u.power === v);
+    return c.length === 1 ? c[0] : this.choose({ kind: 'random', prompt: h.name + '：并列时随机', from: c, source: h.name })[0] || null;
+  }
   strengthen(u, n, src) { u.base += n; u.power += n; this.log('强化', { uid: u.uid, n, by: src && src.name }); this.checkBless(u); }
 
   move(u, row, pos, src) {
@@ -318,10 +416,11 @@ class Game {
     if (!this.find(u.uid)) return;
     u.adjBefore = this.adjacent(u);
     const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
-    const doomed = u.status.doomed || u.origin === 'spawn';
+    const doomed = this.isDoomed(u);
     (doomed ? this.s.sides[u.side].banished : this.s.sides[u.side].grave).push(u.name);
     this.log('摧毁', { uid: u.uid, name: u.name, by: src && src.name });
-    if (u.def.deathwish && !u.status.lock) u.def.deathwish(this.ctx(u));
+    // 遗愿：被摧毁并进入墓场时触发；佚亡（放逐）的不触发
+    if (u.def.deathwish && !u.status.lock && !doomed) u.def.deathwish(this.ctx(u));
     this.emit('destroyed', { unit: u, src });
     if (src && src.def) {
       if (src.def.deathblow && (!src.uid || this.find(src.uid)) && !(src.status && src.status.lock)) src.def.deathblow(this.ctx(src), u);
@@ -329,8 +428,15 @@ class Game {
     }
   }
 
+  isDoomed(u) { return !!(u.status.doomed || (u.origin === 'spawn' && this.rules.spawnBanished)); }
+  // 净化：移除所有状态（含护盾、灌注）；免疫是卡牌自带属性，保留
   purify(u, src) {
-    for (const k of Object.keys(u.status)) if (k !== 'shield' && k !== 'immune') u.status[k] = k === 'vitality' || k === 'bleed' || k === 'poison' ? 0 : false;
+    if (!u) return;
+    for (const k of Object.keys(u.status)) {
+      if (k === 'immune' || (k === 'doomed' && this.rules.purifyKeepsDoomed)) continue;
+      u.status[k] = k === 'vitality' || k === 'bleed' || k === 'poison' ? 0 : false;
+    }
+    u.infused = [];
     this.log('净化', { uid: u.uid, name: u.name, by: src && src.name });
   }
   // 对决：发起者先出手，轮流造成等同自身战力的伤害，直到一方被摧毁
@@ -401,7 +507,10 @@ class Game {
     // 整排效果：拥有者回合开始时生效
     for (const r of ROWS) {
       const h = this.s.hazards[side][r];
-      if (h && h.run) { h.run(this, side, r); if (--h.turns <= 0) this.s.hazards[side][r] = null; }
+      if (!h) continue;
+      const H = HAZARDS[h.kind];
+      if (H) H.run(this, this.s.sides[side].rows[r].filter(u => u.def.type !== 'artifact'), h);
+      if (--h.turns <= 0) { this.s.hazards[side][r] = null; this.log('整排效果结束', { side, row: r, kind: h.kind }); }
     }
     for (const u of this.allUnits(side)) if (u.cd > 0) u.cd--;
     this.emit('turnStart', { side });
@@ -409,11 +518,22 @@ class Game {
 
   endTurn() {
     const side = this.s.active;
+    // 计时：己方回合结束前 -1，归零触发
+    for (const u of this.allUnits(side).slice()) {
+      if (u.timer == null || u.status.lock || !this.find(u.uid)) continue;
+      if (--u.timer <= 0) {
+        this.log('计时触发', { uid: u.uid, name: u.name });
+        u.def.timer.run(this.ctx(u));
+        u.timer = this.rules.timerRepeats ? u.def.timer.n : null;
+      }
+    }
     this.emit('turnEnd', { side });
     // 活力 / 重伤：单位拥有者回合结束
     for (const u of this.allUnits(side).slice()) {
       if (u.status.vitality > 0) { u.status.vitality--; this.boost(u, 1, { name: '活力' }); }
       else if (u.status.bleed > 0) { u.status.bleed--; this.damage(u, 1, { name: '重伤' }, { ignoreArmor: true, bleed: true }); }
+      // 破裂：受到等同基础战力的伤害，随后移除
+      if (u.status.rupture && this.find(u.uid)) { u.status.rupture = false; this.damage(u, u.base, { name: '破裂' }); }
     }
     this.s.turn++;
     const nxt = OTHER[side];
@@ -453,9 +573,10 @@ class Game {
       const keep = [];
       for (const u of s.sides[sd].rows[r]) {
         if (u.status.resilience) {
-          u.status.resilience = false; u.power = u.base; u.armor = u.def.armor || 0; keep.push(u);
+          u.status.resilience = false; u.armor = u.def.armor || 0; keep.push(u);
+          u.power = this.rules.resilienceKeepsDamage ? Math.min(u.power, u.base) : u.base;
         } else {
-          (u.status.doomed || u.origin === 'spawn' ? s.sides[sd].banished : s.sides[sd].grave).push(u.name);
+          (this.isDoomed(u) ? s.sides[sd].banished : s.sides[sd].grave).push(u.name);
         }
       }
       s.sides[sd].rows[r] = keep;
@@ -467,6 +588,17 @@ class Game {
     this.startRound();
   }
 
+  // 上一局留场的单位（坚韧）带进这一局（对局簿逐局推算用）
+  carryIn(u, side, row) {
+    const v = this.makeUnit(u.name, side);
+    Object.assign(v, { base: u.base, armor: u.def.armor || 0, origin: u.origin, enteredTurn: -1,
+      power: this.rules.resilienceKeepsDamage ? Math.min(u.power, u.base) : u.base,
+      status: Object.assign({}, u.status, { resilience: false }), infused: [] });
+    v.row = row; this.s.sides[side].rows[row].push(v);
+    this.log('留场', { side, name: v.name, uid: v.uid, row, power: v.power });
+    return v;
+  }
+
   // ---------- 快照（给界面和校准用） ----------
   snapshot() {
     const view = sd => ({
@@ -475,6 +607,7 @@ class Game {
         status: Object.fromEntries(Object.entries(u.status).filter(([, v]) => v)),
         unmodeled: u.unmodeled, canOrder: this.canOrder(u) }))])),
       score: this.score(sd), passed: this.s.sides[sd].passed, handCount: this.s.sides[sd].handCount,
+      hazards: Object.fromEntries(ROWS.map(r => [r, this.s.hazards[sd][r] && { kind: this.s.hazards[sd][r].kind, turns: this.s.hazards[sd][r].turns }])),
     });
     return { round: this.s.round + 1, turn: this.s.turn, active: this.s.active, me: view('me'), op: view('op'), results: this.s.results };
   }
@@ -489,7 +622,7 @@ function calibrate(game, real) {
   }));
 }
 
-const API = { Game, DEFAULT_RULES, calibrate, OTHER, ROWS };
+const API = { Game, DEFAULT_RULES, HAZARDS, calibrate, OTHER, ROWS };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else root.GwentEngine = API;
 })(this);
