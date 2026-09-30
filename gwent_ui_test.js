@@ -64,7 +64,7 @@ setTimeout(() => {
     live([{ id: 'e1', who: 'op', a: 'pass' }, { id: 'e2', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' },
       { id: 'e3', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e4', who: 'me', a: 'order', c: '赤红男爵', uid: 'e2', tgts: [{ uid: 'e3' }] }]);
     S = w.eval('sim(db.live,0)');
-    ok(S.E.s.turn === 2 && !S.warns.some(x => /不能用指令/.test(x.m)), '对方停牌后连续出牌：分成两个回合，指令可用');
+    ok(S.E.s.turn >= 2 && !S.warns.some(x => /不能用指令/.test(x.m)), '对方停牌后连续出牌：分成两个回合，指令可用');
     live([{ id: 'e1', who: 'me', a: 'play', c: '赤红男爵', row: 'r', side: 'me' }, { id: 'e2', who: 'me', a: 'order', c: '赤红男爵', uid: 'e1' }]);
     ok(w.eval('sim(db.live,0)').warns.some(x => /进场当回合不能用指令/.test(x.m)), '进场当回合记了指令：提示');
     // 月度补丁：对局按日期用当时的版本
@@ -160,11 +160,20 @@ setTimeout(() => {
     // 改战力：按钮面板，不用输入；设到神赐阈值以上时神赐照样触发（少女的盾牌生成布朗温）
     live([{ id: 'e1', who: 'me', a: 'play', c: '少女的盾牌', row: 'm', side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
     w.eval('ui.act="adj";rMatch()'); ub('少女的盾牌').click();
-    ok(fl() === 'adj' && Q('[data-adjv="9"]') && !Q('dialog[open]'), '改战力：点单位进按钮面板');
-    Q('[data-adjv="9"]').click();
+    ok(fl() === 'adj' && Q('#adjSet') && Q('#adjSet').value === '4' && !Q('dialog[open]'), '改战力：点单位进面板，数字框填好推算值');
+    Q('#adjSet').value = '8'; Q('[data-adjbump="adjSet|1"]').click();
+    ok(Q('#adjSet').value === '9' && fl() === 'adj', '改战力：+1 只改框里的数，不记录');
+    Q('[data-adjv="?#adjSet:"]').click();
     ok(us('me') === '少女的盾牌9 “无畏者”布朗温2', '改战力：设成 9 触发神赐 8，自动生成布朗温');
     w.eval('ui.flow=null;ui.act="leader";rMatch()'); Q('[data-do="leader"]').click(); ub('少女的盾牌').click(); Q('[data-do="tgtDone"]').click();
     ok(/皇家激励 剩 1 次（下次 \+4）/.test(QA('.eng .coins').map(e => e.textContent).join(' ')), '皇家激励：触发神赐后刷新，下次 +4，比分下显示');
+    // 可编辑数字：超过原来按钮范围的值、护甲，输入框回车记录
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
+    w.eval('ui.act="adj";rMatch()'); ub('科德温骑士').click(); Q('#adjSet').value = '25';
+    Q('#adjSet').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    ok(us('me') === '科德温骑士25', '改战力：数字框回车设为 25');
+    ub('科德温骑士').click(); Q('#adjAr').value = '7'; Q('[data-adjv="?#adjAr:甲"]').click();
+    ok(w.eval('sim(db.live,0).E.allUnits("me")[0].armor') === 7, '改战力：护甲设为 7');
     // 落难的少女第二章：连带打出的疯狂的冲锋接着问目标
     live([{ id: 'e1', who: 'me', a: 'play', c: '落难的少女', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', via: '落难的少女', side: 'me' },
       { id: 'e3', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);

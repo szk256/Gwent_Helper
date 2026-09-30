@@ -10,9 +10,9 @@
 const DEFAULT_RULES = {
   handLimit: 10,
   draws: [10, 3, 3],          // 各小局开始抽牌数
-  mulligans: [2, 2, 2],       // 各小局换牌数
-  firstMulliganBonus: 1,      // 先手第一局额外换牌
-  rowLimit: Infinity,         // 单排单位上限（未确认）
+  mulligans: [2, 2, 2],       // 各小局换牌数（官方：手牌满没抽到的每张 +1，未建模）
+  firstMulliganBonus: 1,      // 先手第一局额外换牌（官方确认）
+  rowLimit: 9,                // 每排最多 9 张（单位、神器、战术牌都算；多个来源一致）
   shieldBeforeArmor: true,    // 护盾先于护甲抵挡
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
@@ -32,6 +32,7 @@ const DEFAULT_RULES = {
   specialTargetEach: true,    // 特殊牌一次指定多个单位时，每个都算“以其为目标”（棱镜吊坠、精灵先知；未确认）
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
+  passedTurnsTick: true,      // 停牌之后，停牌方的回合只跳过行动：回合开始/结束效果照常结算（NamuWiki；待比分校准）
   passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
@@ -233,7 +234,8 @@ class Game {
     return us.filter(u => {
       if (u.status.immune) return false;
       if (!bySide || u.side === bySide || u.status.defender) return true;
-      return !this.rowOf(u).some(v => v !== u && v.status.defender && !v.status.lock);
+      // 卫士是状态，锁定不影响状态（Fandom：Locked… does not affect statuses），被锁定的卫士照样挡
+      return !this.rowOf(u).some(v => v !== u && v.status.defender);
     });
   }
   // ---------- 条件词条（见词条辞典） ----------
@@ -567,13 +569,17 @@ class Game {
     if (n == null || u.status.lock) return false;
     if (u.def.cooldown != null && (u.cd || 0) > 0) return false;
     if (!(this.rules.feeSameTurn || u.zeal || this.s.turn > u.enteredTurn)) return false;
-    return this.s.sides[u.side].coins >= n || (u.def.insanity && u.power > n);
+    // 癫狂：会致死、或有护盾挡住伤害（“仅在造成伤害时可用”）时不能用
+    return this.s.sides[u.side].coins >= n || (u.def.insanity && u.power > n && !u.status.shield);
   }
   fee(u, opts = {}) {
     const d = u.def, n = d.fee ? d.fee.n : d.feeN, sd = this.s.sides[u.side];
     if (!this.canFee(u) && !opts.force) this.log('费用不可用', { uid: u.uid, name: u.name }, true);
     if (!this.spendCoins(u.side, n, u)) {
-      if (d.insanity && u.power > n) { this.log('癫狂', { uid: u.uid, name: u.name, n }); this.damage(u, n, { name: '癫狂' }, { ignoreArmor: true }); }
+      if (d.insanity && u.power > n) {
+        this.log('癫狂', { uid: u.uid, name: u.name, n });
+        if (!(this.damage(u, n, { name: '癫狂' }, { ignoreArmor: true }) > 0)) { this.log('癫狂没造成伤害，费用能力不触发', { uid: u.uid, name: u.name }, true); return; }
+      }
       else { this.log('金币不足', { side: u.side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
     }
     if (d.cooldown != null) u.cd = d.cooldown;
@@ -642,7 +648,8 @@ class Game {
   shuffleBack(u, src) {
     if (!u || !this.find(u.uid)) return;
     const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
-    if (u.origin !== 'spawn' || !this.isDoomed(u)) this.s.sides[u.side].deck.push(u.name);
+    // 佚亡：离开战场就移出对局（不管是不是生成的）
+    if (this.isDoomed(u)) this.s.sides[u.side].banished.push(u.name); else this.s.sides[u.side].deck.push(u.name);
     this.log('洗回牌组', { uid: u.uid, name: u.name, by: src && src.name });
     this.emit('returned', { unit: u, src });
   }
@@ -652,10 +659,11 @@ class Game {
     this.log('触发遗愿', { uid: u.uid, name: u.name, by: src && src.name });
     u.def.deathwish(this.ctx(u));
   }
-  // 汲食：造成伤害，自身获得等量增益（按实际扣掉的战力）
+  // 汲食：伤害无视目标护甲，自身获得等量增益（按实际扣掉的战力；词条各语言一致）
   drain(a, b, n) {
     if (!a || !b) return;
-    const dealt = this.damage(b, n, a);
+    const p0 = b.power;
+    const dealt = Math.min(p0, this.damage(b, n, a, { ignoreArmor: true }));   // ASSUME：溢出的伤害不算
     this.log('汲食', { a: a.name, b: b.name, n: dealt });
     if (dealt > 0) this.boost(a, dealt, a);
   }
@@ -776,7 +784,7 @@ class Game {
     const rows = row === 'all' ? ROWS : [row];
     const H = HAZARDS[kind];
     for (const r of rows) {
-      this.s.hazards[side][r] = { name: kind, kind, turns: turns != null ? turns : (H ? H.turns : Infinity), unknown: !H };
+      this.s.hazards[side][r] = { name: kind, kind, turns: turns != null ? turns : (H ? H.turns : Infinity), unknown: !H, seq: (this.hzSeq = (this.hzSeq || 0) + 1) };
       this.log('整排效果', { side, row: r, kind, turns: this.s.hazards[side][r].turns, by: src && src.name, unmodeled: !H });
     }
   }
@@ -914,22 +922,27 @@ class Game {
   // ---------- 回合 ----------
   startTurn() {
     const side = this.s.active;
-    // 整排效果：拥有者回合开始时生效
-    for (const r of ROWS) {
-      const h = this.s.hazards[side][r];
-      if (!h) continue;
+    for (const u of this.allUnits(side)) if (u.cd > 0) u.cd--;
+    this.emit('turnStart', { side });
+    // 整排效果：拥有者回合开始时，在单位自己的“回合开始”效果之后结算；几排都有时按放置先后（NamuWiki）
+    const hs = ROWS.map(r => [r, this.s.hazards[side][r]]).filter(([, h]) => h).sort((a, b) => (a[1].seq || 0) - (b[1].seq || 0));
+    for (const [r, h] of hs) {
+      if (this.s.hazards[side][r] !== h) continue;
       const H = HAZARDS[h.kind];
       if (H) H.run(this, this.s.sides[side].rows[r].filter(u => u.def.type !== 'artifact'), h);
       if (--h.turns <= 0) { this.s.hazards[side][r] = null; this.log('整排效果结束', { side, row: r, kind: h.kind }); }
     }
-    for (const u of this.allUnits(side)) if (u.cd > 0) u.cd--;
-    this.emit('turnStart', { side });
   }
 
   // opts.pass：停牌引起的回合结束（rules.passTurnEnd 为 false 时不结算回合结束效果，只换人）
   endTurn(opts = {}) {
     const side = this.s.active;
     if (opts.pass && !this.rules.passTurnEnd) { this.log('停牌不结算回合结束', { side }); return this._nextTurn(side); }
+    this._turnEndEffects(side);
+    return this._nextTurn(side);
+  }
+  // 回合结束效果（计时、耐性、回合结束能力、翼守、活力/重伤、破裂）
+  _turnEndEffects(side) {
     // 计时：己方回合结束前 -1，归零触发
     for (const u of this.allUnits(side).slice()) {
       if (u.timer == null || u.status.lock || !this.find(u.uid)) continue;
@@ -962,13 +975,18 @@ class Game {
       // 破裂：受到等同基础战力的伤害，随后移除
       if (u.status.rupture && this.find(u.uid)) { u.status.rupture = false; this.damage(u, u.base, { name: '破裂' }); }
     }
-    return this._nextTurn(side);
   }
   _nextTurn(side) {
     this.s.turn++;
     const nxt = OTHER[side];
     if (this.s.sides.me.passed && this.s.sides.op.passed) return this.manualRounds ? undefined : this.endRound();
     if (!this.s.sides[nxt].passed) this.s.active = nxt;
+    else if (this.rules.passedTurnsTick) {
+      // 已停牌一方的回合只是跳过行动，回合照常推进：回合开始（整排效果）、回合结束效果都结算（NamuWiki）
+      this.s.active = nxt; this.log('停牌方回合（跳过行动）', { side: nxt });
+      this.startTurn(); this._turnEndEffects(nxt);
+      this.s.turn++; this.s.active = side;
+    }
     this.startTurn();
   }
 

@@ -196,6 +196,7 @@ nav button.on{color:#F4DC9A;box-shadow:inset 0 3px 0 var(--gold);background:radi
 .bmeta .rsum{margin:0;min-width:0}
 .bmeta .fxtag{font-size:10px;padding:1px 5px;border-radius:8px;text-align:center;line-height:1.3}
 .bu{flex:1;min-width:0;display:flex;align-items:center;gap:5px;padding:4px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.adjrow{align-items:center;flex-wrap:wrap}.adjnum{width:4.5em;flex:none;text-align:center;font-size:16px}
 .bu.slots{gap:2px}
 .bu.slots .chip.unit{min-width:28px}
 .bu .chip.unit{flex:0 1 54px;min-width:34px;width:auto;height:auto;aspect-ratio:54/74;container-type:inline-size}

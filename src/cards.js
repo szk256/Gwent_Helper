@@ -2178,10 +2178,14 @@ const spawnN = (c, name, k, row, pos) => { const out = []; for (let i = 0; i < k
 const otherRow = r => (r === 'm' ? 'r' : 'm');
 // 陷阱：打出时背面朝上（伏击）；条件满足时自动翻开并结算；“翻开”（手动）在对局簿里按指令记录
 function trap(o) {
+  // 翻开（词条各语言一致）：打在神器旁边的陷阱自动翻开；翻开也算先机里“用过现身”
+  const spring = c => { c.flip(); c.vars.usedOrderTurn = c.g.s.turn; if (o.spring) o.spring(c); };
   return {
-    order: c => { if (!c.self.status.ambush) return; c.flip(); if (o.spring) o.spring(c); },
+    order: c => { if (!c.self.status.ambush) return; spring(c); },
     zeal: true,
-    abilities: (o.trigger ? [{ on: o.trigger.on, when: (c, d) => c.self.status.ambush && o.trigger.when(c, d), run: (c, d) => { c.flip(); o.trigger.run(c, d); } }] : []),
+    abilities: [
+      { on: 'unitEnter', when: (c, d) => d.unit === c.self && d.played && c.self.status.ambush && c.adjacent().some(u => u.def.type === 'artifact'), run: c => { c.g.log('陷阱靠神器自动翻开', { name: c.self.name }); spring(c); } },
+      ...(o.trigger ? [{ on: o.trigger.on, when: (c, d) => c.self.status.ambush && o.trigger.when(c, d), run: (c, d) => { c.flip(); o.trigger.run(c, d); } }] : [])],
     timer: o.timer ? { n: o.timer.n, run: c => { if (!c.self.status.ambush) return; c.flip(); o.timer.run(c); } } : undefined,
   };
 }
