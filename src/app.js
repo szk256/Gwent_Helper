@@ -100,6 +100,18 @@ function normVt(v){v=String(v||"").trim().replace(/：/g,":");if(!v)return "";le
   if((m=v.match(/^(\d{1,3})(\d{2})$/)))return +m[1]+":"+m[2];return false;}
 function recTactic(who){const g=db.live;const nm=who==="me"?(deckById(g.deck)?.tactic||"战术"):"战术";const i=pushLog({who,a:"tactic",c:nm});ui.act="play";
   queue({t:"target",id:g.log[i].id},...(who==="me"?spawnStep(BY[nm],"leader","me"):[]));rMatch();}
+// 导入 v2 对局代码（可多局，按 #GWLOG v2 分段）：卡组找同名同内容的，没有就新建；没结束的一局作为进行中的对局
+function importGames(txt){const chunks=String(txt||"").split(/(?=^#GWLOG v2)/m).filter(t=>/^#GWLOG v2/.test(t.trim()));let n=0;
+  if(!chunks.length){toast("不是对局代码（要 #GWLOG v2 开头）");return 0;}
+  const key=o=>JSON.stringify(Object.entries(o||{}).sort());
+  for(const ch of chunks){const r=GwentCodec.decodeGame(ch.trim());if(!r)continue;const g=r.game;
+    if(r.deck){let dk=db.decks.find(d=>d.name===g.deckName&&key(d.cards)===key(r.deck.cards));if(!dk){dk=Object.assign({id:db.nextId++,name:g.deckName||"导入的卡组"},r.deck);db.decks.push(dk);}g.deck=dk.id;}
+    const dup=db.games.find(x=>x.date===g.date&&x.deckName===g.deckName&&x.log.length===g.log.length&&JSON.stringify(x.rounds)===JSON.stringify(g.rounds));
+    if(dup&&!confirm(`${g.date} ${g.deckName} 这局好像已经有了，还要再导入一份吗？`))continue;
+    g.id=Date.now()+n;
+    if(r.open||!g.res){if(db.live&&!confirm("有一局正在记录，用导入的这局替换它吗？"))continue;g.pend={res:null,me:"",op:"",hm:null,ho:null};db.live=g;}
+    else db.games.push(g);n++;}
+  if(n){persist();render();toast("导入了 "+n+" 局");}return n;}
 function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
 function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
@@ -296,32 +308,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.do&&A[D.do]){A[D.do]();return true;}
   return false;}
 
-const LEGEND="#GWLOG v1 行=序号 方(A我B对) 动作(P打出 S召唤 Y生成衍生牌 T战术 E触发效果(牌=来源单位) O指令 L领袖 D抽牌(逗号分隔) F整排 V移位(V!=修正记录错误,非游戏内移动) K摧毁 J修正战力(+n增益 -n伤害 n设定) G金币修正(方 +n/-n/n) H手牌修正(方 +n/-n/n) C真实比分(我:对，录屏核对用) ~录屏时间 $付/$不付=献金 !亢/!不亢=亢奋是否成立 #n=牌组里的单位数(埃兰) X换牌(+换来的牌) -停牌 N备注) 牌 位置(m近r远+从0起序号,前缀X=放在出牌方的对面半场) >目标(序号或排如Bm,8/0=第8步带出的第1个单位) <来源(序号,G=墓场) ; R行=局 结果 比分 结束手牌我:对 用时秒";
-const ACODE={real:"C",hand:"H",coin:"G",adj:"J",draw:"D",play:"P",tactic:"T",effect:"E",spawn:"Y",summon:"S",order:"O",leader:"L",fx:"F",move:"V",kill:"K",mull:"X",pass:"-",note:"N"};
-function gameCodeC(g){const o=outcome(g.rounds)||{w:0,l:0,res:"?"};const num={};let n=0;g.log.forEach((x,i)=>{n++;num[x.id||i]=n;x._n=n;});
-  const byIdx0=(k)=>{if(k==null)return"?";return num[k]!=null?num[k]:(typeof k==="number"&&g.log[k]?g.log[k]._n:"?");};
-  // 由某步产生的单位（生成的衍生牌等）键为 “e8/0”，导出成 “8/0”
-  const byIdx=(k)=>{if(typeof k==="string"&&k.includes("/")){const [a,b]=k.split("/");return byIdx0(a)+"/"+b;}return byIdx0(k);};
-  const L=[`G ${g.date} ${g.deckName}|${g.leader||"-"} vs ${g.fac}|${g.opLeader||"-"} ${g.coin||"?"} ${o.w}:${o.l}${g.ver?" 构建:"+g.ver.build+"/"+g.ver.data:""}`];
-  g.rounds.forEach((r,ri)=>{L.push(`R${ri+1} ${r.res} ${r.me||"-"}:${r.op||"-"} ${r.hm??"-"}:${r.ho??"-"}${r.sec!=null?" "+r.sec:""}`);
-    g.log.forEach((x,i)=>{if(x.r!==ri)return;const p=[x._n,x.who==="me"?"A":"B",(ACODE[x.a]||x.a)+(x.fix?"!":"")];
-      if(x.a==="fx")p.push(x.c,(x.side==="me"?"A":"B")+(x.row==="all"?"*":x.row)+(x.dur?"/"+x.dur:""));
-      else{if(x.a==="draw")p.push((x.cards||[]).join(","));if(x.c)p.push(x.c.replace(/\s+/g,"_"));if(x.into)p.push("+"+x.into);
-        if(x.row)p.push((x.side&&x.side!==x.who?"X":"")+x.row+(x.pos??""));
-        if(x.a==="adj")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"),x.v);
-        if(x.a==="coin"||x.a==="hand")p.push(x.side==="me"?"A":"B",x.v);
-        if(x.a==="real")p.push(x.v);
-        if(x.vt)p.push("~"+x.vt);
-        if(x.pay!=null)p.push(x.pay?"$付":"$不付");
-        if(x.fz!=null)p.push(x.fz?"!亢":"!不亢");
-        if(x.dn!=null)p.push("#"+x.dn);
-        if(x.pw!=null)p.push("="+x.pw);
-        if(x.a==="move"||x.a==="kill")p.push("@"+(x.uid!=null?byIdx(x.uid):"")+(x.side==="me"?"A":"B"));
-        const tg=(x.tgts||[]).map(t=>t.row?(t.row.startsWith("me")?"A":"B")+t.row.slice(-1):byIdx(t.uid));if(tg.length)p.push(">"+tg.join(","));else if(x.tgt)p.push(">"+x.tgt.replace(/\s+/g,""));
-        if(x.via){if(x.via==="墓场")p.push("<G");else{let k=-1;for(let j=i-1;j>=0;j--)if(g.log[j].c===x.via){k=j;break;}p.push("<"+(k>=0?g.log[k]._n:x.via));}}}
-      L.push(p.join(" "));});});
-  if(g.stuck?.length)L.push("STUCK "+g.stuck.join(","));if(g.note)L.push("NOTE "+g.note.replace(/\n/g," "));
-  g.log.forEach(x=>delete x._n);return L.join("\n");}
+// 对局代码：纯代码 v2 见 codec.js（牌用官方编号，可导回）；gameCode 是中文可读的报告版
 function gameCode(g){const o=g.rounds?outcome(g.rounds):null;const L=[`【昆特对局】${g.date}｜${g.deckName} vs ${FN[g.fac]||g.fac}｜${g.coin?g.coin+"手":"先后手未记"}｜结果 ${o?o.w+":"+o.l+" "+o.res:"未完成"}${g.ver?"｜构建 "+g.ver.build+"，卡牌数据 "+g.ver.data:""}`];
   g.rounds.forEach((r,ri)=>{const sc=(r.me!==""&&r.me!=null&&r.op!==""&&r.op!=null)?` 比分 ${r.me}:${r.op}`:"";const hd=(r.hm!=null&&r.ho!=null)?`｜结束时手牌 我${r.hm} 对${r.ho}`:"";L.push(`第${ri+1}局 ${{W:"赢",L:"输",D:"平"}[r.res]||"?"}${sc}${hd}`);
     let S0=null;try{S0=sim(g,ri);}catch(e){}
@@ -353,12 +340,12 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
    <div class="row"><div class="lab">对手阵营</div><div class="chips">${facChips(setup.fac,"sfac")}</div></div>
    <div class="row"><div class="lab">先后手</div><div class="seg">${["先","后"].map(v=>`<button data-scoin="${v}" class="${setup.coin===v?"on":""}">${v}手</button>`).join("")}</div></div>
    <button class="primary" data-do="start">开始记录</button></div>`;
-   h+=`<div class="btns" style="justify-content:space-between;align-items:center;margin:4px 0 6px"><h2 style="font-size:17px">历史对局</h2>${(()=>{const d=backupAge();return db.games.length&&(d==null||d>=7)?`<button class="ghost bad mbOnly" data-do="dl">${d==null?"还没备份":d+" 天没备份"}·下载</button>`:"";})()}<div class="btns"><button class="ghost" data-do="exAll">导出全部对局</button><button class="ghost" data-do="migAll">全部迁移导出</button><button class="ghost" data-do="dl">下载备份</button><button class="ghost" data-do="impAll">全部导入</button></div></div>`;
+   h+=`<div class="btns" style="justify-content:space-between;align-items:center;margin:4px 0 6px"><h2 style="font-size:17px">历史对局</h2>${(()=>{const d=backupAge();return db.games.length&&(d==null||d>=7)?`<button class="ghost bad mbOnly" data-do="dl">${d==null?"还没备份":d+" 天没备份"}·下载</button>`:"";})()}<div class="btns"><button class="ghost" data-do="impGame">导入对局</button><button class="ghost" data-do="exAll">导出全部对局</button><button class="ghost" data-do="migAll">全部迁移导出</button><button class="ghost" data-do="dl">下载备份</button><button class="ghost" data-do="impAll">全部导入</button></div></div>`;
    h+=db.games.length?db.games.slice().reverse().map(x=>{const col={W:"var(--win)",L:"var(--loss)",D:"var(--draw)"};const r0=x.rounds[0]||{};
      const hand=(r0.hm!=null&&r0.ho!=null)?`首局手牌 ${r0.hm}:${r0.ho}`:(x.diff!=null?`牌差 ${x.diff>0?"+":""}${x.diff}`:"");
      return `<div class="item"><div class="gems">${x.rounds.map(r=>`<i class="gem" style="--c:${col[r.res]}"></i>`).join("")}</div>
      <div class="meta"><b>${x.res} vs ${FN[x.fac]||x.fac}</b>　${x.date}<br>${esc(x.deckName)}　${x.coin||"?"}手　${hand}　${x.log.length} 步</div>
-     <button class="ghost" data-reopen="${x.id}">修改</button><button class="ghost" data-ex="${x.id}">导出</button><button class="x" data-delg="${x.id}" aria-label="删除">×</button></div>`;}).join(""):`<p class="note">还没有对局，从上面开始第一局。</p>`;
+     <button class="ghost" data-reopen="${x.id}">修改</button><button class="ghost" data-ex="${x.id}" title="纯代码（牌用官方编号），可导回">导出</button><button class="ghost" data-exr="${x.id}" title="中文可读版，带逐步比分和偏差报告">报告</button><button class="x" data-delg="${x.id}" aria-label="删除">×</button></div>`;}).join(""):`<p class="note">还没有对局，从上面开始第一局。</p>`;
    $("#tab-match").innerHTML=h;const sd=$("#sDeck");if(sd)sd.onchange=e=>{setup.deck=+e.target.value;};return;}
   ensureIds(g);
   const d=deckById(g.deck);const cur=g.cur;const o=outcome(g.rounds);const vr=VR();const editing=ui.vr!=null;
@@ -629,7 +616,8 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
   if(D.scoin){setup.coin=D.scoin;rMatch();return;}
   if(D.rres){g.pend.res=D.rres;persist();rMatch();return;}
   if(D.stuck){g.stuck=g.stuck.includes(D.stuck)?g.stuck.filter(x=>x!==D.stuck):[...g.stuck,D.stuck];persist();rMatch();return;}
-  if(D.ex){copyOut("对局代码",LEGEND+"\n"+gameCodeC(db.games.find(x=>x.id==D.ex)));return;}
+  if(D.ex){copyOut("对局代码",GwentCodec.encodeGame(db.games.find(x=>x.id==D.ex)));return;}
+  if(D.exr){copyOut("对局报告",gameCode(db.games.find(x=>x.id==D.exr)));return;}
   if(D.delg){if(!confirm("删除这局记录？"))return;db.games=db.games.filter(x=>x.id!=D.delg);persist();render();return;}
   if(D.own){const c=C[+D.own];const k=((db.owned[c.n]||0)+1)%(maxCopy(c)+1);if(k)db.owned[c.n]=k;else delete db.owned[c.n];persist();rColl();return;}
   if(D.cf){ui.collF=D.cf;ui.collQ="";rColl();return;}
@@ -650,7 +638,8 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       // 记完一局：超过 7 天没备份就提醒下载
       const d=backupAge();if(d==null||d>=7)setTimeout(()=>{if(confirm("已保存。"+(d==null?"还没有备份过":"距上次备份 "+d+" 天")+"，现在下载一份备份文件吗？"))downloadBackup();},300);},
     abort(){if(!confirm("放弃这局记录？已记的步骤会丢失。"))return;db.live=null;persist();render();},
-    exAll(){if(!db.games.length)return toast("还没有对局");copyOut("全部对局代码",LEGEND+"\n"+db.games.map(gameCodeC).join("\n"));},
+    exAll(){if(!db.games.length)return toast("还没有对局");copyOut("全部对局代码",db.games.map(g=>GwentCodec.encodeGame(g)).join("\n\n"));},
+    impGame(){openDlg("导入对局","粘贴对局代码（#GWLOG v2 开头，可以多局）。带的卡组找不到同名同内容的会新建。","","导入",txt=>{const n=importGames(txt);if(n)$("#dlg").close();},{paste:true,auto:/^#GWLOG v2/});},
     backup(){copyOut("完整备份",JSON.stringify(db));},
     migAll(){copyOut("全部迁移导出",migText(),markBackup);},
     impAll(){const fi=$("#fileIn");fi.onchange=async()=>{const f=fi.files[0];if(!f)return;$("#dlgX").value=await f.text();fi.value="";};
@@ -666,8 +655,9 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
     newDeck(){const d={id:db.nextId++,name:"新卡组",f:"NR",leader:"",tactic:"",cards:{}};db.decks.push(d);ui.deckSel=d.id;persist();rDeck();},
     dupDeck(){const s=deckById(ui.deckSel);if(!s)return;const d={...JSON.parse(JSON.stringify(s)),id:db.nextId++,name:s.name+" 副本"};db.decks.push(d);ui.deckSel=d.id;persist();rDeck();toast("已复制，改好后记得改名");},
     delDeck(){if(db.decks.length<2)return toast("至少保留一个卡组");if(!confirm("删除这个卡组？对局记录会保留。"))return;db.decks=db.decks.filter(x=>x.id!=ui.deckSel);ui.deckSel=db.decks[0].id;persist();rDeck();},
-    exDeck(){copyOut("卡组代码",deckCode(deckById(ui.deckSel)));},
+    exDeck(){copyOut("卡组代码",GwentCodec.encodeDeck(deckById(ui.deckSel)));},
     impDeck(){openDlg("导入卡组","粘贴导出的卡组代码，或者每行写一张牌（例如「2× 科德温骑士」或「科德温骑士 x2」）。第一行可写卡组名。","","导入",txt=>{
+      {const d2=GwentCodec.decodeDeck(txt);if(d2){const miss=Object.keys(d2.cards).filter(n=>!BY[n]);d2.id=db.nextId++;db.decks.push(d2);ui.deckSel=d2.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");return;}}
       const lines=txt.split("\n").map(s=>s.trim()).filter(Boolean);const d={id:db.nextId++,name:"导入的卡组",f:"NR",leader:"",tactic:"",cards:{}};const miss=[];
       lines.forEach((l,idx)=>{let m;if((m=l.match(/^【昆特卡组】(.+)/))){d.name=m[1];return;}
         if((m=l.match(/领袖：([^｜]+)/)))d.leader=m[1]==="未选"?"":m[1];if((m=l.match(/战术：([^｜]+)/)))d.tactic=m[1]==="未填"?"":m[1];
@@ -676,18 +666,20 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
         let k=1,n=l;if((m=l.match(/^(\d)\s*[×xX*]\s*(.+?)(（.*）)?$/))){k=+m[1];n=m[2];}else if((m=l.match(/^(.+?)\s*[×xX*]\s*(\d)$/))){n=m[1];k=+m[2];}
         n=n.trim();if(BY[n]){if(!isLeader(BY[n]))d.cards[n]=(d.cards[n]||0)+k;else d.leader=n;}else if(idx===0&&!d.name.startsWith("【"))d.name=n;else miss.push(n);});
       const fs=Object.keys(d.cards).map(n=>BY[n].f).filter(f=>f!=="NE");if(fs.length)d.f=fs[0];
-      db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true,auto:/^【昆特卡组】/});},
+      db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true,auto:/^(【昆特卡组】|#GWDECK v2)/});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
     cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};rColl();},
     collCount(){ui.collMode="count";rColl();},collInfo(){ui.collMode="info";rColl();},
-    exColl(){copyOut("牌库代码",collCode());},
+    exColl(){copyOut("牌库代码",GwentCodec.encodeColl(db.owned));},
     addCard(){if(ui.collF==="ALL")return toast("先选一个阵营");openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{
       let ok=0;const bad=[];txt.split("\n").map(s=>s.trim()).filter(Boolean).forEach(l=>{const p=l.split(/\s*[|｜]\s*/);const [n,col,tp,pv,pw,...tx]=p;
         if(!n||!["金","铜"].includes(col)||!["单位","特殊","神器"].includes(tp)||isNaN(+pv)){bad.push(l);return;}if(BY[n]){bad.push(n+"（已存在）");return;}
         (db.custom=db.custom||[]).push({n,f:ui.collF,col,t:tp,pv:+pv,pw:pw||"-",tx:tx.join(" | ")});ok++;});
       addCustom();applyEdits();persist();$("#dlg").close();rColl();toast(`已添加 ${ok} 张`+(bad.length?`，${bad.length} 行格式不对`:""));},{paste:true});},
-    impColl(){openDlg("批量导入牌库","每行或用顿号、逗号分隔写牌名，可带张数（例如「科德温骑士×2」）。导入的牌会加到现有牌库里，已有的取较大张数。","","导入",txt=>{
+    impColl(){openDlg("批量导入牌库","粘贴牌库代码（#GWCOLL v2），或每行、用顿号逗号分隔写牌名，可带张数（例如「科德温骑士×2」）。导入的牌会加到现有牌库里，已有的取较大张数。","","导入",txt=>{
+      {const o2=GwentCodec.decodeColl(txt);if(o2){let ok=0;const miss=[];for(const[n,k]of Object.entries(o2)){const c=BY[n];if(!c){miss.push(n);continue;}db.owned[n]=Math.max(db.owned[n]||0,Math.min(k,maxCopy(c)));ok++;}
+        persist();$("#dlg").close();rColl();toast(`导入 ${ok} 张`+(miss.length?`，${miss.length} 张没找到`:""));return;}}
       const parts=txt.replace(/^.*[：:]/gm,"").split(/[\n、，,]+/).map(s=>s.trim()).filter(Boolean);let ok=0;const miss=[];
       parts.forEach(p=>{let m,n=p,k=1;if((m=p.match(/^(.+?)\s*[×xX*]\s*(\d)$/))){n=m[1].trim();k=+m[2];}const c=BY[n];if(!c){miss.push(n);return;}
         k=Math.min(k,maxCopy(c));db.owned[n]=Math.max(db.owned[n]||0,k);ok++;});
