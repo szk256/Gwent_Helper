@@ -303,5 +303,10 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); const rg = P(g, 'me', '拉多维德皇家护卫', 'm'); const a = P(g, 'me', '科德温骑士', 'm'); g.boost(rg, 1);
   g.chooser = () => [a]; g.order(rg.uid, { force: true }); ok(a.armor === 2 && !rg.armor, '皇家护卫：激励 → 目标 +2 护甲');
 }
+{ // 神殿守卫：选中间的友军，它和两边 +1
+  const g = game(); const a = P(g, 'me', '科德温骑士', 'r'), b = P(g, 'me', '科德温骑士', 'r'), d = P(g, 'me', '科德温骑士', 'r'), e = P(g, 'me', '科德温骑士', 'r');
+  g.chooser = () => [b]; P(g, 'me', '神殿守卫', 'm');
+  ok(a.power === 6 && b.power === 6 && d.power === 6 && e.power === 5, '神殿守卫：中间 + 两边各 +1');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

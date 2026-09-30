@@ -159,11 +159,11 @@ B['辛特拉骑士'] = {
 };
 
 B['神殿守卫'] = {
-  // ASSUME：“相邻的 3 个友军单位”按左右各延伸取最近的 3 个
+  // 用户确认：“相邻的 3 个友军单位”= 选 1 个友军单位，它和左右两边的单位（在排头排尾只有 2 个）。ASSUME：神殿守卫自己不算
   deployRow: { m: c => {
-    const row = c.g.rowOf(c.self), i = row.indexOf(c.self);
-    const near = row.filter(u => u !== c.self).sort((a, b) => Math.abs(row.indexOf(a) - i) - Math.abs(row.indexOf(b) - i)).slice(0, 3);
-    near.forEach(u => c.boost(u, 1));
+    const t = T(c, '神殿守卫：中间的友军', c.allies().filter(u => u !== c.self)); if (!t) return;
+    const row = c.g.rowOf(t), i = row.indexOf(t);
+    [row[i - 1], t, row[i + 1]].filter(u => u && u !== c.self && u.def.type !== 'artifact').forEach(u => c.boost(u, 1));
   } },
 };
 
