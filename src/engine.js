@@ -33,7 +33,7 @@ const DEFAULT_RULES = {
   specialTargetEach: true,    // 特殊牌一次指定多个单位时，每个都算“以其为目标”（棱镜吊坠、精灵先知；未确认）
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
-  passedTurnsTick: true,      // 停牌之后，停牌方的回合只跳过行动：回合开始/结束效果照常结算（NamuWiki；待比分校准）
+  passedTurnsTick: false,     // 停牌之后停牌方的回合开始/结束效果是否照常结算（NamuWiki 说会，是测试版时期的例子；2026-10-01 第二场第二局按 false 对上 46:55）
   passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
