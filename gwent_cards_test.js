@@ -365,5 +365,16 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g2 = game(); const v = g2.carryIn(k, 'me', 'm');
   ok(k.def.armor > 0 && v.armor === 0, '坚韧留场：护甲清零（resilienceKeepsArmor=false）');
 }
+{ // 用户实测（2026-10-01）：坚韧留场“全部还原”，但指令和神赐不恢复；战力不变的变形保留基础战力
+  const g = game(); const v = P(g, 'me', '范德格里夫特', 'm'); g.boost(v, 6);
+  ok(v.blessFired[12], '范德格里夫特：第一局加到 12 触发神赐');
+  const g2 = game(); const v2 = g2.carryIn(v, 'me', 'm'); g2.boost(v2, 6);
+  ok(v2.power === 12 && v2.base === 6 && v2.status.shield && !v2.status.resilience, '范德格里夫特留场：战力回到 6、护盾恢复成卡面默认；再到 12 不再获得坚韧');
+  const g3 = game(); const m1 = P(g3, 'me', '冥想的法师', 'm'); P(g3, 'me', '冥想的法师', 'm'); g3.endTurn(); g3.endTurn(); g3.order(m1.uid);
+  const g4 = game(); const m2 = g4.carryIn(m1, 'me', 'm'); g4.endTurn(); g4.endTurn();
+  ok(m2.power === m2.base && !m2.status.vitality && m2.orderUsed === 1 && !g4.canOrder(m2), '冥想的法师留场：战力、活力还原，指令不恢复');
+  const g5 = game(); const w5 = P(g5, 'me', '亚特里的温德哈姆', 'm'); g5.boost(w5, 2); g5.chooser = () => [w5]; P(g5, 'me', '被诅咒的骑士', 'm');
+  ok(w5.name === '被诅咒的骑士' && w5.power === 6 && w5.base === 4 && g5.isBoosted(w5), '被诅咒的骑士：温德哈姆变成 6 战力、基础 4（显示为增益）');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
