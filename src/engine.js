@@ -320,7 +320,8 @@ class Game {
       enemies: () => g.units(OTHER[u.side]), allies: () => g.units(u.side),
       lock: t => g.lock(t, u), infuse: (t, ab) => g.infuse(t, ab, u), purify: t => g.purify(t, u),
       duel: t => g.duel(u, t), setPower: (t, p) => g.setPower(t, p, u),
-      playFromDeck: (name, row, pos, o) => g.play(u.side, name, row, pos, Object.assign({ fromDeck: true, by: u }, o)),
+      // 从牌组打出：单位没给排时放在来源所在排（特殊牌不需要排）
+      playFromDeck: (name, row, pos, o) => g.play(u.side, name, row || (g.def(name).type === 'special' ? null : (u.row || 'm')), pos, Object.assign({ fromDeck: true, by: u }, o)),
       pick: (req) => g.choose(Object.assign({ source: u && u.name }, req))[0] || null,
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
       targets: us => g.targetable(us, u.side),

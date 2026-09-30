@@ -173,5 +173,25 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); P(g, 'op', '莫斯萨克', 'm'); g.play('op', '乌鸦眼块茎', null, null, { player: 'op', row: 'r' });
   ok(g.units('op').filter(u => u.name === '乌鸦').length === 3, '乌鸦眼块茎：有德鲁伊 → 3 只乌鸦');
 }
+
+// ---------- 中立 ----------
+{ // 烧灼：摧毁最强单位；先机时摧毁所有最强
+  const g = game(); const a = P(g, 'me', '老矛头', 'm'), b = P(g, 'op', '老矛头', 'm'); g.chooser = () => [a];
+  g.play('op', '烧灼', null, null, { player: 'op' }); ok(!g.find(a.uid) && !g.find(b.uid), '烧灼：本回合没用指令（先机）→ 摧毁所有最高');
+}
+{ // 指挥号角：5 个相邻 +2，铜色每邻 1 金色额外 +1
+  const g = game(); const us = ['科德温骑士', '雷纳德·奥多', '科德温骑士', '科德温骑士', '科德温骑士'].map(n => P(g, 'me', n, 'm'));
+  const mid = us[2]; g.chooser = () => [mid]; g.play('me', '指挥号角');
+  ok(us[0].power === 8 && us[2].power === 9 && us[3].power === 8 && us[1].power === 10, '指挥号角：挨着金卡雷纳德的铜卡 +3，其余 +2');
+}
+{ // 温格堡的叶奈法（近战）：所有其他单位 2 伤害
+  const g = game(); const a = P(g, 'me', '老矛头', 'm'), b = P(g, 'op', '寒冰巨人', 'r'); P(g, 'op', '温格堡的叶奈法', 'm');
+  ok(a.power === 10 && b.power === 5, '温格堡的叶奈法：近战 → 其他单位各 2');
+}
+{ // 维伦特瑞坦梅斯：计时 3 摧毁最高（己方巨龙除外）
+  const g = game(); const v = P(g, 'op', '维伦特瑞坦梅斯', 'r'); const big = P(g, 'me', '老矛头', 'm');
+  g.s.active = 'op'; g.endTurn(); g.endTurn(); g.endTurn(); g.endTurn(); g.endTurn();
+  ok(!g.find(big.uid) && g.find(v.uid), '维伦特瑞坦梅斯：计时归零摧毁最高');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
