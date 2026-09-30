@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="caac537";</script>
+<script>window.GWENT_BUILD="8efd6ed";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -9,6 +9,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#18202E">
+<script>/* 外观：页面画出来之前就套上主题和字号，避免闪一下 */try{var P=JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}");if(P.theme&&P.theme!=="classic")document.documentElement.setAttribute("data-theme",P.theme);if(P.zoom&&P.zoom!=1)document.documentElement.style.zoom=P.zoom;}catch(e){}</script>
 <style>
 :root{--night:#18202E;--night2:#222C3E;--line:#34405A;--parch:#E6DBC1;--parch2:#F3ECDA;--edge:#BFAF8C;--ink:#2B2419;--ink2:#6B5E47;--gold:#C9A24A;--dim:#8E97AB;--txt:#E9ECF2;
 --win:#5E9C5A;--loss:#B4473C;--draw:#8C8C8C;--NR:#3E63B8;--MO:#A2332B;--NG:#B8993A;--ST:#4F7F3B;--SK:#6A4A9C;--SY:#C66A1F;--NE:#7C7466}
@@ -322,6 +323,76 @@ input.vt{width:108px;padding:6px 8px;font-size:13px}
 /* 键盘选中的搜牌结果 */
 #resBox .kb{outline:2px solid var(--gold);outline-offset:2px}
 #verInfo{font-size:11px;opacity:.7;margin-top:2px}
+
+/* ===================== 可切换主题（html[data-theme]，默认“经典”不设属性） =====================
+ * 每套主题只换变量；下面的覆盖规则对所有非经典主题通用。对比度都 ≥ 5.6:1（正文、次要文字、选中按钮文字）。
+ * 极简黑按 mini LED 调：不用纯黑、不用纯白字、去掉发光，减少分区背光的光晕。 */
+html[data-theme="slate"]{--bg0:#0f1318;--bg:linear-gradient(180deg,#161b22,#0f1318);--panel:#1c222b;--panel2:#181d25;--navBg:linear-gradient(180deg,#1a2029,#12161c);--navOn:rgba(217,180,90,.14);
+  --ink:#E6EAF0;--ink2:#AAB4C2;--dim:#939DAC;--txt:#E6EAF0;--edge:#465163;--line:#333c4a;--btn:#262d38;--btn2:#212731;--btnEdge:#465163;
+  --on1:#E3C26E;--on2:#C29B45;--onInk:#12161c;--field:#11151b;--sheetLine:#333c4a;--rule:#2a323d;--gold:#D9B45A;--gold2:#8D7132;--h2:#F0D9A0;
+  --glowA:rgba(217,180,90,.35);--boardBg:#141920;--unitEdge:#4d5869;--lab:#C7CFDA;--bad:#F08A7E;--night:#0f1318;--night2:#1c222b;--parch:#1c222b;--parch2:#262d38}
+html[data-theme="table"]{--bg0:#0b1a13;--bg:radial-gradient(ellipse at 50% 15%,#1d3d2e 0,#10261b 55%,#0b1a13 100%);--panel:#2b1f15;--panel2:#241a11;--navBg:linear-gradient(180deg,#2c1e13,#1a110a);--navOn:rgba(217,174,92,.18);
+  --ink:#EEE4CF;--ink2:#C2B394;--dim:#A89878;--txt:#EEE4CF;--edge:#8a6a3c;--line:#45331f;--btn:#3a2c1e;--btn2:#2f2418;--btnEdge:#8a6a3c;
+  --on1:#E4BA6A;--on2:#B8893A;--onInk:#1a120b;--field:#1a130c;--sheetLine:#6b4f2e;--rule:#45331f;--gold:#D9AE5C;--gold2:#8f6a2b;--h2:#F4DDA4;
+  --glowA:rgba(217,174,92,.35);--boardBg:radial-gradient(ellipse at 50% 50%,#1f4a34,#12301f);--unitEdge:#8a6a3c;--lab:#E3D2A2;--bad:#F08A7E;--night:#0b1a13;--night2:#2b1f15;--parch:#2b1f15;--parch2:#3a2c1e}
+html[data-theme="black"]{--bg0:#0b0d11;--bg:#0b0d11;--panel:#14171c;--panel2:#111418;--navBg:#0e1014;--navOn:rgba(210,174,92,.10);
+  --ink:#E2E4E8;--ink2:#A6ABB4;--dim:#8D939C;--txt:#E2E4E8;--edge:#353b45;--line:#262a31;--btn:#1b1f25;--btn2:#171a1f;--btnEdge:#353b45;
+  --on1:#D9B460;--on2:#B8923F;--onInk:#0b0d11;--field:#0e1014;--sheetLine:#262a31;--rule:#20242a;--gold:#D2AE5C;--gold2:#6f5a2c;--h2:#EDE0BD;
+  --glowA:transparent;--boardBg:#0f1216;--unitEdge:#3a414c;--lab:#C3C8D0;--bad:#EE8579;--night:#0b0d11;--night2:#14171c;--parch:#14171c;--parch2:#1b1f25}
+html[data-theme="navy"]{--bg0:#081021;--bg:linear-gradient(180deg,#0d1a33,#081021);--panel:#122041;--panel2:#0f1b37;--navBg:linear-gradient(180deg,#0c1730,#0a1328);--navOn:rgba(92,200,238,.14);
+  --ink:#E4ECF7;--ink2:#A6B8D0;--dim:#8FA3BF;--txt:#E4ECF7;--edge:#33558c;--line:#274372;--btn:#182a52;--btn2:#152448;--btnEdge:#33558c;
+  --on1:#F2B650;--on2:#C98C2C;--onInk:#0a1224;--field:#0a1530;--sheetLine:#274372;--rule:#1c2f55;--gold:#5CC8EE;--gold2:#2c7fa6;--h2:#9EE3FA;
+  --glowA:rgba(92,200,238,.35);--boardBg:#0c1832;--unitEdge:#3a5c94;--lab:#B6CCE6;--bad:#FF8C7F;--night:#081021;--night2:#122041;--parch:#122041;--parch2:#182a52}
+html[data-theme]{background:var(--bg0)}
+html[data-theme] body{background:var(--bg);background-attachment:fixed;color:var(--txt)}
+html[data-theme] header{border-bottom-color:var(--rule)}
+html[data-theme] header h1,html[data-theme] .big{background:none;-webkit-text-fill-color:currentColor;color:var(--h2)}
+html[data-theme] header h1::before{background:var(--gold);box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--gold)}
+html[data-theme] nav{background:var(--navBg);border-color:var(--gold2)}
+html[data-theme] nav button.on{color:var(--h2);box-shadow:inset 0 3px 0 var(--gold);background:var(--navOn)}
+@media (min-width:1100px){
+  html[data-theme] nav{background:var(--navBg)}
+  html[data-theme] nav .brand{color:var(--h2);border-bottom-color:var(--rule)}
+  html[data-theme] nav button[data-t].on{box-shadow:inset 3px 0 0 var(--gold);background:var(--navOn)}
+  html[data-theme] nav .navdata{border-top-color:var(--rule)}
+}
+html[data-theme] .sheet{background:linear-gradient(180deg,var(--panel),var(--panel2));box-shadow:inset 0 0 0 1px var(--sheetLine),0 6px 16px rgba(0,0,0,.5)}
+html[data-theme] .sheet h2,html[data-theme] .clock b,html[data-theme] .sum b{color:var(--h2)}
+html[data-theme] .sheet h2::after{background:linear-gradient(90deg,var(--gold2),transparent)}
+html[data-theme] input::placeholder,html[data-theme] textarea::placeholder{color:var(--dim)}
+html[data-theme] .primary{background:linear-gradient(180deg,var(--on1),var(--on2));color:var(--onInk);border-color:var(--on2);box-shadow:0 2px 0 rgba(0,0,0,.4);text-shadow:none}
+html[data-theme] .board{background:var(--boardBg);box-shadow:inset 0 0 0 1px var(--sheetLine)}
+html[data-theme] .brow.op+.brow.me{border-top-color:var(--gold);box-shadow:0 -1px 8px var(--glowA)}
+html[data-theme] .bl,html[data-theme] .bl.rowpick,html[data-theme] .rsum{color:var(--lab)}
+html[data-theme] .bl.rowpick{border-color:var(--gold2)}
+html[data-theme] .bl.rowpick.on{background:var(--gold);color:var(--onInk)}
+html[data-theme] .board .note{color:var(--dim)}
+html[data-theme] .chip.unit,html[data-theme] .tile{border-color:var(--unitEdge);background:var(--panel2)}
+html[data-theme] .chip.unit.g,html[data-theme] .tile.g{border-color:var(--gold);box-shadow:0 0 6px var(--glowA),0 2px 4px rgba(0,0,0,.5)}
+html[data-theme] .chip.unit.on{box-shadow:0 0 0 2px var(--gold),0 0 12px var(--glowA)}
+html[data-theme] .tile .pv,html[data-theme] .tile .bd{background:linear-gradient(180deg,var(--on1),var(--on2));color:var(--onInk);border-color:var(--on2)}
+html[data-theme] .tile .pw{border-color:var(--gold)}
+html[data-theme] .slot{color:var(--gold);border-color:var(--gold2)}
+html[data-theme] .slot:hover,html[data-theme] .slot:focus-visible{background:var(--gold);color:var(--onInk)}
+html[data-theme] .brow.drop{background-color:var(--navOn)}
+html[data-theme] .log::before{background:linear-gradient(transparent,var(--btnEdge) 10%,var(--btnEdge) 90%,transparent)}
+html[data-theme] .log div.me::after,html[data-theme] .log div.op::after{background:var(--btnEdge)}
+html[data-theme] .log div.me .le,html[data-theme] .log div.me > span{background:color-mix(in srgb,var(--mine) 26%,var(--panel));color:var(--ink)}
+html[data-theme] .log div.op .le,html[data-theme] .log div.op > span{background:color-mix(in srgb,var(--theirs) 26%,var(--panel));color:var(--ink)}
+html[data-theme] .flow{box-shadow:inset 0 0 0 1px var(--sheetLine),0 0 0 2px var(--gold),0 0 16px var(--glowA)}
+html[data-theme] dialog{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--btnEdge),0 20px 50px rgba(0,0,0,.8)}
+html[data-theme] .toast{background:linear-gradient(180deg,var(--on1),var(--on2));color:var(--onInk);border-color:var(--on2)}
+html[data-theme] .item{border-color:var(--rule)}
+html[data-theme] .cmp select{background:var(--field);border-color:var(--edge);color:var(--ink)}
+html[data-theme] .ghost.bad,html[data-theme] .sheet .ghost.bad{border-color:var(--bad)}
+html[data-theme] #resBox .kb,html[data-theme] .brow.drop{outline-color:var(--gold)}
+/* 极简黑：去掉发光和文字阴影（mini LED 上会产生光晕） */
+html[data-theme="black"] *{text-shadow:none!important}
+html[data-theme="black"] .chip.unit,html[data-theme="black"] .tile,html[data-theme="black"] .sheet{box-shadow:inset 0 0 0 1px var(--sheetLine)}
+html[data-theme="black"] .fxtag{box-shadow:none}
+/* 外观设置 */
+.prefs{display:flex;flex-direction:column;gap:6px}
+.prefs select{padding:6px 8px;font-size:13px}
 </style>
 </head>
 <body>
@@ -335,7 +406,7 @@ input.vt{width:108px;padding:6px 8px;font-size:13px}
 <nav>
 <div class="brand">昆特对局簿</div>
 <button data-t="match" class="on">对局</button><button data-t="stats">数据</button><button data-t="deck">卡组</button><button data-t="coll">牌库</button>
-<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button><div class="navlab" id="bkInfo"></div><div class="navlab ver" id="verInfo"></div></div>
+<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button><div class="navlab" id="bkInfo"></div><div class="navlab ver" id="verInfo"></div><div id="prefBox"></div></div>
 </nav>
 <div class="toast" id="toast"></div>
 <dialog id="cdlg"><h2 id="cdN"></h2><p class="note" id="cdMeta"></p>
@@ -4133,7 +4204,8 @@ const RAW=[["不息虫群","MO","领袖","领袖能力","-","15","传奇","领�
   const BASE = { ver: '14.9.0', date: '2026-09-01' };
   const PATCHES = [
     // 格式：{ date: '2026-10-01', ver: '14.10.0', title: '…', src: 'https://…', cards: [
-    //   { n: '牌名', pw: [5, 6], pv: [8, 7], tx: ['旧效果', '新效果'], txe: ['old', 'new'], code: '已同步' } ] },
+    //   { n: '牌名', pw: [5, 6], pv: [8, 7], tx: ['旧效果', '新效果'], txe: ['old', 'new'], code: '已同步' },
+    //   { n: '新牌名', id: 203283, add: [和 data.js 同样列的一行], note: '新牌' } ] },
     { "date": "2026-09-01", "ver": "14.9.0", "title": "v14.9.0 平衡委员会", "src": "https://gwent.one/en/cards/changelog/14.9.0", "cards": [{ "n": "杰洛特：伊格尼法印", "pw": [2, 3] }, { "n": "虚无", "pv": [8, 9] }, { "n": "“瘸子”戈温", "pw": [5, 6] }, { "n": "阿瓦拉克：贤者", "pv": [7, 8] }, { "n": "布拉维坎的音乐家", "pw": [2, 1] }, { "n": "全知的她", "pw": [11, 12] }, { "n": "巨章鱼怪", "pv": [7, 6] }, { "n": "孽狐", "pv": [5, 4] }, { "n": "篡位者 - 军官", "pw": [6, 5] }, { "n": "威戈佛特兹：变节法师", "pv": [12, 11] }, { "n": "布拉森斯", "pw": [4, 3] }, { "n": "重弩海尔格", "pv": [9, 10] }, { "n": "寇格林姆", "pv": [10, 9] }, { "n": "凡赫玛", "pw": [3, 4] }, { "n": "弑王者", "pv": [5, 6] }, { "n": "永夜之蚀助祭", "pw": [4, 3] }, { "n": "战场动员", "pv": [16, 15], "txe": ["Order: Spawn a base copy of an allied bronze Soldier on its row and boost both units by 3. / This ability adds 16 provisions to your deck's provisions limit.", "Order: Spawn a base copy of an allied bronze Soldier on its row and boost both units by 3. / This ability adds 15 provisions to your deck's provisions limit."], "tx": ["指令：生成 1 个铜色友军“士兵”单位的 1 张基础同名牌至同排，并使两者都获得 3 点增益。 / 该能力可为牌组附加 15 人口上限。", "指令：生成 1 个铜色友军“士兵”单位的 1 张基础同名牌至同排，并使两者都获得 3 点增益。 / 该能力可为牌组附加 15 人口上限。"], "code": "无需改" }, { "n": "罗契：冷酷之心", "pv": [11, 10] }, { "n": "夏妮", "pv": [9, 10] }, { "n": "弗农·罗契", "pv": [9, 10] }, { "n": "斯坦尼斯王子", "pw": [5, 6] }, { "n": "巨魔魔", "pw": [5, 4] }, { "n": "染血连枷", "pv": [6, 5] }, { "n": "莱里亚强弩手", "pv": [5, 6] }, { "n": "巨橡", "pw": [9, 10] }, { "n": "艾尔丹恩", "pw": [5, 4] }, { "n": "鹿灵", "pv": [6, 5] }, { "n": "精灵剑术大师", "pw": [4, 5] }, { "n": "驾鹰", "pw": [3, 4] }, { "n": "“快嘴”古德蒙", "pv": [12, 13] }, { "n": "哈罗德·奎特", "pw": [6, 5] }, { "n": "布兰王", "pv": [11, 10] }, { "n": "海之新娘", "pw": [4, 3] }, { "n": "史璀伯格符文石", "pv": [4, 5] }, { "n": "海玫家族草药医生", "pw": [1, 2] }, { "n": "帕西佛罗拉一夜", "pv": [13, 12] }, { "n": "西吉·卢文", "pw": [4, 3] }, { "n": "坑道钻机", "pv": [7, 8] }, { "n": "爱佛琳·加罗", "pw": [6, 5] }, { "n": "变异兄弟", "pw": [11, 12] }] },
     // @@SYNC@@
   ];
@@ -4144,6 +4216,8 @@ const RAW=[["不息虫群","MO","领袖","领袖能力","-","15","传奇","领�
     const by = {}; RAW.forEach(r => { by[r[0]] = r; });
     const miss = [];
     for (const p of sorted()) for (const c of p.cards) {
+      // 新牌：整行加进数据（add 是和 data.js 同样列的一行）
+      if (c.add && !by[c.n]) { const row = c.add.map(String); RAW.push(row); by[c.n] = row; continue; }
       const r = by[c.n]; if (!r) { miss.push(c.n); continue; }
       for (const [k, i] of Object.entries(COL)) if (c[k]) r[i] = String(c[k][1]);
     }
@@ -4154,13 +4228,14 @@ const RAW=[["不息虫群","MO","领袖","领袖能力","-","15","传奇","领�
     const later = sorted().filter(p => date && p.date > date).reverse();
     if (!later.length) return RAW;
     const idx = {}; RAW.forEach((r, i) => { idx[r[0]] = i; });
-    const out = RAW.slice();
+    const out = RAW.slice(), drop = new Set();
     for (const p of later) for (const c of p.cards) {
       const i = idx[c.n]; if (i == null) continue;
+      if (c.add) { drop.add(i); continue; }   // 当时还没有这张新牌
       if (out[i] === RAW[i]) out[i] = RAW[i].slice();
       for (const [k, j] of Object.entries(COL)) if (c[k]) out[i][j] = String(c[k][0]);
     }
-    return out;
+    return drop.size ? out.filter((_, i) => !drop.has(i)) : out;
   }
   // 一张牌的改动历史（卡牌详情显示）
   function history(name) {
@@ -4192,7 +4267,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = M; else ro
 // 对局：#GWLOG v2 … ；卡组：#GWDECK v2 … ；牌库：#GWCOLL v2 …
 (function () {
   'use strict';
-  const IDS = (typeof GwentCardIds !== 'undefined' && GwentCardIds) || {};
+  const IDS = Object.assign({}, (typeof GwentCardIds !== 'undefined' && GwentCardIds) || {});
+  // 补丁里新增的牌带官方编号（cardids.js 还没重新生成时也能用）
+  if (typeof GwentPatches !== 'undefined') for (const p of GwentPatches.PATCHES) for (const c of p.cards) if (c.id && c.n && IDS[c.n] == null) IDS[c.n] = c.id;
   const NAME = {}; for (const [n, id] of Object.entries(IDS)) NAME[id] = n;
   // 整排效果名、固定词 → 代码
   const WORD = { '霜': 'hz:frost', '雨': 'hz:rain', '雾': 'hz:fog', '风暴': 'hz:storm', '龙之梦': 'hz:dream', '血月': 'hz:moon', '灾厄': 'hz:ruin', '墓场': 'G' };
@@ -4320,7 +4397,38 @@ if (typeof module !== 'undefined' && module.exports) module.exports = M; else ro
     const out = {}; for (const p of t.split(/\s+/).slice(2)) { const m = p.match(/^(.+)x(\d+)$/); if (m) out[uncard(m[1])] = +m[2]; }
     return out;
   }
-  window.GwentCodec = { encodeGame, decodeGame, encodeDeck, decodeDeck, encodeColl, decodeColl, card, uncard };
+  // ---------- 全部迁移 v2：整个 db，牌名换成 "#官方编号"，其余非 ASCII 字符转成 \uXXXX（纯 ASCII、无损） ----------
+  const toId = n => typeof n === 'string' && IDS[n] != null ? '#' + IDS[n] : n;
+  const fromId = v => typeof v === 'string' && /^#\d+$/.test(v) && NAME[+v.slice(1)] ? NAME[+v.slice(1)] : v;
+  const mapKeys = (o, f) => o && typeof o === 'object' && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [f(k), v])) : o;
+  const NOCARD = new Set(['note', 'real', 'hand', 'coin', 'pass', 'fx']);   // 这些动作的 c 不是牌名
+  function mapGame(g, f) {
+    if (!g || typeof g !== 'object') return g;
+    const o = Object.assign({}, g, { leader: f(g.leader), opLeader: f(g.opLeader) });
+    if (Array.isArray(g.stuck)) o.stuck = g.stuck.map(f);
+    if (Array.isArray(g.log)) o.log = g.log.map(x => {
+      const y = Object.assign({}, x);
+      if (x.c != null && !NOCARD.has(x.a)) y.c = f(x.c);
+      if (x.into != null) y.into = f(x.into); if (x.via != null) y.via = f(x.via);
+      if (Array.isArray(x.cards)) y.cards = x.cards.map(f);
+      return y;
+    });
+    return o;
+  }
+  function mapDb(d, f) {
+    const o = Object.assign({}, d);
+    if (Array.isArray(d.decks)) o.decks = d.decks.map(k => Object.assign({}, k, { leader: f(k.leader), tactic: f(k.tactic), cards: mapKeys(k.cards, f) }));
+    if (Array.isArray(d.games)) o.games = d.games.map(g => mapGame(g, f));
+    if (d.live) o.live = mapGame(d.live, f);
+    if (d.owned) o.owned = mapKeys(d.owned, f);
+    if (d.edits) o.edits = mapKeys(d.edits, f);
+    if (Array.isArray(d.tactics)) o.tactics = d.tactics.map(f);
+    return o;
+  }
+  const asciiJSON = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  const encodeDb = d => '#GWMIG v2 ids=gwent\n' + asciiJSON(mapDb(d, toId));
+  const decodeDb = o => mapDb(o, fromId);
+  window.GwentCodec = { encodeGame, decodeGame, encodeDeck, decodeDeck, encodeColl, decodeColl, encodeDb, decodeDb, card, uncard };
 })();
 
 </script>
@@ -4635,9 +4743,20 @@ $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText(
 // 全部迁移：整个对局簿（卡组、对局、进行中的对局、牌库、改过的牌、自定义牌）
 // 版本：构建号（打包时按内容生成，调试页面是“开发版”）+ 卡牌数据版本（patches.js 最新一条，没有则基线）
 const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
+// 外观（每台设备各自记住，存 localStorage，不进对局簿数据）：主题 + 字号缩放
+const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["navy","午夜蓝"]];
+const ZOOMS=[1,1.15,1.3,1.5];
+function loadPref(){try{return JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}")||{};}catch(e){return {};}}
+function savePref(p){try{localStorage.setItem("gwent-ui-pref",JSON.stringify(p));}catch(e){}}
+function applyPref(){const p=loadPref(),r=document.documentElement;if(p.theme&&p.theme!=="classic")r.setAttribute("data-theme",p.theme);else r.removeAttribute("data-theme");r.style.zoom=p.zoom&&p.zoom!==1?String(p.zoom):"";}
+function prefControls(){const p=loadPref(),t=p.theme||"classic",z=p.zoom||1;
+  return `<div class="prefs"><div class="navlab">外观</div><select data-pref="theme" aria-label="主题">${THEMES.map(([k,n])=>`<option value="${k}" ${k===t?"selected":""}>${n}</option>`).join("")}</select>
+  <select data-pref="zoom" aria-label="字号">${ZOOMS.map(v=>`<option value="${v}" ${v===z?"selected":""}>字号 ${Math.round(v*100)}%</option>`).join("")}</select></div>`;}
+applyPref();
+document.addEventListener("change",e=>{const k=e.target.dataset&&e.target.dataset.pref;if(!k)return;const p=loadPref();p[k]=k==="zoom"?+e.target.value:e.target.value;savePref(p);applyPref();
+  document.querySelectorAll(`[data-pref="${k}"]`).forEach(s=>{s.value=e.target.value;});});
 const dataVer=()=>{const P=typeof GwentPatches!=="undefined"?GwentPatches:null;if(!P)return "?";const l=P.PATCHES.slice().sort((a,b)=>a.date<b.date?-1:1).pop();return "v"+((l&&l.ver)||P.BASE.ver);};
 const verText=()=>"构建 "+BUILD+" · 卡牌数据 "+dataVer();
-const MIGHEAD="#GWMIG v1 昆特对局簿全部数据，用“全部导入”载入";
 // 备份：记录上次下载备份/迁移导出的时间，超过 7 天提醒
 function downloadBackup(){markBackup();const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");}
 // 录屏时间：接受 12:30、1:02:05、1230（= 12:30），返回规范写法；空返回 ""，格式不对返回 false
@@ -4661,10 +4780,10 @@ function importGames(txt){const chunks=String(txt||"").split(/(?=^#GWLOG v2)/m).
   if(n){persist();render();toast("导入了 "+n+" 局");}return n;}
 function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
-function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
+function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const pb=document.getElementById("prefBox");if(pb&&!pb.firstChild)pb.innerHTML=prefControls();{const p=loadPref();document.querySelectorAll("[data-pref=theme]").forEach(x=>{x.value=p.theme||"classic";});document.querySelectorAll("[data-pref=zoom]").forEach(x=>{x.value=String(p.zoom||1);});}const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
   el.textContent=d==null?"还没有备份过":d===0?"今天已备份":"上次备份："+d+" 天前";el.classList.toggle("bad",!!has&&(d==null||d>=7));}
-function migText(){return MIGHEAD+"（"+verText()+"）\n"+JSON.stringify(db);}
-function parseAll(txt){txt=(txt||"").trim();if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);return JSON.parse(txt);}
+function migText(){return GwentCodec.encodeDb(db).replace("\n"," build="+BUILD+" data="+dataVer()+"\n");}   // 纯代码 v2（牌用官方编号，纯 ASCII）
+function parseAll(txt){txt=(txt||"").trim();const v2=/^#GWMIG v2\b/.test(txt);if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);const d=JSON.parse(txt);return v2?GwentCodec.decodeDb(d):d;}   // v1（中文 JSON）、v2（纯代码）、备份文件都认
 
 // ---------- export codes ----------
 function deckCode(d){const i=deckInfo(d);const L=[`【昆特卡组】${d.name}`,`阵营：${FN[d.f]}｜领袖：${d.leader||"未选"}｜战术：${d.tactic||"未填"}`,`张数 ${i.n}｜粮草 ${i.pv}/${i.lim}｜单位 ${i.units}`];
@@ -4747,12 +4866,17 @@ function startCard(name,a,who,via){const c=BY[name];
   // 不忠：放到出牌方的对面半场
   const side=c&&/^不忠/.test(c.tx||"")?(who==="me"?"op":"me"):who;
   queue({t:"place",a,who,side,card:name,via});rMatch();}
+let DEFENG=null;
+function needsPw(name){const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};if(F[name]==="需手动")return true;
+  if(!ENG)return false;if(!DEFENG){DEFENG=new ENG.Game();DEFENG.loadData(RAW);DEFENG.loadBehaviors(GwentCards.behaviors);}const d=DEFENG.def(name);return !!(d&&d.unmodeled);}
 function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];const id=g.log[idx].id;
   if(c&&a==="play"&&needsTarget(c,"play"))st.push({t:"target",id});
   {const m=c&&a==="play"&&(c.tx||"").match(/献金\s*(\d+)/);if(m)st.push({t:"tribute",id,n:+m[1]});}
   if(c&&a==="play"&&name==="拉尔维克的埃兰"&&(who==="op"||!deckById(g.deck)))st.push({t:"deckCount",id});
   if(c&&a==="play"&&pulls(c,"play"))st.push({t:"pull",who,parent:name});
   if(a==="play")st.push(...spawnStep(c,"play",who,name));
+  // 引擎算不准战力的单位（卡牌标“需手动”或未建模）：最后问一步落地战力，一次记完
+  if(c&&a==="play"&&c.t==="单位"&&needsPw(name))st.push({t:"pw",id});
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
   if(who==="me"&&(a==="play"||a==="summon"))returners(g,name).forEach(n=>st.push({t:"ret",card:n}));
   ui.flow=[...st,...((ui.flow||[]).slice(1))];if(!ui.flow.length){ui.flow=null;doSwitch();}ui.q="";ui.sel=[];
@@ -4803,6 +4927,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=[{t:"edit",id:D.edit}];rMatch();window.scrollTo(0,0);return true;}
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
+  if(D.pwset!==undefined&&step&&step.t==="pw"){const e=entry(step.id);const v=D.pwset==="?"?parseInt($("#pwIn")?.value):+D.pwset;if(e&&!isNaN(v)&&v>=0){e.pw=v;persist();}nextStep();return true;}
   if(D.fz!==undefined&&step&&step.t==="frenzy"){const e=entry(step.id);if(e){e.fz=D.fz==="1";persist();}nextStep();return true;}
   if(D.dn!==undefined&&step&&step.t==="deckCount"){const e=entry(step.id);const v=D.dn==="?"?parseInt($("#dnIn")?.value):+D.dn;if(e&&!isNaN(v)){e.dn=v;persist();}nextStep();return true;}
   if(D.trib!==undefined&&step&&step.t==="tribute"){const e=entry(step.id);if(e){e.pay=D.trib==="1";persist();}nextStep();return true;}
@@ -4953,6 +5078,11 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="tribute"){const e=entry(step.id);const S0=S&&S.E?S.E.s.sides[e?e.who:"me"].coins:null;
         h+=`<h2>「${esc(e?e.c:"")}」献金 ${step.n}：付了吗？</h2>${S0!=null?`<p class="note">推算${sideN(e?e.who:"me")}现有金币 ${S0}</p>`:""}
         <div class="btns" style="margin-top:8px"><button class="primary" data-trib="1" style="flex:1">付了</button><button class="ghost" data-trib="0" style="flex:1">没付</button></div>`;}
+      else if(step.t==="pw"){const e=entry(step.id);const S0=sim(g,VR());const u=S0&&S0.key2u[step.id];const n=u?u.power:(BY[e.c]&&+BY[e.c].pw)||0;const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
+        const vals=[];for(let v=Math.max(0,n-3);v<=n+3;v++)vals.push(v);
+        h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。</p>
+        <div class="btns" style="margin-top:8px;flex-wrap:wrap">${vals.map(v=>`<button class="${v===n?"primary":"ghost"}" data-pwset="${v}">${v}</button>`).join("")}</div>
+        <div class="btns" style="margin-top:8px"><input id="pwIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="ghost" data-pwset="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="frenzy"){const e=entry(step.id);
         h+=`<h2>「${esc(e?e.c:"")}」亢奋 ${step.n}：成立吗？</h2><p class="note">打出后手牌不多于 ${step.n} 张即成立（游戏里效果会高亮）。</p>
         <div class="btns" style="margin-top:8px"><button class="primary" data-fz="1" style="flex:1">成立</button><button class="ghost" data-fz="0" style="flex:1">不成立</button><button class="ghost" data-do="flowSkip">不清楚</button></div>`;}
@@ -5076,7 +5206,7 @@ function rStats(){if(!db.decks.length){$("#tab-stats").innerHTML=`<p class="note
   const stT=(R,name)=>{const e=Object.entries(R.stuck).sort((x,y)=>y[1]-x[1]).slice(0,8);return `<div class="sheet"><h2>最常卡手：${esc(name)}</h2>${e.length?`<table><tr><th>牌</th><th>次数</th><th>占对局</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td><td>${pct(k,R.n)}</td></tr>`).join("")}</table>`:`<p class="note">还没有卡手记录。</p>`}</div>`;};
   const opT=R=>{const e=Object.entries(R.opp).sort((x,y)=>y[1]-x[1]).slice(0,10);return e.length?`<div class="sheet"><h2>对手最常打出的牌</h2><table><tr><th>牌</th><th>次数</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td></tr>`).join("")}</table></div>`:"";};
   h+=cardT(a,na)+stT(a,na);if(!same)h+=cardT(b,nb)+stT(b,nb);h+=opT(a);
-  h+=`<p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
+  h+=`<div class="sheet mbOnly">${prefControls()}</div><p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
   $("#tab-stats").innerHTML=h;$("#stA").onchange=e=>{ui.statA=+e.target.value;rStats();};$("#stB").onchange=e=>{ui.statB=+e.target.value;rStats();};}
 
 function deckRes(d){const pool=C.filter(c=>!isLeader(c)&&!isTactic(c)&&!c.token&&(!ui.deckOwned||db.owned[c.n]));
@@ -5312,6 +5442,7 @@ load();
       return;
     }
     if (e.target.id === 'vtIn' && (e.key === 'Enter' || e.key === 'Escape')) { e.target.dispatchEvent(new Event('change')); e.target.blur(); return; }
+    if (e.target.id === 'pwIn' && e.key === 'Enter') { e.preventDefault(); click('[data-pwset="?"]'); return; }
     if (typing) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); click('[data-do="undo"]'); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;

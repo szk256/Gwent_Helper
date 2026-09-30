@@ -36,6 +36,7 @@
       return;
     }
     if (e.target.id === 'vtIn' && (e.key === 'Enter' || e.key === 'Escape')) { e.target.dispatchEvent(new Event('change')); e.target.blur(); return; }
+    if (e.target.id === 'pwIn' && e.key === 'Enter') { e.preventDefault(); click('[data-pwset="?"]'); return; }
     if (typing) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); click('[data-do="undo"]'); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;

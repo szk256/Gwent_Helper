@@ -21,7 +21,7 @@
 - `gwent_numbers_check.js`：代码里的数字（2~30）卡面上必须也有，防止补丁改了数值代码没跟上；已知正常情况记在 `numbers_baseline.json`（`--update` 重写）。补丁里改了效果文字的牌必须写 `code: '已同步'|'无需改'`。已加进 `npm test`。
 - 版本号：`build.js` 用内嵌内容的哈希生成 7 位构建号（`window.GWENT_BUILD`，内容不变就不变；调试页面显示“开发版”），加上卡牌数据版本（`patches.js` 最新一条的 `ver`，没有则 `BASE`）。左边栏底部 / 手机“数据”页底部显示；新对局记 `g.ver={build,data}`，对局导出和迁移导出都带上；打开旧版本开的对局时标题旁显示“构建 xxx 开局”。
 - 数据版本：data.js 是 **v14.9.0（2026-09-01）**，已和 gwent.one 核对（`patches.js` 的 `BASE`）。gwent.one 每月 1 日发布平衡委员会补丁（版本号 14.10.0、14.11.0…）。
-- 月度更新流程：`npm run sync -- 14.10.0` 预览（`tools/sync_gwentone.js` 用 curl 读 `gwent.one/{en,cn}/cards/changelog/<版本>`，按卡图编号 RAW[12] 对应我们的牌，列出每张改动、我们的数据是否已是新值），确认后加 `--write` 写进 `patches.js` → 效果文字改了的牌检查 `cards.js`、条目写 `code`（只改领袖人口上限的自动标“无需改”）→ `node build.js && npm test && npm run smoke` → PR。环境网络需要允许 `gwent.one`、`api.gwent.one`。注意 `api.gwent.one` 的新版本数据可能滞后（14.9.0 返回的还是 14.8.0），以改动页为准。
+- 月度更新流程：`npm run sync -- 14.10.0` 预览（`tools/sync_gwentone.js` 用 curl 读 `gwent.one/{en,cn}/cards/changelog/<版本>`，按卡图编号 RAW[12] 对应我们的牌，列出每张改动、我们的数据是否已是新值），确认后加 `--write` 写进 `patches.js`（新牌——改动页上 `data-change="new"` 只有一份——按页面上的中英文数据生成一行，作为条目的 `add` 加进数据，带官方编号 `id`，扩展包从 API 查；`rawAt` 对补丁之前的对局去掉它；`--pretend-missing=牌名` 可把已有的牌当新牌核对生成的行）→ 新牌按卡面写 `cards.js` 行为（写不了的保持未建模）→ 效果文字改了的牌检查 `cards.js`、条目写 `code`（只改领袖人口上限的自动标“无需改”）→ `node build.js && npm test && npm run smoke` → PR。环境网络需要允许 `gwent.one`、`api.gwent.one`。注意 `api.gwent.one` 的新版本数据可能滞后（14.9.0 返回的还是 14.8.0），以改动页为准。
 - `src/cardids.js`：牌名 → gwent 官方卡牌编号（`tools/gen_cardids.js [版本]` 从 api.gwent.one 生成，1359/1359 对上；加了新牌后重跑）。`src/codec.js`：纯代码导出 / 导入 v2（`GwentCodec.encodeGame/decodeGame/encodeDeck/decodeDeck/encodeColl/decodeColl`），和 app.js 共用全局，在它之前载入。
 - `src/cardflags.js`：`node build.js` 时从 `cards.js` 注释自动生成（ASSUME → 推测，用改战力/推算不了/按记录 → 需手动），偏差报告用，不要手改。
 - 对局簿数据存 localStorage 键 `gwent-tracker-v3`，**修改时必须保证旧数据能继续用**。
@@ -77,6 +77,7 @@
 - 已结束的一局最后一方没记停牌时，补一次停牌。
 - 逐步记录 `S.steps[记录id] = {who, n（第几手，每方各自计数，换人行动算新的一手）, me, op（这一步结算后的比分）, cards（这一步涉及的牌）, wn}`。记录列表每条显示“我第3手 · 12:4 · 时间”。
 - 偏差报告 `devReport(g,r,S)`：核对点 = `real` 记录（导出码 C，`我:对`，“录入真实比分”按钮，录屏复盘时按手录入，可用“在这之前插入”）+ R 行局末比分。找到第一个不一致的核对点，列出和上一个一致点之间的步骤：比分变化、涉及的推测/需手动/未建模的牌、提示；附备注和逐步比分。文本导出（gameCode）带每步“[我第3手 12:4]”和偏差报告。
+- 落地战力一步：打出“需手动”（cardflags）或未建模的单位时，流程最后多一步“落地战力”（推算值是主按钮，回车即确认；±3 快捷、可输入；写进记录的 `pw`）。
 - 快捷备注：备注面板有常用按钮（`NOTE_PRESETS`，可“编辑常用”，存 `db.notePresets`），记录头部“＋备注”直达。
 - 未确认规则的覆盖值放 `SIM_RULES`（校准用）。
 - 整排效果：`fx` 记录交给引擎（`addHazard`，没记回合数按卡面默认）。打出刺骨冰霜等整排效果牌后界面直接进入整排效果，只需点排；雨、血月、灾厄等随机命中在“效果”面板里点“××命中”再选单位（记为 `effect`，`c` = 效果名，进 `hzQ`）。整排效果牌后面没记 `fx` 时提示。
@@ -172,6 +173,7 @@ R1 W 46:24 4:5
 
 ## 界面约定
 - 暗色主题：面板深色、文字浅色；按钮一律是“有底色 + 边框”的块（`--btn` `--btnEdge`），选中用金色底深色字（`--on1` `--on2` `--onInk`），和正文文字区分开。改颜色时保证文字对比度 ≥ 4.5:1。
+- 主题（用户在 mini LED HDR 电视上用）：`THEMES` 经典（木纹金，默认，不设属性）/ 石板冷灰 `slate` / 昆特牌桌 `table` / 极简黑 `black`（防光晕：不用纯黑 #0b0d11、不用纯白字、去掉发光和文字阴影）/ 午夜蓝 `navy`；`html[data-theme]` 只换变量（`--bg --panel --panel2 --navBg --h2 --gold --on1/2 --onInk --btn* --boardBg --unitEdge --lab --glowA` 等），通用覆盖规则在 style.css 末尾。字号缩放 `ZOOMS` 100/115/130/150%（`html` 的 zoom）。存本机 localStorage `gwent-ui-pref`（不进 db，电视和手机各自设置），index.html 头部内联脚本在绘制前套上，左边栏 / 手机“数据”页底部选择。对比度都 ≥ 5.6:1。
 - 电脑（≥1100px）：导航在左边栏（对局 / 数据 / 卡组 / 牌库 + 数据迁移按钮），内容两栏；手机：底部导航、单栏。
 - 双阵营牌：数据里只有一个阵营，另一个写在 `app.js` 的 `DUAL`（单张）和 `DUAL_TAG`（按类别整组，目前“火誓者”类别 → 北方王国，共 25 张可收集牌）；用户可在卡牌详情“也属于阵营”里改，存进 `db.edits[牌名].f2`。牌库、组卡搜索、对局搜索都用 `inFac(c,f)`。
 - 扩展包中文名在 `app.js` 的 `SERN`（用户提供：unmillable=新手卡组，baseset=核心卡牌 …），筛选按这个顺序显示，卡牌详情也显示。
@@ -184,8 +186,8 @@ R1 W 46:24 4:5
   - 对局代码 `#GWLOG v2 ids=gwent`：`G`（日期、阵营、领袖编号、先后手 1/2、结果 W/L/D、战术牌、构建号、卡组名 URL 编码）、`D`（卡组：编号x张数）、`S`（卡手）、`M`（备注）、`R1`（局结果、比分、手牌、用时；未结束的局 `open=1`）、记录行 `序号 A/B 动作码 键=值…`。牌用官方编号（对不上的 `N:` + URL 编码牌名），整排效果 `hz:frost/rain/fog/storm/dream/moon/ruin`，墓场 `G`，改战力的状态词 `~sh ~lk ~rs ~vl ~sp ~am ~bt ~ar ~vi ~bl`，自己写的文字 URL 编码，引用其他记录用序号（`8/0` = 第 8 步带出的第 1 个单位），未知字段 `x.键=JSON`，保证导回逐字段一致。全部 ASCII。
   - 历史对局“导出”= v2 代码，“报告”= 中文可读版（`gameCode`，带逐步比分和偏差报告）；“导入对局”接受多局 v2，卡组找同名同内容的，没有就新建；未结束的一局作为进行中的对局。
   - 卡组代码 `#GWDECK v2 f= ld= tac= name=` + `编号x张数`；牌库代码 `#GWCOLL v2` + `编号x张数`。导入也接受旧的中文格式。
-  - 全部迁移导出仍是整份 JSON（本来就无损）。旧的中文对局代码（v1 LEGEND）已去掉。
-- 导入导出：保留原有的各类导出（对局代码、卡组代码、牌库代码、下载备份）。“全部迁移导出”= `#GWMIG v1` 开头的一行说明 + 整个 `db` 的 JSON；“全部导入”接受它或备份文件（也兼容旧版备份），确认后替换全部数据。所有导入对话框都有“点击粘贴”（`openDlg(...,{paste:true})`）。
+  - 全部迁移导出 `#GWMIG v2 ids=gwent build=… data=…` + 整个 db 的 JSON：牌名（卡组、牌库、改过的牌、对局记录里的牌、领袖、战术）换成 `"#官方编号"`，其余非 ASCII 字符转成 `\uXXXX`，纯 ASCII，导回与原 db 完全一致（`GwentCodec.encodeDb/decodeDb`，`parseAll` 同时认 v1 中文 JSON、v2 和备份文件）。下载备份文件仍是原始 JSON。旧的中文对局代码（v1 LEGEND）已去掉。
+- 导入导出：保留原有的各类导出（对局代码、卡组代码、牌库代码、下载备份）。“全部迁移导出”= `#GWMIG v2` 开头的一行 + 整个 `db` 的纯代码 JSON（见上）；“全部导入”接受它或备份文件（也兼容旧版备份），确认后替换全部数据。所有导入对话框都有“点击粘贴”（`openDlg(...,{paste:true})`）。
 
 ## 测试
 - `npm test` = 底层 + 卡牌 + 界面（`gwent_ui_test.js`，jsdom 载入 dist）+ 第一局回放；`npm run smoke` 全部卡牌冒烟。先 `npm ci` 装 jsdom。

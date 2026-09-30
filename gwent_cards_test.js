@@ -309,5 +309,15 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   g.chooser = () => [b]; P(g, 'me', '神殿守卫', 'm');
   ok(a.power === 6 && b.power === 6 && d.power === 6 && e.power === 5, '神殿守卫：中间 + 两边各 +1');
 }
+{ // 月度补丁新增的牌：套用后出现在数据里、引擎当作未建模；补丁日期之前的对局看不到它
+  const P = require('./src/patches.js'); const R = RAW.map(r => r.slice());
+  P.PATCHES.push({ date: '2099-01-01', ver: '99.1.0', cards: [{ n: '测试新牌', id: 999999, add: ['测试新牌', 'NR', '铜', '单位', '5', '6', '普通', '士兵', '部署：对 1 个敌军单位造成 2 点伤害。', 'Test', 'Deploy: Damage an enemy unit by 2.', 'test', '9999', '-'] }] });
+  P.applyAll(R); const g = new E.Game({ first: 'me' }); g.loadData(R); g.loadBehaviors(B); g.startRound();
+  const u = g.play('me', '测试新牌', 'm');
+  ok(R.some(r => r[0] === '测试新牌') && u.power === 5 && u.unmodeled, '补丁新牌：加进数据，战力 5，未建模');
+  ok(!P.rawAt(R, '2098-12-31').some(r => r[0] === '测试新牌') && P.rawAt(R, '2099-02-01').some(r => r[0] === '测试新牌'), '补丁新牌：补丁之前的对局看不到');
+  P.applyAll(R); ok(R.filter(r => r[0] === '测试新牌').length === 1, '补丁新牌：重复套用不会加两次');
+  P.PATCHES.pop();
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

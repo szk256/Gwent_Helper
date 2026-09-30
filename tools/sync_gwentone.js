@@ -3,6 +3,7 @@
 //       node tools/sync_gwentone.js 14.10.0 --write    写进 src/patches.js（之后跑 npm test，效果改了的牌要同步 cards.js 并注明 code）
 // 数据来源：https://gwent.one/{en,cn}/cards/changelog/<版本>（页面上每张牌有新旧两份：data-power / data-provision / 效果文字）。
 // 用 curl 下载（走环境的代理设置）。按卡图编号（RAW[12]）对应我们的牌，对不上再按中文名。
+// 新牌（改动页上 data-change="new"，只有一份）：按页面上的中英文数据生成一行，作为补丁条目的 add 加进数据（带官方编号 id），效果标“未建模”。
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -20,14 +21,18 @@ function parse(html) {
   while ((m = re.exec(html))) {
     const a = {}; m[1].replace(/data-([\w-]+)="([^"]*)"/g, (_, k, v) => { a[k] = v; });
     const name = unesc((m[2].match(/class="card-name"><a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || '');
+    const cat = unesc((m[2].match(/class="card-category">([\s\S]*?)<\/div>/) || [])[1] || '').replace(/\s+/g, ' ').trim();
     const ab = (m[2].match(/class="card-body-ability">([\s\S]*?)<\/div>/) || [])[1] || '';
-    out.push({ id: a.id, art: (a.artid || '').replace(/\D/g, ''), change: a.change, type: a.type, name, ver: m[3], power: +a.power, prov: +a.provision, armor: +a.armor, text: lines(ab) });
+    out.push({ id: a.id, art: (a.artid || '').replace(/\D/g, ''), change: a.change, type: a.type, name, cat, faction: a.faction, color: a.color, rarity: a.rarity, set: a.set || '',
+      ver: m[3], power: +a.power, prov: +a.provision, armor: +a.armor, text: lines(ab) });
   }
   const pairs = [];
-  for (let i = 0; i + 1 < out.length; i += 2) {
-    const n = out[i], o = out[i + 1];
-    if (n.id !== o.id) throw new Error('改动页结构变了：新旧两份对不上 ' + n.name);
-    pairs.push({ id: n.id, art: n.art, type: n.type, change: n.change, name: n.name, new: n, old: o });
+  for (let i = 0; i < out.length;) {
+    const n = out[i];
+    if (n.change === 'new' && !(out[i + 1] && out[i + 1].id === n.id)) { pairs.push({ id: n.id, art: n.art, type: n.type, change: 'new', name: n.name, new: n, old: null }); i += 1; continue; }
+    const o = out[i + 1];
+    if (!o || n.id !== o.id) throw new Error('改动页结构变了：新旧两份对不上 ' + n.name);
+    pairs.push({ id: n.id, art: n.art, type: n.type, change: n.change, name: n.name, new: n, old: o }); i += 2;
   }
   return pairs;
 }
@@ -43,15 +48,35 @@ eval(fs.readFileSync(path.join(ROOT, 'src', 'data.js'), 'utf8').replace('const R
 const P = require(path.join(ROOT, 'src', 'patches.js'));
 P.applyAll(RAW);
 const byArt = {}, byName = {};
-RAW.forEach(r => { if (r[11] === 'token') return; if (r[12]) (byArt[r[12]] = byArt[r[12]] || []).push(r); byName[r[0]] = r; });
+// 调试：--pretend-missing=牌名,牌名 把已有的牌当成新牌（用来核对新牌生成的数据行和原始数据是否一致）
+const PRETEND = new Set(((process.argv.find(x => x.startsWith('--pretend-missing=')) || '').split('=')[1] || '').split(',').filter(Boolean));
+const ORIG = {}; RAW.forEach(r => { ORIG[r[0]] = r; });
+RAW.forEach(r => { if (r[11] === 'token' || PRETEND.has(r[0])) return; if (r[12]) (byArt[r[12]] = byArt[r[12]] || []).push(r); byName[r[0]] = r; });
 const TYPE = { unit: '单位', special: '特殊', artifact: '神器', leader: '领袖能力', stratagem: '战术' };
 
+const FAC = f => ({ neutral: 'NE', monster: 'MO', monsters: 'MO', nilfgaard: 'NG', scoiatael: 'ST', skellige: 'SK', syndicate: 'SY' })[f] || (/northern/.test(f) ? 'NR' : f);
+const COLOR = { gold: '金', bronze: '铜', leader: '领袖' }, RARITY = { legendary: '传奇', epic: '史诗', rare: '稀有', common: '普通' };
+const TYPE2 = { unit: '单位', special: '特殊', artifact: '神器', ability: '领袖能力', leader: '领袖能力', stratagem: '战术' };
+// 新牌的一行数据（和 data.js 的列一致）：名 阵营 颜色 类型 战力 粮草 稀有度 类别 中文效果 英文名 英文效果 扩展包 卡图 护甲
+const newRow = (p, c) => [c ? c.name : p.name, FAC(p.new.faction), COLOR[p.new.color] || p.new.color, TYPE2[p.type] || p.type,
+  p.type === 'unit' ? String(p.new.power) : '-', String(p.new.prov), RARITY[p.new.rarity] || p.new.rarity, (c ? c.new.cat : p.new.cat).replace(/\s*,\s*/g, '、'),
+  (c ? c.new.text : p.new.text).join(' / '), p.name, p.new.text.join(' / '), p.new.set.toLowerCase(), p.art, p.new.armor ? String(p.new.armor) : '-'];
 const cards = [], report = [];
 for (const p of pe) {
   const c = cnById[p.id];
   const cands = byArt[p.art] || [];
   const r = cands.find(x => c && x[0] === c.name) || (cands.length === 1 ? cands[0] : null) || (c && byName[c.name]);
-  if (!r) { report.push(`？ ${p.name}${c ? '（' + c.name + '）' : ''}：我们的数据里找不到，可能是新牌，需要手动加`); continue; }
+  if (!r && p.change === 'new') {
+    const row = newRow(p, c);
+    // 改动页不给新牌的扩展包：从 API 查（查不到留空）
+    if (!row[11]) { try { const d = JSON.parse(get(`https://api.gwent.one/?key=data&id=${p.id}&language=en`)).response; const v = Array.isArray(d) ? d[0] : Object.values(d)[0]; if (v && v.attributes.set) row[11] = v.attributes.set.toLowerCase(); } catch (e) { /* 查不到就算了 */ } }
+    cards.push({ n: row[0], id: +p.id, add: row, note: '新牌，效果未建模' });
+    report.push(`+ 新牌 ${row[0]}（${p.name}，${row[1]} ${row[2]}${row[3]} ${row[4]}/${row[5]}）：加进数据，效果未建模  ⚠ 需要在 cards.js 写行为`);
+    if (PRETEND.has(row[0])) { const o = ORIG[row[0]]; const d = row.map((v, i) => v === String(o[i]) ? null : `[${i}] 生成「${v}」 原始「${o[i]}」`).filter(Boolean); report.push(d.length ? '  和原始数据不同：\n    ' + d.join('\n    ') : '  和原始数据完全一致'); }
+    continue;
+  }
+  if (!r) { report.push(`？ ${p.name}${c ? '（' + c.name + '）' : ''}：我们的数据里找不到，需要手动处理`); continue; }
+  if (p.change === 'new') { report.push(`= ${r[0]}（${p.name}）：新牌，我们的数据里已经有了`); continue; }
   const e = { n: r[0] }; const note = [];
   const isUnit = r[3] === '单位';
   const curPw = r[4] === '-' ? 0 : +r[4], curPv = +r[5] || 0;

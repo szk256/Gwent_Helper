@@ -88,9 +88,20 @@ $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText(
 // 全部迁移：整个对局簿（卡组、对局、进行中的对局、牌库、改过的牌、自定义牌）
 // 版本：构建号（打包时按内容生成，调试页面是“开发版”）+ 卡牌数据版本（patches.js 最新一条，没有则基线）
 const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
+// 外观（每台设备各自记住，存 localStorage，不进对局簿数据）：主题 + 字号缩放
+const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["navy","午夜蓝"]];
+const ZOOMS=[1,1.15,1.3,1.5];
+function loadPref(){try{return JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}")||{};}catch(e){return {};}}
+function savePref(p){try{localStorage.setItem("gwent-ui-pref",JSON.stringify(p));}catch(e){}}
+function applyPref(){const p=loadPref(),r=document.documentElement;if(p.theme&&p.theme!=="classic")r.setAttribute("data-theme",p.theme);else r.removeAttribute("data-theme");r.style.zoom=p.zoom&&p.zoom!==1?String(p.zoom):"";}
+function prefControls(){const p=loadPref(),t=p.theme||"classic",z=p.zoom||1;
+  return `<div class="prefs"><div class="navlab">外观</div><select data-pref="theme" aria-label="主题">${THEMES.map(([k,n])=>`<option value="${k}" ${k===t?"selected":""}>${n}</option>`).join("")}</select>
+  <select data-pref="zoom" aria-label="字号">${ZOOMS.map(v=>`<option value="${v}" ${v===z?"selected":""}>字号 ${Math.round(v*100)}%</option>`).join("")}</select></div>`;}
+applyPref();
+document.addEventListener("change",e=>{const k=e.target.dataset&&e.target.dataset.pref;if(!k)return;const p=loadPref();p[k]=k==="zoom"?+e.target.value:e.target.value;savePref(p);applyPref();
+  document.querySelectorAll(`[data-pref="${k}"]`).forEach(s=>{s.value=e.target.value;});});
 const dataVer=()=>{const P=typeof GwentPatches!=="undefined"?GwentPatches:null;if(!P)return "?";const l=P.PATCHES.slice().sort((a,b)=>a.date<b.date?-1:1).pop();return "v"+((l&&l.ver)||P.BASE.ver);};
 const verText=()=>"构建 "+BUILD+" · 卡牌数据 "+dataVer();
-const MIGHEAD="#GWMIG v1 昆特对局簿全部数据，用“全部导入”载入";
 // 备份：记录上次下载备份/迁移导出的时间，超过 7 天提醒
 function downloadBackup(){markBackup();const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");}
 // 录屏时间：接受 12:30、1:02:05、1230（= 12:30），返回规范写法；空返回 ""，格式不对返回 false
@@ -114,10 +125,10 @@ function importGames(txt){const chunks=String(txt||"").split(/(?=^#GWLOG v2)/m).
   if(n){persist();render();toast("导入了 "+n+" 局");}return n;}
 function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
-function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
+function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const pb=document.getElementById("prefBox");if(pb&&!pb.firstChild)pb.innerHTML=prefControls();{const p=loadPref();document.querySelectorAll("[data-pref=theme]").forEach(x=>{x.value=p.theme||"classic";});document.querySelectorAll("[data-pref=zoom]").forEach(x=>{x.value=String(p.zoom||1);});}const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
   el.textContent=d==null?"还没有备份过":d===0?"今天已备份":"上次备份："+d+" 天前";el.classList.toggle("bad",!!has&&(d==null||d>=7));}
-function migText(){return MIGHEAD+"（"+verText()+"）\n"+JSON.stringify(db);}
-function parseAll(txt){txt=(txt||"").trim();if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);return JSON.parse(txt);}
+function migText(){return GwentCodec.encodeDb(db).replace("\n"," build="+BUILD+" data="+dataVer()+"\n");}   // 纯代码 v2（牌用官方编号，纯 ASCII）
+function parseAll(txt){txt=(txt||"").trim();const v2=/^#GWMIG v2\b/.test(txt);if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);const d=JSON.parse(txt);return v2?GwentCodec.decodeDb(d):d;}   // v1（中文 JSON）、v2（纯代码）、备份文件都认
 
 // ---------- export codes ----------
 function deckCode(d){const i=deckInfo(d);const L=[`【昆特卡组】${d.name}`,`阵营：${FN[d.f]}｜领袖：${d.leader||"未选"}｜战术：${d.tactic||"未填"}`,`张数 ${i.n}｜粮草 ${i.pv}/${i.lim}｜单位 ${i.units}`];
@@ -200,12 +211,17 @@ function startCard(name,a,who,via){const c=BY[name];
   // 不忠：放到出牌方的对面半场
   const side=c&&/^不忠/.test(c.tx||"")?(who==="me"?"op":"me"):who;
   queue({t:"place",a,who,side,card:name,via});rMatch();}
+let DEFENG=null;
+function needsPw(name){const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};if(F[name]==="需手动")return true;
+  if(!ENG)return false;if(!DEFENG){DEFENG=new ENG.Game();DEFENG.loadData(RAW);DEFENG.loadBehaviors(GwentCards.behaviors);}const d=DEFENG.def(name);return !!(d&&d.unmodeled);}
 function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];const id=g.log[idx].id;
   if(c&&a==="play"&&needsTarget(c,"play"))st.push({t:"target",id});
   {const m=c&&a==="play"&&(c.tx||"").match(/献金\s*(\d+)/);if(m)st.push({t:"tribute",id,n:+m[1]});}
   if(c&&a==="play"&&name==="拉尔维克的埃兰"&&(who==="op"||!deckById(g.deck)))st.push({t:"deckCount",id});
   if(c&&a==="play"&&pulls(c,"play"))st.push({t:"pull",who,parent:name});
   if(a==="play")st.push(...spawnStep(c,"play",who,name));
+  // 引擎算不准战力的单位（卡牌标“需手动”或未建模）：最后问一步落地战力，一次记完
+  if(c&&a==="play"&&c.t==="单位"&&needsPw(name))st.push({t:"pw",id});
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
   if(who==="me"&&(a==="play"||a==="summon"))returners(g,name).forEach(n=>st.push({t:"ret",card:n}));
   ui.flow=[...st,...((ui.flow||[]).slice(1))];if(!ui.flow.length){ui.flow=null;doSwitch();}ui.q="";ui.sel=[];
@@ -256,6 +272,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=[{t:"edit",id:D.edit}];rMatch();window.scrollTo(0,0);return true;}
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
+  if(D.pwset!==undefined&&step&&step.t==="pw"){const e=entry(step.id);const v=D.pwset==="?"?parseInt($("#pwIn")?.value):+D.pwset;if(e&&!isNaN(v)&&v>=0){e.pw=v;persist();}nextStep();return true;}
   if(D.fz!==undefined&&step&&step.t==="frenzy"){const e=entry(step.id);if(e){e.fz=D.fz==="1";persist();}nextStep();return true;}
   if(D.dn!==undefined&&step&&step.t==="deckCount"){const e=entry(step.id);const v=D.dn==="?"?parseInt($("#dnIn")?.value):+D.dn;if(e&&!isNaN(v)){e.dn=v;persist();}nextStep();return true;}
   if(D.trib!==undefined&&step&&step.t==="tribute"){const e=entry(step.id);if(e){e.pay=D.trib==="1";persist();}nextStep();return true;}
@@ -406,6 +423,11 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="tribute"){const e=entry(step.id);const S0=S&&S.E?S.E.s.sides[e?e.who:"me"].coins:null;
         h+=`<h2>「${esc(e?e.c:"")}」献金 ${step.n}：付了吗？</h2>${S0!=null?`<p class="note">推算${sideN(e?e.who:"me")}现有金币 ${S0}</p>`:""}
         <div class="btns" style="margin-top:8px"><button class="primary" data-trib="1" style="flex:1">付了</button><button class="ghost" data-trib="0" style="flex:1">没付</button></div>`;}
+      else if(step.t==="pw"){const e=entry(step.id);const S0=sim(g,VR());const u=S0&&S0.key2u[step.id];const n=u?u.power:(BY[e.c]&&+BY[e.c].pw)||0;const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
+        const vals=[];for(let v=Math.max(0,n-3);v<=n+3;v++)vals.push(v);
+        h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。</p>
+        <div class="btns" style="margin-top:8px;flex-wrap:wrap">${vals.map(v=>`<button class="${v===n?"primary":"ghost"}" data-pwset="${v}">${v}</button>`).join("")}</div>
+        <div class="btns" style="margin-top:8px"><input id="pwIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="ghost" data-pwset="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="frenzy"){const e=entry(step.id);
         h+=`<h2>「${esc(e?e.c:"")}」亢奋 ${step.n}：成立吗？</h2><p class="note">打出后手牌不多于 ${step.n} 张即成立（游戏里效果会高亮）。</p>
         <div class="btns" style="margin-top:8px"><button class="primary" data-fz="1" style="flex:1">成立</button><button class="ghost" data-fz="0" style="flex:1">不成立</button><button class="ghost" data-do="flowSkip">不清楚</button></div>`;}
@@ -529,7 +551,7 @@ function rStats(){if(!db.decks.length){$("#tab-stats").innerHTML=`<p class="note
   const stT=(R,name)=>{const e=Object.entries(R.stuck).sort((x,y)=>y[1]-x[1]).slice(0,8);return `<div class="sheet"><h2>最常卡手：${esc(name)}</h2>${e.length?`<table><tr><th>牌</th><th>次数</th><th>占对局</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td><td>${pct(k,R.n)}</td></tr>`).join("")}</table>`:`<p class="note">还没有卡手记录。</p>`}</div>`;};
   const opT=R=>{const e=Object.entries(R.opp).sort((x,y)=>y[1]-x[1]).slice(0,10);return e.length?`<div class="sheet"><h2>对手最常打出的牌</h2><table><tr><th>牌</th><th>次数</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td></tr>`).join("")}</table></div>`:"";};
   h+=cardT(a,na)+stT(a,na);if(!same)h+=cardT(b,nb)+stT(b,nb);h+=opT(a);
-  h+=`<p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
+  h+=`<div class="sheet mbOnly">${prefControls()}</div><p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
   $("#tab-stats").innerHTML=h;$("#stA").onchange=e=>{ui.statA=+e.target.value;rStats();};$("#stB").onchange=e=>{ui.statB=+e.target.value;rStats();};}
 
 function deckRes(d){const pool=C.filter(c=>!isLeader(c)&&!isTactic(c)&&!c.token&&(!ui.deckOwned||db.owned[c.n]));
