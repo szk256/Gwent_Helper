@@ -129,5 +129,30 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); const b = P(g, 'op', '蝠翼魔', 'r'); P(g, 'me', '科德温骑士', 'm'); P(g, 'op', '吸血鬼女', 'm');
   ok(b.power === 7, '蝠翼魔：敌军重伤 3 → +3');
 }
+
+// ---------- 尼弗迦德 ----------
+{ // 翼守：远程排只与 1 张牌相邻时回合结束 +1 护甲
+  const g = game(); const f = P(g, 'op', '公爵守卫', 'r'); P(g, 'op', '帝国毒牙', 'r');
+  g.s.active = 'op'; g.endTurn(); ok(f.armor === 1, '翼守（远程）：回合结束 +1 护甲');
+}
+{ // 同化：打出生成出来的牌 +1
+  const g = game(); const a = P(g, 'op', '帝国占卜师', 'm'); g.chooser = () => null;
+  g.useAbility('op', '战术决策'); ok(a.power === 6, '同化：生成并打出莫尔凡 → +1');
+}
+{ // 共谋：致命一击对潜伏单位总会触发致死（生成并打出同名牌）
+  const g = game(); const t = P(g, 'me', '寒冰巨人', 'm'); g.addStatus(t, 'spying'); g.chooser = () => [t];
+  g.play('op', '致命一击', null, null, { player: 'op' });
+  ok(t.power === 4 && g.units('op').some(u => u.name === '寒冰巨人'), '致命一击：共谋 → 生成并打出同名牌');
+}
+{ // 口渴的夫人：敌军获得状态 +1；帝国毒牙：中毒
+  const g = game(); const d = P(g, 'op', '口渴的夫人', 'r'); const e = P(g, 'me', '寒冰巨人', 'm'); g.chooser = () => [e];
+  P(g, 'op', '帝国毒牙', 'm'); ok(e.status.poison === 1 && d.power === 5, '口渴的夫人：敌军中毒 +1');
+}
+{ // 牛尸：不忠，回合结束使相邻中毒并摧毁自身
+  const g = game(); const a = P(g, 'me', '寒冰巨人', 'm'); g.chooser = () => null; g.useAbility('op', '战术决策');
+  const cow = g.play('op', '牛尸', 'm', 1, { player: 'op' });
+  ok(cow.side === 'me' && cow.status.spying, '牛尸：落到对面并获得潜伏');
+  g.s.active = 'me'; g.endTurn(); ok(a.status.poison === 1 && !g.find(cow.uid), '牛尸：回合结束相邻中毒、摧毁自身');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

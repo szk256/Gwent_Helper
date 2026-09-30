@@ -98,6 +98,8 @@ class Game {
     if (d.harmony) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit.def.fac !== 'NE' && (e.unit !== c.self || c.g.rules.harmonySelf) && c.g.uniquePrimary(e.unit), run: c => c.boost(c.self, d.harmony) });
     // 成长：己方每打出 1 个战力更高的单位，自身增益（事件 growth 给“成长触发时”的能力用）
     if (d.growth) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit !== c.self && e.unit.power > c.self.power, run: c => { c.boost(c.self, d.growth); c.g.emit('growth', { unit: c.self }); } });
+    // 同化：己方打出不是来自起始牌组的牌（生成/创造出来的）时自身增益
+    if (d.assimilate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.spawned || (e.unit && e.unit.origin === 'spawn')), run: c => c.boost(c.self, d.assimilate) });
     // 增兵：己方打出“战争”牌时冷却 -1
     if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
@@ -135,6 +137,8 @@ class Game {
         else if ((m = seg.match(/^和谐\s*(\d*)$/))) { if (apply) d.harmony = +(m[1] || 1); }
         else if (seg === '共生') { if (apply) d.symbiosis = true; }
         else if ((m = seg.match(/^成长\s*(\d*)$/))) { if (apply) d.growth = +(m[1] || 1); }
+        else if (seg === '翼守') { if (apply) d.flanking = true; }
+        else if ((m = seg.match(/^同化\s*(\d*)$/))) { if (apply) d.assimilate = +(m[1] || 1); }
         else if ((m = seg.match(/^耐性\s*(?:[（(](近战|远程)[）)])?$/))) { if (apply) d.patience = m[1] === '近战' ? 'm' : m[1] === '远程' ? 'r' : true; }
         else return false;
         return true;
@@ -242,6 +246,16 @@ class Game {
     if (t) { t.base = n; t.power = n; this.log('共生', { side, power: n }); }
     this.emit('symbiosis', { side, unit: t });
   }
+  // 翼守激活：只与 1 张牌相邻
+  flankActive(u) { return !!u.def.flanking && this.adjacent(u).length === 1; }
+  // 交换位置（同一方）
+  swap(a, b) {
+    if (!a || !b || a.side !== b.side) return;
+    const ra = this.rowOf(a), rb = this.rowOf(b), ia = ra.indexOf(a), ib = rb.indexOf(b);
+    ra[ia] = b; rb[ib] = a; const t = a.row; a.row = b.row; b.row = t;
+    this.log('互换位置', { a: a.name, b: b.name });
+    this.emit('moved', { unit: a }); this.emit('moved', { unit: b });
+  }
   // 翼守：仅与 1 张牌相邻
   flanked1(u) { return this.adjacent(u).length === 1; }
   // 战狂 N：受伤的敌军单位数量达到 N
@@ -317,7 +331,7 @@ class Game {
       hoard: x => g.hoard(u.side, x), seize: t => g.seize(t, u.side, u), flip: t => g.flip(t || u, u),
       transform: (t, name, o) => g.transform(t, name, u, o), shuffleBack: t => g.shuffleBack(t, u),
       reduceCd: (t, n) => g.reduceCd(t, n, u), operate: t => g.operate(t || u),
-      deathwishOf: t => g.triggerDeathwish(t, u), drain: (t, n) => g.drain(u, t, n),
+      deathwishOf: t => g.triggerDeathwish(t, u), drain: (t, n) => g.drain(u, t, n), swap: (a, b) => g.swap(a, b),
       frost: (side, row) => { const h = g.s.hazards[side][row]; return h && h.kind === '霜' ? h : null; },
       // 生成并打出：单位走“生成（算打出）”，特殊牌直接结算
       spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
@@ -363,7 +377,7 @@ class Game {
       if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
       this.s.sides[player].grave.push(name);
       this._countTags(player, d);
-      this.emit('cardPlayed', { side: player, name, special: true, def: d });
+      this.emit('cardPlayed', { side: player, name, special: true, def: d, spawned: !!opts.spawned });
       this._symbiosis(player, d);
       return null;
     }
@@ -711,6 +725,7 @@ class Game {
     h.charges--;
     this.s.sides[side].vars.usedOrderTurn = this.s.turn;   // 领袖、战术也是指令（先机）
     if (h.def.type === 'leader') this.s.sides[side].vars.leaderUses = (this.s.sides[side].vars.leaderUses || 0) + 1;
+    if (h.def.type === 'leader') this.s.sides[side].vars.leaderTurn = this.s.turn;
     this.log('能力', { side, name, left: h.charges, unmodeled: !!h.def.unmodeled });
     if (h.def.order) h.def.order(this.ctx(h), opts);
     this.emit('ordered', { unit: h, side, ability: true });
@@ -792,6 +807,12 @@ class Game {
       this.emit('patience', { unit: u });
     }
     this.emit('turnEnd', { side });
+    // 翼守：只与 1 张牌相邻时——近战排“回合结束”能力再触发一次，远程排获得 1 点护甲
+    for (const u of this.allUnits(side).slice()) {
+      if (!u.def.flanking || u.status.lock || !this.find(u.uid) || this.adjacent(u).length !== 1) continue;
+      if (u.row === 'r') this.addArmor(u, 1, { name: '翼守' });
+      else for (const ab of u.def.abilities || []) if (ab.on === 'turnEnd' && (!ab.when || ab.when(this.ctx(u), { side }))) { this.log('翼守', { name: u.name }); ab.run(this.ctx(u), { side }); }
+    }
     // 活力 / 重伤：单位拥有者回合结束
     for (const u of this.allUnits(side).slice()) {
       if (u.status.vitality > 0) { u.status.vitality--; this.boost(u, 1, { name: '活力' }); }
