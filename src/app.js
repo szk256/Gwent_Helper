@@ -179,11 +179,17 @@ function outcome(rs){let w=0,l=0;rs.forEach(r=>{if(r.res==="W")w++;else if(r.res
 function search(q,pool,prio,facs){q=q.trim();if(!q)return[];const ql=q.toLowerCase();const out=[];for(const c of pool){let p=c.n.toLowerCase().indexOf(ql);if(p<0&&c.alias)p=c.alias.toLowerCase().indexOf(ql)>=0?5:-1;if(p<0&&c.en)p=c.en.toLowerCase().indexOf(ql)>=0?20:-1;if(p<0)continue;out.push([c,(prio&&prio.has(c.n)?-200:0)+(facs&&!facs.includes(c.f)?100:0)+p+c.n.length/100]);}
   return out.sort((a,b)=>a[1]-b[1]).slice(0,10).map(x=>x[0]);}
 function cardTag(c){return c?`<span class="tag ${c.col==="金"?"gold":"bronze"}">${c.col==="领袖"?"领":c.col}${c.pv?" "+c.pv:""}</span>`:"";}
-function openDlg(title,note,text,okLabel,onOk){$("#fileIn").classList.toggle("hidden",title!=="恢复备份");$("#dlgT").textContent=title;$("#dlgN").textContent=note;$("#dlgX").value=text;$("#dlgOk").textContent=okLabel;
+// opts.paste：导入类对话框显示“点击粘贴”；opts.file：显示选择文件
+function openDlg(title,note,text,okLabel,onOk,opts){opts=opts||{};$("#fileIn").classList.toggle("hidden",!opts.file);$("#dlgPaste").classList.toggle("hidden",!opts.paste);$("#dlgT").textContent=title;$("#dlgN").textContent=note;$("#dlgX").value=text;$("#dlgOk").textContent=okLabel;
   $("#dlgOk").onclick=()=>{onOk($("#dlgX").value);};$("#dlg").showModal();}
 function copyOut(title,text){openDlg(title,"已尝试复制到剪贴板。没复制上的话，长按下面的内容全选复制。",text,"再复制一次",t=>copy(t));copy(text);}
-function copy(t){navigator.clipboard?.writeText(t).then(()=>toast("已复制")).catch(()=>{});}
+function copy(t){try{navigator.clipboard.writeText(t).then(()=>toast("已复制")).catch(()=>{});}catch(e){}}
 $("#dlgNo").onclick=()=>$("#dlg").close();
+$("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText();if(!t)return toast("剪贴板是空的");$("#dlgX").value=t;toast("已粘贴");}catch(e){$("#dlgX").focus();toast("浏览器不让读剪贴板，请在框里按 Ctrl+V");}};
+// 全部迁移：整个对局簿（卡组、对局、进行中的对局、牌库、改过的牌、自定义牌）
+const MIGHEAD="#GWMIG v1 昆特对局簿全部数据，用“全部导入”载入";
+function migText(){return MIGHEAD+"\n"+JSON.stringify(db);}
+function parseAll(txt){txt=(txt||"").trim();if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);return JSON.parse(txt);}
 
 // ---------- export codes ----------
 function deckCode(d){const i=deckInfo(d);const L=[`【昆特卡组】${d.name}`,`阵营：${FN[d.f]}｜领袖：${d.leader||"未选"}｜战术：${d.tactic||"未填"}`,`张数 ${i.n}｜粮草 ${i.pv}/${i.lim}｜单位 ${i.units}`];
@@ -378,7 +384,7 @@ function gameCode(g){const o=g.rounds?outcome(g.rounds):null;const L=[`【昆特
 
 // ---------- render ----------
 function render(){$("#count").textContent=db.games.length+" 局";
-  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===ui.tab));
+  document.querySelectorAll("nav button[data-t]").forEach(b=>b.classList.toggle("on",b.dataset.t===ui.tab));
   ["match","stats","deck","coll"].forEach(k=>$("#tab-"+k).classList.toggle("hidden",k!==ui.tab));
   ({match:rMatch,stats:rStats,deck:rDeck,coll:rColl})[ui.tab]();}
 
@@ -400,7 +406,7 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
    <div class="row"><div class="lab">对手阵营</div><div class="chips">${facChips(setup.fac,"sfac")}</div></div>
    <div class="row"><div class="lab">先后手</div><div class="seg">${["先","后"].map(v=>`<button data-scoin="${v}" class="${setup.coin===v?"on":""}">${v}手</button>`).join("")}</div></div>
    <button class="primary" data-do="start">开始记录</button></div>`;
-   h+=`<div class="btns" style="justify-content:space-between;align-items:center;margin:4px 0 6px"><h2 style="font-size:17px">历史对局</h2><div class="btns"><button class="ghost" data-do="exAll">导出全部</button><button class="ghost" data-do="dl">下载备份</button><button class="ghost" data-do="restore">恢复</button></div></div>`;
+   h+=`<div class="btns" style="justify-content:space-between;align-items:center;margin:4px 0 6px"><h2 style="font-size:17px">历史对局</h2><div class="btns"><button class="ghost" data-do="exAll">导出全部对局</button><button class="ghost" data-do="migAll">全部迁移导出</button><button class="ghost" data-do="dl">下载备份</button><button class="ghost" data-do="impAll">全部导入</button></div></div>`;
    h+=db.games.length?db.games.slice().reverse().map(x=>{const col={W:"var(--win)",L:"var(--loss)",D:"var(--draw)"};const r0=x.rounds[0]||{};
      const hand=(r0.hm!=null&&r0.ho!=null)?`首局手牌 ${r0.hm}:${r0.ho}`:(x.diff!=null?`牌差 ${x.diff>0?"+":""}${x.diff}`:"");
      return `<div class="item"><div class="gems">${x.rounds.map(r=>`<i class="gem" style="--c:${col[r.res]}"></i>`).join("")}</div>
@@ -666,11 +672,17 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
     abort(){if(!confirm("放弃这局记录？已记的步骤会丢失。"))return;db.live=null;persist();render();},
     exAll(){if(!db.games.length)return toast("还没有对局");copyOut("全部对局代码",LEGEND+"\n"+db.games.map(gameCodeC).join("\n"));},
     backup(){copyOut("完整备份",JSON.stringify(db));},
+    migAll(){copyOut("全部迁移导出",migText());},
+    impAll(){const fi=$("#fileIn");fi.onchange=async()=>{const f=fi.files[0];if(!f)return;$("#dlgX").value=await f.text();fi.value="";};
+      openDlg("全部导入","粘贴“全部迁移导出”的内容（点“点击粘贴”），或选择下载的备份文件。会替换这个浏览器里现有的全部数据。","","导入并替换",txt=>{let d;try{d=parseAll(txt);}catch(err){return toast("内容格式不对");}
+        const n=d&&d.games?d.games.length:0,k=d&&d.decks?d.decks.length:0;
+        if(!confirm(`导入 ${k} 个卡组、${n} 局对局${d&&d.live?"和 1 局进行中的对局":""}，替换现有数据（现有 ${db.decks.length} 个卡组、${db.games.length} 局）？`))return;
+        if(!importObj(d))return toast("内容格式不对");persist();$("#dlg").close();ui.deckSel=db.decks[0]?.id;setup.deck=ui.deckSel;ui.statA=db.decks[0]?.id;ui.statB=db.decks[db.decks.length-1]?.id;render();toast("已导入");},{paste:true,file:true});},
     dl(){const b=new Blob([JSON.stringify(db)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="昆特对局簿备份_"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();toast("已下载备份文件");},
     importOld(){importData(ui.oldData);ui.oldData=null;},
     restore(){const fi=$("#fileIn");fi.onchange=async()=>{const f=fi.files[0];if(!f)return;$("#dlgX").value=await f.text();fi.value="";};
       openDlg("恢复备份","点下面「选择文件」载入下载的备份，或者直接粘贴备份内容。旧版对局簿的备份也可以导入。","","导入",txt=>{try{const d=JSON.parse(txt);
-        if(!importObj(d))throw 0;persist();$("#dlg").close();render();toast("已导入");}catch(err){toast("备份内容格式不对");}});},
+        if(!importObj(d))throw 0;persist();$("#dlg").close();render();toast("已导入");}catch(err){toast("备份内容格式不对");}},{paste:true,file:true});},
     newDeck(){const d={id:db.nextId++,name:"新卡组",f:"NR",leader:"",tactic:"",cards:{}};db.decks.push(d);ui.deckSel=d.id;persist();rDeck();},
     dupDeck(){const s=deckById(ui.deckSel);if(!s)return;const d={...JSON.parse(JSON.stringify(s)),id:db.nextId++,name:s.name+" 副本"};db.decks.push(d);ui.deckSel=d.id;persist();rDeck();toast("已复制，改好后记得改名");},
     delDeck(){if(db.decks.length<2)return toast("至少保留一个卡组");if(!confirm("删除这个卡组？对局记录会保留。"))return;db.decks=db.decks.filter(x=>x.id!=ui.deckSel);ui.deckSel=db.decks[0].id;persist();rDeck();},
@@ -684,7 +696,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
         let k=1,n=l;if((m=l.match(/^(\d)\s*[×xX*]\s*(.+?)(（.*）)?$/))){k=+m[1];n=m[2];}else if((m=l.match(/^(.+?)\s*[×xX*]\s*(\d)$/))){n=m[1];k=+m[2];}
         n=n.trim();if(BY[n]){if(!isLeader(BY[n]))d.cards[n]=(d.cards[n]||0)+k;else d.leader=n;}else if(idx===0&&!d.name.startsWith("【"))d.name=n;else miss.push(n);});
       const fs=Object.keys(d.cards).map(n=>BY[n].f).filter(f=>f!=="NE");if(fs.length)d.f=fs[0];
-      db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");});},
+      db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
     cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[]};rColl();},
@@ -694,12 +706,12 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       let ok=0;const bad=[];txt.split("\n").map(s=>s.trim()).filter(Boolean).forEach(l=>{const p=l.split(/\s*[|｜]\s*/);const [n,col,tp,pv,pw,...tx]=p;
         if(!n||!["金","铜"].includes(col)||!["单位","特殊","神器"].includes(tp)||isNaN(+pv)){bad.push(l);return;}if(BY[n]){bad.push(n+"（已存在）");return;}
         (db.custom=db.custom||[]).push({n,f:ui.collF,col,t:tp,pv:+pv,pw:pw||"-",tx:tx.join(" | ")});ok++;});
-      addCustom();applyEdits();persist();$("#dlg").close();rColl();toast(`已添加 ${ok} 张`+(bad.length?`，${bad.length} 行格式不对`:""));});},
+      addCustom();applyEdits();persist();$("#dlg").close();rColl();toast(`已添加 ${ok} 张`+(bad.length?`，${bad.length} 行格式不对`:""));},{paste:true});},
     impColl(){openDlg("批量导入牌库","每行或用顿号、逗号分隔写牌名，可带张数（例如「科德温骑士×2」）。导入的牌会加到现有牌库里，已有的取较大张数。","","导入",txt=>{
       const parts=txt.replace(/^.*[：:]/gm,"").split(/[\n、，,]+/).map(s=>s.trim()).filter(Boolean);let ok=0;const miss=[];
       parts.forEach(p=>{let m,n=p,k=1;if((m=p.match(/^(.+?)\s*[×xX*]\s*(\d)$/))){n=m[1].trim();k=+m[2];}const c=BY[n];if(!c){miss.push(n);return;}
         k=Math.min(k,maxCopy(c));db.owned[n]=Math.max(db.owned[n]||0,k);ok++;});
-      persist();$("#dlg").close();rColl();toast(`导入 ${ok} 张`+(miss.length?`，${miss.length} 张没找到：${miss.slice(0,3).join("、")}`:""));});}
+      persist();$("#dlg").close();rColl();toast(`导入 ${ok} 张`+(miss.length?`，${miss.length} 张没找到：${miss.slice(0,3).join("、")}`:""));},{paste:true});}
   })[act]?.();
 });
 function openCard(c){$("#cdN").textContent=c.n;

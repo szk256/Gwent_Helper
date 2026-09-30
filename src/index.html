@@ -15,7 +15,9 @@
 <section id="tab-coll" class="hidden"></section>
 </div>
 <nav>
+<div class="brand">昆特对局簿</div>
 <button data-t="match" class="on">对局</button><button data-t="stats">数据</button><button data-t="deck">卡组</button><button data-t="coll">牌库</button>
+<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button></div>
 </nav>
 <div class="toast" id="toast"></div>
 <dialog id="cdlg"><h2 id="cdN"></h2><p class="note" id="cdMeta"></p>
@@ -24,7 +26,7 @@
 <div class="row"><div class="lab">别名（搜索时也能用，例如简称）</div><input id="cdAl"></div>
 <p class="note" id="cdEn" style="white-space:pre-wrap"></p>
 <div class="btns"><button class="primary" id="cdOk" style="flex:1">保存修改</button><button class="ghost" id="cdReset">恢复默认</button><button class="ghost" id="cdNo">关闭</button></div></dialog>
-<dialog id="dlg"><h2 id="dlgT"></h2><p class="note" id="dlgN"></p><input type="file" id="fileIn" accept=".json,application/json" style="margin-bottom:8px"><textarea id="dlgX"></textarea>
+<dialog id="dlg"><h2 id="dlgT"></h2><p class="note" id="dlgN"></p><input type="file" id="fileIn" accept=".json,application/json" style="margin-bottom:8px"><button class="ghost hidden" id="dlgPaste" style="margin-bottom:8px">📋 点击粘贴</button><textarea id="dlgX"></textarea>
 <div class="btns" style="margin-top:8px"><button class="primary" id="dlgOk" style="flex:1"></button><button class="ghost" id="dlgNo">关闭</button></div></dialog>
 
 <script src="engine.js"></script>

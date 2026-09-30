@@ -231,13 +231,68 @@ table th{color:#6E5C3E}
 .eng .score{display:flex;align-items:baseline;gap:6px;font-size:22px}.eng .sm{color:var(--mine)}.eng .so{color:var(--theirs)}
 .eng .warn{font-size:12px;margin:4px 0;display:flex;gap:6px;align-items:center}
 
-/* 电脑宽屏：两栏 */
-.pcOnly{display:none}
+/* ===================== 暗色主题 =====================
+ * 面板深色、文字浅色；按钮一律是“有底色 + 边框”的块，和正文文字区分开；
+ * 选中状态用金色底 + 深色字；主按钮金色。文字对比度都在 4.5:1 以上。 */
+:root{color-scheme:dark;--night:#150e09;--night2:#2a1d12;
+  --parch:#241b13;--parch2:#30251a;--edge:#5e4a33;--ink:#EDE3CD;--ink2:#BBAA8C;--dim:#A3937A;--txt:#EDE3CD;--line:#4A3624;
+  --btn:#3a2d20;--btn2:#2f2419;--btnEdge:#76603f;--on1:#E6C470;--on2:#B98F3E;--onInk:#1d140d;--field:#18120c;
+  --sheetLine:#5a4630;--rule:#3f3122;--bad:#EC8577}
+.sheet{background:linear-gradient(180deg,#2a2017,#211811);color:var(--ink);
+  box-shadow:inset 0 0 0 1px var(--sheetLine),inset 0 0 0 4px #251c14,inset 0 0 0 5px #3b2e20,0 6px 16px rgba(0,0,0,.55)}
+.sheet h2,.clock b,.sum b{color:#F2DFA9}
+.sheet h2::after{background:linear-gradient(90deg,#8C6A26,transparent)}
+.lab,.sheet .note,table th,.res small,.item .meta,.sheet .item .meta{color:var(--ink2)}
+.sheet .item .meta b,.res{color:var(--ink)}
+select,textarea,input{background:var(--field);color:var(--ink);border-color:var(--edge)}
+input::placeholder,textarea::placeholder{color:#8a7b64}
+/* 按钮：统一的凸起块 */
+.chip,.seg button,.acts button,.rtabs button,.step button,.cnt,.who button,.ghost,.sheet .ghost,.x{
+  background:linear-gradient(180deg,var(--btn),var(--btn2));color:var(--ink);border:1px solid var(--btnEdge);box-shadow:0 1px 0 rgba(0,0,0,.4);cursor:pointer}
+.chip:hover,.seg button:hover,.acts button:hover,.rtabs button:hover,.step button:hover,.cnt:hover,.who button:hover,.ghost:hover{border-color:var(--on1)}
+.chip.on,.seg button.on,.acts button.on,.rtabs button.on,.cnt.has,.bl.rowpick.on{
+  background:linear-gradient(180deg,var(--on1),var(--on2));color:var(--onInk);border-color:var(--on1);text-shadow:none}
+.ghost.bad,.sheet .ghost.bad{color:var(--bad);border-color:#9a4a3f}
+.bad,.clock b.bad{color:var(--bad)}
+.chip.fac.on{background:linear-gradient(180deg,var(--c),color-mix(in srgb,var(--c) 70%,#000));color:#fff;border-color:var(--c)}
+.seg button.W.on,.seg button.L.on,.seg button.D.on{color:#fff}
+.x{border-color:transparent;background:none;box-shadow:none;color:var(--dim)}
+.x:hover{color:var(--bad)}
+button:disabled{opacity:.45;cursor:default}
+/* 细线 */
+th,td,.res,.sheet .item{border-color:var(--rule)}
+.log div{border-color:var(--rule)}
+.log::before{background:linear-gradient(transparent,#76603f 10%,#76603f 90%,transparent)}
+.log div.me::after,.log div.op::after{background:#76603f}
+.log div.me .le,.log div.me > span{background:color-mix(in srgb,var(--mine) 26%,#241b13);color:var(--ink)}
+.log div.op .le,.log div.op > span{background:color-mix(in srgb,var(--theirs) 26%,#241b13);color:var(--ink)}
+.log .le:hover{filter:brightness(1.15)}
+.eng .sm{color:color-mix(in srgb,var(--mine) 55%,#fff)}.eng .so{color:color-mix(in srgb,var(--theirs) 55%,#fff)}
+.flow{box-shadow:inset 0 0 0 1px var(--sheetLine),0 0 0 2px var(--gold),0 0 22px rgba(212,175,90,.35)}
+dialog{background:#241b13;color:var(--ink);box-shadow:0 0 0 1px #76603f,0 20px 50px rgba(0,0,0,.8)}
+.slot{color:#E6C470}
+.tag{color:#fff}
+
+/* 电脑宽屏：左边栏导航 + 两栏内容 */
+.pcOnly,.brand,.navdata{display:none}
 @media (min-width:1100px){
-  .wrap{max-width:1320px}
+  nav{top:0;right:auto;width:200px;flex-direction:column;align-items:stretch;border-top:0;border-right:2px solid var(--gold2);
+    box-shadow:6px 0 18px rgba(0,0,0,.5);background:linear-gradient(90deg,#1a110a,#2c1e13);padding:18px 12px;gap:4px}
+  nav .brand{display:block;font:700 22px "Noto Serif SC","Songti SC",serif;letter-spacing:.12em;color:#E6C470;padding:4px 8px 16px;border-bottom:1px solid rgba(212,175,90,.25);margin-bottom:10px}
+  nav button[data-t]{flex:none;text-align:left;padding:11px 14px;border-radius:3px;font-size:16px}
+  nav button[data-t].on{box-shadow:inset 3px 0 0 var(--gold);background:radial-gradient(ellipse at 0 50%,rgba(212,175,90,.22),transparent 80%)}
+  nav .navdata{display:flex;flex-direction:column;gap:6px;margin-top:auto;padding-top:12px;border-top:1px solid rgba(212,175,90,.25)}
+  nav .navlab{font-size:12px;color:var(--dim);padding:0 4px}
+  nav .navdata button{flex:none;text-align:left;padding:8px 10px;font-size:14px;letter-spacing:0;color:var(--ink);
+    background:linear-gradient(180deg,var(--btn),var(--btn2));border:1px solid var(--btnEdge);border-radius:3px}
+  nav .navdata button:hover{border-color:var(--on1)}
+  body{padding-left:200px}
+  header h1{display:none}
+  .wrap{max-width:1320px;padding-bottom:32px}
+  .toast{bottom:24px;left:calc(50% + 100px)}
   .duo{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:0 16px;align-items:start}
   .duo.coll{grid-template-columns:300px minmax(0,1fr)}
-  .duo>.colL{position:sticky;top:8px;max-height:calc(100vh - 80px);overflow:auto}
+  .duo>.colL{position:sticky;top:8px;max-height:calc(100vh - 24px);overflow:auto}
   .pcOnly{display:block}
   .mbOnly{display:none}
   .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
