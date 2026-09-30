@@ -216,5 +216,58 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); P(g, 'op', '伊克索拉', 'r'); const low = P(g, 'me', '科德温骑士', 'm'); P(g, 'me', '寒冰巨人', 'm');
   g.s.sides.op.coins = 9; g.spendCoins('op', 5); ok(g.find(low.uid), '败德：花 5 不触发'); g.spendCoins('op', 3); ok(!g.find(low.uid), '败德 8：累计花 8 → 摧毁最低敌军');
 }
+
+// ---------- 最后补齐的 6 张 ----------
+{ // 洞察之球：+2 活力 2；进墓场后己方打出 3 张特殊牌 → 从墓场打出自己并佚亡
+  const g = game(); const a = P(g, 'me', '科德温骑士', 'm');
+  g.chooser = () => [a]; g.play('me', 'Orb of Insight');
+  ok(a.power === 7 && a.status.vitality === 2 && g.s.sides.me.graveWatch.length === 1, '洞察之球：+2、活力 2，墓场里开始计数');
+  g.play('me', '绞盘'); g.play('me', '绞盘'); ok(g.s.sides.me.graveWatch[0].vars.count === 1 && a.power === 17, '洞察之球：2 张特殊牌后计数 1');
+  g.play('op', '绞盘'); ok(g.s.sides.me.graveWatch[0].vars.count === 1, '洞察之球：对方的特殊牌不算');
+  g.play('me', '绞盘');
+  ok(a.power === 24 && a.status.vitality === 4 && g.s.sides.me.banished.includes('Orb of Insight') && !g.s.sides.me.grave.includes('Orb of Insight') && !g.s.sides.me.graveWatch.length,
+     '洞察之球：计数归零从墓场打出自己（+2、活力 +2），随后放逐');
+}
+{ // 棱镜吊坠：特殊牌指定友军 → 活力 = 人口；指定敌军 → 重伤
+  const g = game(); P(g, 'me', '棱镜吊坠', 'r'); const a = P(g, 'me', '科德温骑士', 'm'), e = P(g, 'op', '寒冰巨人', 'm');
+  g.chooser = () => [a]; g.play('me', '绞盘'); ok(a.status.vitality === 4, '棱镜吊坠：绞盘（4 人口）指定友军 → 活力 4');
+  g.chooser = () => [e]; g.play('op', '绞盘'); ok(!e.status.bleed && !e.status.vitality, '棱镜吊坠：对方的特殊牌不触发');
+  g.chooser = req => /点该排/.test(req.prompt) ? [e] : null; g.play('me', '撕裂'); ok(!e.status.bleed, '棱镜吊坠：选排的特殊牌不算指定单位');
+}
+{ // 精灵先知：被铜色特殊牌指定 → 生成并打出同名牌一次
+  const g = game(); const s = P(g, 'me', '精灵先知', 'm');
+  g.chooser = () => [s]; g.play('me', '绞盘');
+  ok(s.power === 4 + 10 && s.vars.count === 0, '精灵先知：绞盘复制一次（+5 ×2）');
+  g.play("me", "绞盘"); ok(s.power === 19, '精灵先知：倒数用完不再复制');
+}
+{ // 棘手困境：对方打出 ≤4 战力单位翻开 → 锁定；正面朝上时回合结束相邻 +2，对方停牌 -1 并锁定
+  const g = game(); const x = P(g, 'me', '科德温骑士', 'm'); const st = P(g, 'me', '棘手困境', 'm'); const y = P(g, 'me', '科德温骑士', 'm');
+  ok(st.status.ambush, '棘手困境：伏击背面朝上');
+  P(g, 'op', '寒冰巨人', 'm'); ok(st.status.ambush, '棘手困境：对方打出高战力单位不翻');
+  P(g, 'op', '班阿德的学生', 'm'); ok(!st.status.ambush && st.status.lock, '棘手困境：对方打出 ≤4 → 翻开并锁定');
+  const g2 = game(); const a = P(g2, 'me', '科德温骑士', 'm'); const t2 = P(g2, 'me', '棘手困境', 'm');
+  g2.flip(t2); g2.endTurn(); ok(a.power === 7, '棘手困境：正面朝上，己方回合结束相邻 +2');
+  g2.pass('op'); ok(t2.status.lock && t2.vars.dec === 1, '棘手困境：对方停牌 → 数值 -1、锁定自身');
+}
+{ // 校友会：最大耐性 ≥4 狂热；近战伤害 = 最大耐性
+  const g = game(); const s = P(g, 'me', '班阿德的学生', 'm'); const e = P(g, 'op', '寒冰巨人', 'm');
+  for (let i = 0; i < 8; i++) g.endTurn();
+  ok(g.s.sides.me.vars.maxPat['班阿德的学生'] === 4, '校友会：记录班阿德的学生最大耐性 4');
+  g.destroy(s); const al = P(g, 'me', '校友会', 'm'); ok(al.zeal, '校友会：最大耐性 ≥4 → 狂热（学生离场后仍保留）');
+  g.chooser = () => [e]; g.order(al.uid); ok(e.power === 3, '校友会（近战）：造成 4 点伤害');
+  const g2 = game(); const al2 = P(g2, 'me', '校友会', 'm'); ok(!al2.zeal, '校友会：没有耐性单位 → 不狂热');
+}
+{ // 拉尔维克的埃兰：牌组单位 +1，之后上场带增益；指令转移牌组里剩下的增益；亢奋 3 免疫
+  const g = game(); let deck = ['科德温骑士', '科德温骑士', '寒冰巨人', '绞盘'];
+  g.deckInfo = sd => sd === 'me' ? deck.slice() : null;
+  g.chooser = req => req.kind === 'frenzy' ? true : null;
+  const er = P(g, 'me', '拉尔维克的埃兰', 'm'); ok(er.status.immune, '埃兰：亢奋 3 成立 → 免疫');
+  deck = ['科德温骑士', '科德温骑士', '绞盘']; const k = g.play('me', '寒冰巨人', 'm', null, { fromDeck: true });
+  ok(k.power === k.base + 1, '埃兰：牌组里的单位之后上场带 +1');
+  g.order(er.uid, { force: true }); ok(er.power === er.base + 2, '埃兰指令：转移牌组里剩下 2 个单位的增益');
+  const g2 = game(); g2.chooser = req => req.kind === 'deckCount' ? 5 : req.kind === 'frenzy' ? false : null;
+  const er2 = P(g2, 'op', '拉尔维克的埃兰', 'm'); g2.order(er2.uid, { force: true });
+  ok(!er2.status.immune && er2.power === er2.base + 5, '埃兰（对方）：按记录的牌组单位数转移；亢奋不成立不免疫');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

@@ -2250,7 +2250,7 @@ B['布蕾恩'] = {
   order: c => { const t = T(c, '布蕾恩：1 伤害', c.enemies()); if (t) c.damage(t, 1); },
 };
 B['布雷恩'] = { deploy: c => {
-  const rows = ['m', 'r'].map(r => c.g.s.sides[c.foe].rows[r]).filter(r => r.length >= 5);   // 亢奋（手牌数）无法推算，按 5 个
+  const rows = ['m', 'r'].map(r => c.g.s.sides[c.foe].rows[r]).filter(r => r.length >= (c.frenzy(3) ? 3 : 5));   // 亢奋 3：改为至少 3 个
   const ends = rows.map(r => r[r.length - 1]);
   const t = ends.length > 1 ? T(c, '布雷恩：摧毁哪排最右', ends) : ends[0];
   if (t) c.destroy(t);
@@ -2401,7 +2401,7 @@ B['蓝山精锐'] = { deployRow: { r: c => { const t = T(c, '蓝山精锐：3 �
 B['布洛克莱昂哨兵'] = { deploy: c => { const t = T(c, '布洛克莱昂哨兵：2 伤害', c.enemies()); if (t) c.damage(t, 2); } };
 B['猫学派猎魔人'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
   c.move(c.self, otherRow(c.self.row));
-  const t = R(c, '猫学派猎魔人：对面排随机 1 伤害', c.enemies().filter(u => u.row === c.self.row)); if (t) c.damage(t, 1);   // 亢奋（手牌数）无法推算
+  const t = R(c, '猫学派猎魔人：对面排随机 1 伤害', c.enemies().filter(u => u.row === c.self.row)); if (t) c.damage(t, c.frenzy(3) ? 2 : 1);   // 亢奋 3：改为 2 点
 } }] };
 B['猫学派猎魔人学徒'] = { deployRow: {
   m: c => { const t = T(c, '猫学派学徒：重伤', c.enemies()); if (t) c.status(t, 'bleed', c.g.rowOf(t).length); },
@@ -2582,6 +2582,86 @@ B['坑道钻机'] = {
 };
 B['大审讯官赫韦德'] = {
   fee: { n: 2, run: c => { const row = c.g.rowOf(c.self); c.spawn('火誓狂热者', c.side, c.self.row, row.indexOf(c.self) + 1); } },
+};
+
+// ================= 最后补齐的 6 张 =================
+// 洞察之球：进墓场后计数 3，己方每打出 1 张特殊牌 -1，归零时从墓场打出自己并获得佚亡（目标来自记录）
+B['Orb of Insight'] = {
+  onPlay: c => { const t = T(c, '洞察之球：+2 并活力 2', c.allies()); if (t) { c.boost(t, 2); c.status(t, 'vitality', 2); } },
+  graveAbilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.special, run: c => {
+    const v = c.self.vars; v.count = (v.count == null ? 3 : v.count) - 1;
+    c.g.log('洞察之球计数', { side: c.side, count: v.count });
+    if (v.count <= 0) { c.leaveGrave(); c.g.play(c.side, 'Orb of Insight', null, null, { fromGrave: true, doomed: true }); }
+  } }],
+};
+// 棱镜吊坠：己方特殊牌指定友军 → 活力，指定敌军 → 重伤，回合数 = 该特殊牌人口数
+B['棱镜吊坠'] = { abilities: [{ on: 'specialTargeted', when: (c, d) => d.side === c.side, run: (c, d) => {
+  const n = d.def.prov || 0; if (n > 0) c.status(d.unit, d.unit.side === c.side ? 'vitality' : 'bleed', n);
+} }] };
+// 精灵先知：被己方铜色特殊牌指定时，生成并打出同名牌（倒数 1：只触发一次）
+B['精灵先知'] = {
+  deploy: c => { if (c.self.vars.count == null) c.self.vars.count = 1; },
+  abilities: [{ on: 'specialTargeted', when: (c, d) => d.unit === c.self && d.side === c.side && d.def.color === '铜' && (c.self.vars.count == null ? 1 : c.self.vars.count) > 0,
+    run: (c, d) => { c.self.vars.count = 0; c.spawnPlay(d.name); } }],
+};
+// 棘手困境：伏击；对方打出战力 ≤4 的单位时翻开。翻开：手牌里的单位 +[6]（只影响手牌），随后锁定自身。
+// 正面朝上时己方回合结束相邻单位 +[2]；对方停牌时两个数值 -1，此时正面朝上则锁定自身
+const stickyVal = (c, n) => Math.max(0, n - (c.self.vars.dec || 0));
+const stickySpring = c => c.lock(c.self);   // 手牌增益 stickyVal(c, 6) 不影响场面
+B['棘手困境'] = (() => {
+  const t = trap({
+    trigger: { on: 'unitPlayed', when: (c, d) => foePlays(c, d) && (c.g.rules.stickyUsesBase ? d.unit.base : (d.landing != null ? d.landing : d.unit.power)) <= 4, run: stickySpring },
+    spring: stickySpring,
+  });
+  t.abilities.push({ on: 'turnEnd', when: (c, d) => d.side === c.side && !c.self.status.ambush, run: c => {
+    const n = stickyVal(c, 2); if (n > 0) c.adjacent().filter(u => u.def.type === 'unit').forEach(u => c.boost(u, n));
+  } });
+  t.abilities.push({ on: 'passed', when: (c, d) => d.side === c.foe, run: c => {
+    c.self.vars.dec = (c.self.vars.dec || 0) + 1;
+    if (!c.self.status.ambush) c.lock(c.self);
+  } });
+  return t;
+})();
+// 校友会：数值 = 己方“班阿德的学生”“艾瑞图萨学徒”达到过的最大耐性（引擎 vars.maxPat，单位离场后保留；对局簿跨小局带入，ASSUME）
+const alumniVal = c => { const M = c.vars.maxPat || {}; return Math.max(M['班阿德的学生'] || 0, M['艾瑞图萨学徒'] || 0); };
+B['校友会'] = {
+  deploy: c => { if (alumniVal(c) >= 4) c.self.zeal = true; },
+  order: c => {
+    const n = alumniVal(c); if (!n) return;
+    if (c.self.row === 'm') { const t = T(c, '校友会：' + n + ' 伤害', c.enemies()); if (t) c.damage(t, n); }
+    else { const t = T(c, '校友会：+' + n, c.allies()); if (t) c.boost(t, n); }
+  },
+};
+// 拉尔维克的埃兰：牌组里的单位 +1（记在 side.deckBuff，之后上场时带上）；亢奋 3：免疫；指令：把牌组里单位的增益转给自己
+// 牌组内容：我方由卡组推算（对局簿 deckInfo），对方按记录里的“牌组单位数”，都没有时提示用改战力
+B['拉尔维克的埃兰'] = {
+  deploy: c => {
+    const S = c.g.s.sides[c.side], L = c.deckUnits();
+    if (L) {
+      const k = {}; L.forEach(n => k[n] = (k[n] || 0) + 1);
+      for (const [n, m] of Object.entries(k)) {
+        const A = S.deckBuff[n] = S.deckBuff[n] || [];
+        A.sort((a, b) => b - a); while (A.length < m) A.push(0);
+        for (let i = 0; i < m; i++) A[i]++;
+      }
+      c.g.log('牌组增益', { side: c.side, n: L.length, by: c.self.name });
+    } else {
+      const n = c.g.chooser ? c.g.chooser({ kind: 'deckCount', side: c.side, source: c.self.name }, c.g) : null;
+      if (n == null) c.g.log('牌组单位数未知', { name: c.self.name, side: c.side });
+      else { const A = S.deckBuff['?'] = S.deckBuff['?'] || []; while (A.length < n) A.push(0); for (let i = 0; i < n; i++) A[i]++; c.g.log('牌组增益', { side: c.side, n, by: c.self.name }); }
+    }
+    if (c.frenzy(3)) c.status(c.self, 'immune', true);
+  },
+  order: c => {
+    const S = c.g.s.sides[c.side], L = c.deckUnits(); let sum = 0;
+    const k = {}; if (L) L.forEach(n => k[n] = (k[n] || 0) + 1);
+    for (const [n, A] of Object.entries(S.deckBuff)) {
+      A.sort((a, b) => b - a);
+      const m = (L && n !== '?') ? Math.min(k[n] || 0, A.length) : A.length;
+      for (let i = 0; i < m; i++) { sum += A[i]; A[i] = 0; }
+    }
+    if (sum > 0) c.boost(c.self, sum);
+  },
 };
 
 const API = { behaviors: B };

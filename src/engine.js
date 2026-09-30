@@ -28,6 +28,10 @@ const DEFAULT_RULES = {
   feeSameTurn: true,          // 费用能力进场当回合就能用（未确认）
   ambushCounts: true,         // 伏击（背面朝上）的单位战力是否计入总分（未确认）
   harmonySelf: true,          // 和谐：打出的正是这张和谐牌时是否也算（未确认）
+  frenzyDefault: false,       // 亢奋：没有记录、也推算不出手牌数时按不成立（未确认）
+  specialTargetEach: true,    // 特殊牌一次指定多个单位时，每个都算“以其为目标”（棱镜吊坠、精灵先知；未确认）
+  stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
+  graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
 };
 
 // ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
@@ -79,7 +83,7 @@ class Game {
   }
   _side() {
     return { rows: { m: [], r: [] }, hand: [], handCount: 0, deck: [], grave: [],
-             banished: [], passed: false, wins: 0, leaderCharges: 0, coins: 0, vars: {} };
+             banished: [], passed: false, wins: 0, leaderCharges: 0, coins: 0, vars: {}, graveWatch: [], deckBuff: {} };
   }
 
   // ---------- 卡牌定义 ----------
@@ -177,6 +181,25 @@ class Game {
         if (inf.on === evt && (!inf.when || inf.when(this.ctx(u), data))) inf.run(this.ctx(u), data);
       }
     }
+    // 墓场里的牌的能力（graveAbilities）：牌离开墓场后自动失效
+    for (const sd of ['me', 'op']) {
+      const S = this.s.sides[sd];
+      if (!S.graveWatch || !S.graveWatch.length) continue;
+      const cnt = {};
+      S.graveWatch = S.graveWatch.filter(w => { cnt[w.name] = (cnt[w.name] || 0) + 1; return S.grave.filter(n => n === w.name).length >= cnt[w.name]; });
+      for (const w of S.graveWatch.slice()) {
+        if (!S.graveWatch.includes(w)) continue;
+        const d = this.def(w.name), c = this.graveCtx(w);
+        for (const ab of d.graveAbilities || []) if (ab.on === evt && (!ab.when || ab.when(c, data))) ab.run(c, data);
+      }
+    }
+  }
+  // 墓场里的牌用的上下文：self 是一个伪单位，vars 保存计数
+  graveCtx(w) {
+    const pseudo = { side: w.side, name: w.name, def: this.def(w.name), uid: null, vars: w.vars, status: {} };
+    const c = this.ctx(pseudo);
+    c.leaveGrave = () => { const S = this.s.sides[w.side], i = S.graveWatch.indexOf(w); if (i >= 0) S.graveWatch.splice(i, 1); };
+    return c;
   }
 
   // ---------- 查询 ----------
@@ -298,7 +321,12 @@ class Game {
       this.log('待选', { prompt: req.prompt, from: req.from.map(u => u.uid || u) }, true);
       return [];
     }
-    return Array.isArray(pick) ? pick : [pick];
+    const out = Array.isArray(pick) ? pick : [pick];
+    // 正在结算的特殊牌手动指定的单位（随机结果、牌组里的牌不算）：结算完发 specialTargeted
+    const fr = this._specStack && this._specStack[this._specStack.length - 1];
+    if (fr && req.source === fr.name && req.kind !== 'random' && req.kind !== 'deck' && !/点该排/.test(req.prompt || ''))   // 点单位代表选排的不算指定单位
+      for (const u of this.rules.specialTargetEach ? out : out.slice(0, 1)) if (u && u.uid && !fr.picked.includes(u)) fr.picked.push(u);
+    return out;
   }
 
   // ---------- 记录 ----------
@@ -327,6 +355,7 @@ class Game {
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
       targets: us => g.targetable(us, u.side),
       dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
+      frenzy: n => g.frenzy(u.side, n, u), deckUnits: () => g.deckUnits(u.side),
       bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
       coins: () => g.s.sides[u.side].coins, gainCoins: n => g.gainCoins(u.side, n, u), spendCoins: n => g.spendCoins(u.side, n, u),
@@ -376,10 +405,17 @@ class Game {
       const pseudo = { side: player, name, def: d, uid: null };
       this.log('打出', { side: player, name, special: true, unmodeled: !!d.unmodeled });
       if (d.profit) this.gainCoins(player, d.profit, pseudo);
-      if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
-      this.s.sides[player].grave.push(name);
+      const fr = { name, picked: [] };
+      (this._specStack = this._specStack || []).push(fr);
+      try { if (d.onPlay) d.onPlay(this.ctx(pseudo), opts); } finally { this._specStack.pop(); }
+      // 佚亡的特殊牌（洞察之球从墓场打出自己）结算后放逐
+      (opts.doomed ? this.s.sides[player].banished : this.s.sides[player].grave).push(name);
       this._countTags(player, d);
-      this.emit('cardPlayed', { side: player, name, special: true, def: d, spawned: !!opts.spawned });
+      if (!(opts.fromGrave && d.graveAbilities && !this.rules.graveSelfPlayCounts))
+        this.emit('cardPlayed', { side: player, name, special: true, def: d, spawned: !!opts.spawned, fromGrave: !!opts.fromGrave });
+      for (const t of fr.picked) if (this.find(t.uid)) this.emit('specialTargeted', { unit: t, side: player, name, def: d, spawned: !!opts.spawned });
+      // 墓场里的能力（洞察之球）：进墓场后才开始监听，所以不响应打出它自己的这一次
+      if (!opts.doomed && d.graveAbilities) this.s.sides[player].graveWatch.push({ name, side: player, vars: {} });
       this._symbiosis(player, d);
       return null;
     }
@@ -391,6 +427,7 @@ class Game {
     const ech = this.s.sides[player].echoed;
     if (opts.fromDeck && ech && ech.includes(name)) { ech.splice(ech.indexOf(name), 1); u.status.doomed = true; }
     if (!this._place(u, side, row, pos)) return null;
+    if (!opts.spawned) this._deckBuff(u, player);
     this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled, player });
     this._enter(u, true, Object.assign({}, opts, { player }));
     if (opts.power != null && this.find(u.uid) && opts.power !== u.power) {
@@ -404,6 +441,7 @@ class Game {
   summon(name, side, row, pos, src) {
     const u = this.makeUnit(name, side); u.origin = 'summon';
     if (!this._place(u, side, row, pos)) return null;
+    this._deckBuff(u, side);
     this.log('召唤', { side, name, uid: u.uid, row, by: src && src.name });
     this._enter(u, false, {});
     return u;
@@ -419,6 +457,33 @@ class Game {
     return u;
   }
 
+  // 牌组里的单位受到的增益（拉尔维克的埃兰）：这张牌之后上场时带上（按同名牌里增益最高的一张算）
+  _deckBuff(u, side) {
+    const L = this.s.sides[side].deckBuff[u.name];
+    if (!L || !L.length) return;
+    L.sort((a, b) => b - a);
+    const b = L.shift();
+    if (b > 0) { u.power += b; this.log('牌组里的增益', { uid: u.uid, name: u.name, n: b }); }
+  }
+  // 牌组里的单位（对局簿提供 deckInfo(side) → 牌名数组；不知道时为 null）
+  deckUnits(side) {
+    const L = this.deckInfo ? this.deckInfo(side, this) : null;
+    return L ? L.filter(n => this.def(n).type === 'unit') : null;
+  }
+  // 亢奋 N：手牌不多于 N。记录（chooser kind 'frenzy'）或对局簿推算的手牌数；都没有时按 frenzyDefault
+  frenzy(side, n, src) {
+    const v = this.chooser ? this.chooser({ kind: 'frenzy', n, side, source: src && src.name }, this) : null;
+    if (v != null) return !!v;
+    this.log('亢奋未知', { name: src && src.name, n, side });
+    return !!this.rules.frenzyDefault;
+  }
+  // 己方各耐性单位达到过的最大耐性（校友会），单位离场后仍保留
+  _notePat(u) {
+    if (u.pat == null) return;
+    const M = this.s.sides[u.side].vars.maxPat = this.s.sides[u.side].vars.maxPat || {};
+    M[u.name] = Math.max(M[u.name] || 0, u.pat);
+  }
+
   _enter(u, played, opts) {
     const c = this.ctx(u), d = u.def;
     const player = (opts && opts.player) || u.side;
@@ -426,6 +491,7 @@ class Game {
     if (played && d.ambush) { u.status.ambush = true; this.log('伏击', { uid: u.uid, name: u.name }); }
     // 列阵：近战狂热，远程自身 +1
     if (d.formation) { if (u.row === 'm') u.zeal = true; else this.boost(u, 1, u); }
+    this._notePat(u);
     if (played && d.profit) this.gainCoins(player, d.profit, u);        // 利润：打出时获得金币
     // 献金：先决定付不付（u.tributePaid），部署里“献金：改为……”据此分支，付了再结算献金效果
     if (played && (d.tributeN || d.tribute)) u.tributePaid = this.decideTribute(u, player);
@@ -441,7 +507,7 @@ class Game {
       if ((d.tags || []).includes('陷阱')) this.s.sides[player].vars.trapsRound = (this.s.sides[player].vars.trapsRound || 0) + 1;
       this._countTags(player, d);
       this.emit('cardPlayed', { side: player, name: u.name, unit: u, def: d });
-      if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player });
+      if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player, landing: opts && opts.power != null ? opts.power : null });
       this._symbiosis(player, d);
     }
   }
@@ -816,7 +882,7 @@ class Game {
     for (const u of this.allUnits(side)) {
       const pt = u.def.patience;
       if (u.pat == null || u.status.lock || u.orderUsed > 0 || (pt !== true && pt !== u.row)) continue;
-      u.pat++; this.log('耐性', { uid: u.uid, name: u.name, pat: u.pat });
+      u.pat++; this._notePat(u); this.log('耐性', { uid: u.uid, name: u.name, pat: u.pat });
       this.emit('patience', { unit: u });
     }
     this.emit('turnEnd', { side });
@@ -904,6 +970,7 @@ class Game {
     if (u.timer != null) o.timer = u.timer;
     if (u.def.order && u.def.cooldown == null && (u.def.charges != null || u.bonusCharges)) o.charges = Math.max(0, (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0) - u.orderUsed);
     if (u.pat != null) o.pat = u.pat;
+    if (u.vars && u.vars.count != null) o.count = u.vars.count;
     if (u.def.cooldown != null) o.cd = u.cd || 0;
     const fn = u.def.fee ? u.def.fee.n : u.def.feeN;
     if (fn != null) o.fee = fn;
