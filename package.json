@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node build.js",
     "test": "node gwent_engine_test.js && node gwent_cards_test.js && node gwent_numbers_check.js && node gwent_ui_test.js && node gwent_replay_r1.js > /dev/null",
-    "smoke": "node gwent_cards_smoke.js"
+    "smoke": "node gwent_cards_smoke.js",
+    "sync": "node tools/sync_gwentone.js"
   },
   "devDependencies": {
     "jsdom": "^30.1.1"

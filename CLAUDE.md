@@ -19,7 +19,8 @@
 - 可安装网页（PWA）：`src/manifest.webmanifest` `src/sw.js`（先网络后缓存）`src/icon-192/512.png` `icon.svg`，打包时复制到 `dist/`；只在 http(s) 网址下注册，本地打开 html 不受影响。
 - `src/patches.js`：月度平衡补丁（`PATCHES`，按日期记 `pw/pv/tx/txe` 的 `[旧, 新]`）。data.js 是基线，浏览器载入时 `applyAll(RAW)` 套到最新；推算按对局日期 `rawAt(RAW, g.date)` 回退到当时版本（旧对局不受新补丁影响）；卡牌详情显示改动历史。测试脚本里载入 RAW 后也要 `applyAll`。
 - `gwent_numbers_check.js`：代码里的数字（2~30）卡面上必须也有，防止补丁改了数值代码没跟上；已知正常情况记在 `numbers_baseline.json`（`--update` 重写）。补丁里改了效果文字的牌必须写 `code: '已同步'|'无需改'`。已加进 `npm test`。
-- 月度更新流程：用户给补丁说明（链接或粘贴）→ 写进 `patches.js` → 效果改了的同步 `cards.js` → `npm test` + 冒烟 → PR。
+- 数据版本：data.js 是 **v14.9.0（2026-09-01）**，已和 gwent.one 核对（`patches.js` 的 `BASE`）。gwent.one 每月 1 日发布平衡委员会补丁（版本号 14.10.0、14.11.0…）。
+- 月度更新流程：`npm run sync -- 14.10.0` 预览（`tools/sync_gwentone.js` 用 curl 读 `gwent.one/{en,cn}/cards/changelog/<版本>`，按卡图编号 RAW[12] 对应我们的牌，列出每张改动、我们的数据是否已是新值），确认后加 `--write` 写进 `patches.js` → 效果文字改了的牌检查 `cards.js`、条目写 `code`（只改领袖人口上限的自动标“无需改”）→ `node build.js && npm test && npm run smoke` → PR。环境网络需要允许 `gwent.one`、`api.gwent.one`。注意 `api.gwent.one` 的新版本数据可能滞后（14.9.0 返回的还是 14.8.0），以改动页为准。
 - `src/cardflags.js`：`node build.js` 时从 `cards.js` 注释自动生成（ASSUME → 推测，用改战力/推算不了/按记录 → 需手动），偏差报告用，不要手改。
 - 对局簿数据存 localStorage 键 `gwent-tracker-v3`，**修改时必须保证旧数据能继续用**。
 - `gwent_engine_test.js`：底层测试（假卡），`node gwent_engine_test.js`。
