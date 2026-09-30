@@ -324,6 +324,7 @@ dialog{background:#241b13;color:var(--ink);box-shadow:0 0 0 1px #76603f,0 20px 5
 <div class="seg" style="gap:8px"><div style="flex:1"><div class="lab">粮草</div><input id="cdPv" inputmode="numeric"></div><div style="flex:1"><div class="lab">战力</div><input id="cdPw" inputmode="numeric"></div></div>
 <div class="row"><div class="lab">效果</div><textarea id="cdTx" style="height:24vh"></textarea></div>
 <div class="row"><div class="lab">别名（搜索时也能用，例如简称）</div><input id="cdAl"></div>
+<div class="row" id="cdF2row"><div class="lab">也属于阵营（双阵营牌，牌库和组卡时两边都能看到）</div><div class="chips" id="cdF2"></div></div>
 <p class="note" id="cdEn" style="white-space:pre-wrap"></p>
 <div class="btns"><button class="primary" id="cdOk" style="flex:1">保存修改</button><button class="ghost" id="cdReset">恢复默认</button><button class="ghost" id="cdNo">关闭</button></div></dialog>
 <dialog id="dlg"><h2 id="dlgT"></h2><p class="note" id="dlgN"></p><input type="file" id="fileIn" accept=".json,application/json" style="margin-bottom:8px"><button class="ghost hidden" id="dlgPaste" style="margin-bottom:8px">📋 点击粘贴</button><textarea id="dlgX"></textarea>
@@ -1449,7 +1450,10 @@ function migrate(){const m=n=>EN2ZH[n]||n;let ch=false;const mm=n=>{const r=m(n)
   const fixG=g=>{if(!g)return;g.log.forEach(x=>{if(x.c)x.c=mm(x.c);});if(g.stuck)g.stuck=g.stuck.map(mm);if(g.opLeader)g.opLeader=mm(g.opLeader);if(g.leader)g.leader=mm(g.leader);};
   (db.games||[]).forEach(fixG);fixG(db.live);db.edits=db.edits||{};return ch;}
 function addCustom(){(db.custom||[]).forEach(x=>{if(BY[x.n])return;const c={i:C.length,n:x.n,f:x.f,col:x.col,t:x.t,pw:x.pw||"-",pv:+x.pv||0,rar:"",tags:"自定义",tx:x.tx||"",en:"",txe:"",ser:"custom",custom:true};c.orig={pw:c.pw,pv:c.pv,tx:c.tx};C.push(c);BY[c.n]=c;});}
-function applyEdits(){C.forEach(c=>{const e=db.edits[c.n];Object.assign(c,c.orig,{alias:""});if(e){if(e.pv!=null)c.pv=e.pv;if(e.pw!=null)c.pw=e.pw;if(e.tx)c.tx=e.tx;c.alias=e.alias||"";}});}
+// 双阵营牌：数据里只有一个阵营，另一个阵营写在这里；用户可在卡牌详情里改（存进 edits.f2）
+const DUAL={"神殿守卫":["NR"]};
+const inFac=(c,f)=>c.f===f||(c.f2||[]).includes(f);
+function applyEdits(){C.forEach(c=>{const e=db.edits[c.n];Object.assign(c,c.orig,{alias:"",f2:(e&&e.f2)||DUAL[c.n]||[]});if(e){if(e.pv!=null)c.pv=e.pv;if(e.pw!=null)c.pw=e.pw;if(e.tx)c.tx=e.tx;c.alias=e.alias||"";}});}
 async function load(){try{const raw=await readRaw();if(raw)db=JSON.parse(raw);}catch(e){}
   if(!db.games.length&&!db.decks.length){for(const k of OLDKEYS){try{const s=localStorage.getItem(k);if(s){ui.oldData=s;break;}}catch(e){}}}
   if(migrate())persist();addCustom();applyEdits();
@@ -1464,7 +1468,7 @@ function deckInfo(d){let n=0,pv=0,units=0,bad=[];for(const[name,k]of Object.entr
   const L=BY[d.leader];const lim=150+(L?L.pv:0);return{n,pv,lim,units,bad};}
 function outcome(rs){let w=0,l=0;rs.forEach(r=>{if(r.res==="W")w++;else if(r.res==="L")l++;else if(r.res==="D"){w++;l++;}});
   if(w>=2&&l>=2)return{res:"平",w,l};if(w>=2)return{res:"胜",w,l};if(l>=2)return{res:"负",w,l};return null;}
-function search(q,pool,prio,facs){q=q.trim();if(!q)return[];const ql=q.toLowerCase();const out=[];for(const c of pool){let p=c.n.toLowerCase().indexOf(ql);if(p<0&&c.alias)p=c.alias.toLowerCase().indexOf(ql)>=0?5:-1;if(p<0&&c.en)p=c.en.toLowerCase().indexOf(ql)>=0?20:-1;if(p<0)continue;out.push([c,(prio&&prio.has(c.n)?-200:0)+(facs&&!facs.includes(c.f)?100:0)+p+c.n.length/100]);}
+function search(q,pool,prio,facs){q=q.trim();if(!q)return[];const ql=q.toLowerCase();const out=[];for(const c of pool){let p=c.n.toLowerCase().indexOf(ql);if(p<0&&c.alias)p=c.alias.toLowerCase().indexOf(ql)>=0?5:-1;if(p<0&&c.en)p=c.en.toLowerCase().indexOf(ql)>=0?20:-1;if(p<0)continue;out.push([c,(prio&&prio.has(c.n)?-200:0)+(facs&&!facs.some(f=>inFac(c,f))?100:0)+p+c.n.length/100]);}
   return out.sort((a,b)=>a[1]-b[1]).slice(0,10).map(x=>x[0]);}
 function cardTag(c){return c?`<span class="tag ${c.col==="金"?"gold":"bronze"}">${c.col==="领袖"?"领":c.col}${c.pv?" "+c.pv:""}</span>`:"";}
 // opts.paste：导入类对话框显示“点击粘贴”；opts.file：显示选择文件
@@ -1897,26 +1901,32 @@ function rDeck(){let d=deckById(ui.deckSel);let h=`<div class="btns" style="marg
 const PVB=[["4","≤4",c=>c.pv<=4],["5","5",c=>c.pv===5],["6","6",c=>c.pv===6],["7","7",c=>c.pv===7],["8","8",c=>c.pv===8],["9","9",c=>c.pv===9],["10","10",c=>c.pv===10],["11","11–13",c=>c.pv>=11&&c.pv<=13],["14","14+",c=>c.pv>=14]];
 const RARS=["普通","稀有","史诗","传奇"],COLS=["金","铜"];
 const SERS=[...new Set(C.filter(c=>!c.token&&c.ser&&c.ser!=="basic").map(c=>c.ser))];
-ui.cfil={pv:[],rar:[],col:[],ser:[]};
-const collBase=()=>C.filter(c=>(ui.collF==="ALL"||c.f===ui.collF)&&!isTactic(c)&&!isLeader(c)&&!c.token);
+ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};
+const collBase=()=>C.filter(c=>(ui.collF==="ALL"||inFac(c,ui.collF))&&!isLeader(c)&&!c.token);
+const TYPES=["单位","神器","特殊","战术"];
+// 词条：辞典里的关键词，只列出当前列表里出现过的，按出现次数排
+const KWS=["部署","指令","神赐","激励","列阵","狂热","遗愿","致死","护盾","护甲","坚韧","佚亡","免疫","卫士","遮蔽","活力","重伤","中毒","锁定","净化","治愈","召唤","生成","灌注","对决","交锋","吞噬","放逐","计时","冷却","充能","老兵","剧情","统御","威势","夜宴","壁垒","破甲","狂暴","亢奋","会师","先机","成长","和谐","同化","战狂","掠食","操控","翼守","耐性","血统","赤诚","共生","共谋","抓捕","创造","揭示","丢弃","不忠","伏击","回响","增兵","利润","献金","费用","囤积","恐吓","赏金","败德","破裂","癫狂","翻开","近战","远程"];
 function collFilter(list){const F=ui.cfil;
   if(F.pv.length)list=list.filter(c=>PVB.some(([k,,t])=>F.pv.includes(k)&&t(c)));
   if(F.rar.length)list=list.filter(c=>F.rar.includes(c.rar));
   if(F.col.length)list=list.filter(c=>F.col.includes(c.col));
   if(F.ser.length)list=list.filter(c=>F.ser.includes(c.ser));
+  if(F.t.length)list=list.filter(c=>F.t.includes(c.t));
+  if(F.kw.length)list=list.filter(c=>F.kw.every(k=>(c.tx||"").includes(k)));   // 词条：同时具备
   return list;}
 function collList(){let list=collFilter(collBase());const q=ui.collQ.trim().toLowerCase();
   if(q)list=list.filter(c=>c.n.toLowerCase().includes(q)||c.en.toLowerCase().includes(q)||(c.alias||"").toLowerCase().includes(q));if(ui.collOwned)list=list.filter(c=>db.owned[c.n]>0);
   list=list.slice().sort((a,b)=>((b.col==="金")-(a.col==="金"))||(b.pv-a.pv));
   const info=ui.collMode==="info";
   return (list.length?`<div class="grid">${list.map(c=>{const k=db.owned[c.n]||0;return tile(c.n,k?"×"+k:"",(k?"":"gone")+(db.edits[c.n]?" edited":""),info?`data-cardb="${c.i}"`:`data-own="${c.i}"`);}).join("")}</div>`:`<p class="note">没有符合的牌。</p>`);}
-function rColl(){const f=ui.collF;const all=collBase();const own=all.filter(c=>db.owned[c.n]>0).length;
+function rColl(){const f=ui.collF;const all=collBase().filter(c=>!isTactic(c));const own=all.filter(c=>db.owned[c.n]>0).length;
   const cp=all.filter(c=>c.ser!=="unmillable");const copies=cp.reduce((s,c)=>s+Math.min(db.owned[c.n]||0,maxCopy(c)),0),copTot=cp.reduce((s,c)=>s+maxCopy(c),0);
-  const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length;
+  const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length+F.t.length+F.kw.length;
+  const base=collBase();const kwc=KWS.map(k=>[k,base.filter(c=>(c.tx||"").includes(k)).length]).filter(([k,n])=>n>0||F.kw.includes(k)).sort((a,b)=>b[1]-a[1]);
   const grp=(lab,key,items)=>`<div class="row"><div class="lab">${lab}</div><div class="chips">${items.map(([v,t])=>`<button class="chip ${F[key].includes(v)?"on":""}" data-cfil="${key}|${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
   let h=`<div class="chips" style="margin-bottom:10px"><button class="chip ${f==="ALL"?"on":""}" data-cf="ALL">全部</button>${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
-   <div class="duo coll"><div class="colL"><details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(all).length}</b> 张）`:""}</summary>
-    ${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,x]))}
+   <div class="duo coll"><div class="colL"><details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(base).length}</b> 张）`:""}</summary>
+    ${grp("类型","t",TYPES.map(x=>[x,x]))}${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,x]))}${grp("词条（同时具备）","kw",kwc.map(([k,n])=>[k,k+" "+n]))}
     ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details></div><div class="colR">
    <div class="sheet"><div class="sum"><span>${f==="ALL"?"全部阵营":FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
    <p class="note">「按游戏算法」：铜卡算 2 份，不算初始卡、领袖和战术。数据库总数会比游戏多约 9，拥有数应该和游戏一致。</p>
@@ -1987,7 +1997,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
-    cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[]};rColl();},
+    cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};rColl();},
     collCount(){ui.collMode="count";rColl();},collInfo(){ui.collMode="info";rColl();},
     exColl(){copyOut("牌库代码",collCode());},
     addCard(){if(ui.collF==="ALL")return toast("先选一个阵营");openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{
@@ -2005,9 +2015,13 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
 function openCard(c){$("#cdN").textContent=c.n;
   $("#cdMeta").textContent=`${FN[c.f]}　${c.col} ${c.t}　${c.rar}${c.tags?"　"+c.tags:""}${c.en&&c.en!==c.n?"　英文名 "+c.en:""}${db.edits[c.n]?"　（已修改）":""}`;
   $("#cdPv").value=c.pv;$("#cdPw").value=c.pw;$("#cdTx").value=c.tx;$("#cdAl").value=c.alias||"";
+  let f2=(c.f2||[]).slice();
+  const drawF2=()=>{$("#cdF2").innerHTML=["NR","MO","NG","ST","SK","SY"].filter(x=>x!==c.f).map(x=>`<button class="chip fac ${f2.includes(x)?"on":""}" style="--c:var(--${x})" data-f2="${x}">${FN[x]}</button>`).join("");
+    $("#cdF2").querySelectorAll("[data-f2]").forEach(b=>b.onclick=()=>{const x=b.dataset.f2;f2=f2.includes(x)?f2.filter(y=>y!==x):[...f2,x];drawF2();});};
+  $("#cdF2row").classList.toggle("hidden",c.f==="NE"||isLeader(c));drawF2();
   $("#cdEn").textContent=c.txe?"游戏当前英文描述（数值以这个为准，上面的中文描述可能是旧版本）：\n"+c.txe:"";
   $("#cdOk").onclick=()=>{const pv=parseInt($("#cdPv").value),pw=$("#cdPw").value.trim(),tx=$("#cdTx").value.trim(),al=$("#cdAl").value.trim();const e={};
-    if(!isNaN(pv)&&pv!==c.orig.pv)e.pv=pv;if(pw&&pw!==String(c.orig.pw))e.pw=pw;if(tx&&tx!==c.orig.tx)e.tx=tx;if(al)e.alias=al;
+    if(!isNaN(pv)&&pv!==c.orig.pv)e.pv=pv;if(pw&&pw!==String(c.orig.pw))e.pw=pw;if(tx&&tx!==c.orig.tx)e.tx=tx;if(al)e.alias=al;const d2=DUAL[c.n]||[];if(f2.slice().sort().join()!==d2.slice().sort().join())e.f2=f2;
     if(Object.keys(e).length)db.edits[c.n]=e;else delete db.edits[c.n];applyEdits();persist();$("#cdlg").close();render();toast("已保存修改");};
   $("#cdReset").onclick=()=>{delete db.edits[c.n];applyEdits();persist();$("#cdlg").close();render();toast("已恢复默认");};
   $("#cdlg").showModal();}
