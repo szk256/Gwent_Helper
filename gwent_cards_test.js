@@ -100,5 +100,34 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g = game(); P(g, 'me', '科德温骑士', 'm'); const last = P(g, 'me', '亚甸槌击者', 'm'); g.play('op', '备用计划', null, null, { player: 'op' });
   ok(last.power === 3, '备用计划：打对手上一个打出的单位');
 }
+
+// ---------- 怪兽 ----------
+{ // 成长：打出战力更高的单位 +1；齐齐摩女王成长时同排类虫 +1
+  const g = game(); const s1 = P(g, 'op', '尖啸女妖', 'm'); P(g, 'op', '寒冰巨人', 'm');
+  ok(s1.power === 4, '成长：打出更高战力单位 +1（3→4）');
+  const q = P(g, 'op', '齐齐摩女王', 'r'); const d = P(g, 'op', '安德莱格幼虫', 'r');
+  g.play('op', '可怖盛宴', null, null, { player: 'op' });
+  ok(q.power === 5 && d.power >= 3, '齐齐摩女王：打出生物牌触发成长，同排类虫 +1');
+}
+{ // 吞噬：获得被吞噬单位的战力
+  const g = game(); const t = P(g, 'op', '寒冰巨人', 'm'); const k = P(g, 'op', '奇美拉', 'm');
+  ok(k.power === 13 && !g.find(t.uid), '奇美拉吞噬寒冰巨人：6+7');
+}
+{ // 触发遗愿：无骨者触发安德莱格虫卵
+  const g = game(); P(g, 'op', '安德莱格虫卵', 'm'); P(g, 'op', '无骨者', 'm');
+  ok(g.units('op').filter(u => u.name === '雄蛛').length === 3, '无骨者：触发虫卵遗愿，生成 3 只雄蛛');
+}
+{ // 汲食
+  const g = game(); const e = P(g, 'me', '科德温骑士', 'm'); const r = P(g, 'op', '雷吉斯：重生', 'm');
+  ok(e.power === 2 && r.power === 4, '雷吉斯：汲食 3');
+}
+{ // 呢喃婆：己方每打出过 1 张老巫妪，伤害 +2
+  const g = game(); P(g, 'op', '织婆', 'r'); const e = P(g, 'me', '寒冰巨人', 'm'); P(g, 'op', '呢喃婆', 'm');
+  ok(e.power === 3, '呢喃婆：打出过 1 张老巫妪 → 4 伤害');
+}
+{ // 蝠翼魔：敌军获得重伤时 +回合数
+  const g = game(); const b = P(g, 'op', '蝠翼魔', 'r'); P(g, 'me', '科德温骑士', 'm'); P(g, 'op', '吸血鬼女', 'm');
+  ok(b.power === 7, '蝠翼魔：敌军重伤 3 → +3');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

@@ -39,6 +39,8 @@
 - **回响**：小局开始时墓场里的回响牌回到牌组顶端，再打出时带佚亡。
 - 其他通用机制：`增兵`（`reinforce`，己方打出战争牌冷却 -1，`def()` 里合成）、`耐性`（`patience`，数值 `u.pat`，初值取卡面 `[n]`，回合结束指令没用过 +1，事件 `patience`）、`operate(u)`（操控，欧德林一人即可，`operateMages` 时法师也算）、`transform(u,名,{keepPower})`、`shuffleBack`（洗回牌组）、`reduceCd`（事件 `cdReduced`）、`bonusCharges`（额外充能）、事件 `ordered`（单位指令和领袖/战术都发）、`unitSpawned`；`side.vars.leaderUses`。ctx 里有 `spawnPlay`（生成并打出）、`leader()`。
 - 和谐（`harmony`，`uniquePrimary` 按第一个类别判断，`harmonySelf` 未确认）、共生（`symbiosis`，己方打出“自然”牌时生成游荡的树人，战力 = 共生数量；ASSUME 每张自然牌只生成 1 个）、事件 `passed`（停牌）、`side.vars.lastUnit`（上一个打出的单位）、`vars.trapsRound`。
+- 成长（`growth`，事件 `growth`）、`triggerDeathwish`（触发遗愿）、`drain`（汲食）、事件 `statusGained`、`s.lastDestroyTurn`、`side.vars.played[类别]`（本局己方打出过的各类别张数）。
+- 会生成整排效果的牌（刺骨冰霜、艾瑞汀、纳吉尔法船员等）在行为里写 `hazardCard:{kind,turns}`（`cards.js` 的 `HZ` / `HZ2`），引擎不自己放，放在哪排按对局簿的“整排效果”记录；打出后界面直接进入整排效果，没记时提示。
 - 陷阱：`cards.js` 的 `trap({trigger, spring, timer})`——打出时背面朝上，条件满足自动翻开结算；手动翻开在对局簿里按“指令”记录。
 - 卡牌脚本约定（`cards.js` 顶部）：`T` 手动目标、`R` 随机结果、`fromDeck` 牌组/墓场/创造出的牌名（来自记录里带出的后续）、`noop` 只影响手牌/牌组/墓场的效果（场面靠后续记录和落地战力）。
 - 整排效果 `HAZARDS`（霜、雨、雾、风暴、龙之梦、血月、灾厄）：拥有者回合开始时结算，每排一个，新的替换旧的，持续回合按卡面，结算后 -1。随机结果走 `choose`（来源 = 效果名）。

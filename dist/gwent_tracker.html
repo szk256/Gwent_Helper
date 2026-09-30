@@ -429,6 +429,8 @@ class Game {
     if (d.intimidate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('罪行'), run: c => c.boost(c.self, d.intimidate) });
     // 和谐：己方打出非中立单位，且其主类别（第一个类别）与己方其他单位都不同时，自身增益
     if (d.harmony) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit.def.fac !== 'NE' && (e.unit !== c.self || c.g.rules.harmonySelf) && c.g.uniquePrimary(e.unit), run: c => c.boost(c.self, d.harmony) });
+    // 成长：己方每打出 1 个战力更高的单位，自身增益（事件 growth 给“成长触发时”的能力用）
+    if (d.growth) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit !== c.self && e.unit.power > c.self.power, run: c => { c.boost(c.self, d.growth); c.g.emit('growth', { unit: c.self }); } });
     // 增兵：己方打出“战争”牌时冷却 -1
     if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
@@ -465,6 +467,7 @@ class Game {
         else if (seg === '增兵') { if (apply) d.reinforce = true; }
         else if ((m = seg.match(/^和谐\s*(\d*)$/))) { if (apply) d.harmony = +(m[1] || 1); }
         else if (seg === '共生') { if (apply) d.symbiosis = true; }
+        else if ((m = seg.match(/^成长\s*(\d*)$/))) { if (apply) d.growth = +(m[1] || 1); }
         else if ((m = seg.match(/^耐性\s*(?:[（(](近战|远程)[）)])?$/))) { if (apply) d.patience = m[1] === '近战' ? 'm' : m[1] === '远程' ? 'r' : true; }
         else return false;
         return true;
@@ -562,6 +565,8 @@ class Game {
     const lead = Object.values(this.s.sides[side].abilities || {}).filter(h => h.def.symbiosis).length;
     return n + lead;
   }
+  // 本局己方打出过的各类别张数（“己方每打出 1 张老巫妪牌”之类）：side.vars.played[类别]
+  _countTags(side, d) { const P = this.s.sides[side].vars.played = this.s.sides[side].vars.played || {}; for (const t of d.tags || []) P[t] = (P[t] || 0) + 1; }
   _symbiosis(side, d) {
     if (!(d.tags || []).includes('自然')) return;
     const n = this.symbiosisCount(side); if (!n) return;
@@ -645,6 +650,8 @@ class Game {
       hoard: x => g.hoard(u.side, x), seize: t => g.seize(t, u.side, u), flip: t => g.flip(t || u, u),
       transform: (t, name, o) => g.transform(t, name, u, o), shuffleBack: t => g.shuffleBack(t, u),
       reduceCd: (t, n) => g.reduceCd(t, n, u), operate: t => g.operate(t || u),
+      deathwishOf: t => g.triggerDeathwish(t, u), drain: (t, n) => g.drain(u, t, n),
+      frost: (side, row) => { const h = g.s.hazards[side][row]; return h && h.kind === '霜' ? h : null; },
       // 生成并打出：单位走“生成（算打出）”，特殊牌直接结算
       spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
       leader: () => Object.values(g.s.sides[u.side].abilities || {}).find(h => h.def.type === 'leader') || null,
@@ -688,6 +695,7 @@ class Game {
       if (d.profit) this.gainCoins(player, d.profit, pseudo);
       if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
       this.s.sides[player].grave.push(name);
+      this._countTags(player, d);
       this.emit('cardPlayed', { side: player, name, special: true, def: d });
       this._symbiosis(player, d);
       return null;
@@ -746,6 +754,7 @@ class Game {
       // by = 打出这张牌的玩家（不忠牌落在对面半场，但算打出者“打出”）
       if (d.type !== 'artifact') this.s.sides[player].vars.lastUnit = u;
       if ((d.tags || []).includes('陷阱')) this.s.sides[player].vars.trapsRound = (this.s.sides[player].vars.trapsRound || 0) + 1;
+      this._countTags(player, d);
       this.emit('cardPlayed', { side: player, name: u.name, unit: u, def: d });
       if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player });
       this._symbiosis(player, d);
@@ -832,6 +841,19 @@ class Game {
     this.log('洗回牌组', { uid: u.uid, name: u.name, by: src && src.name });
     this.emit('returned', { unit: u, src });
   }
+  // 触发遗愿（“触发 1 个友军单位的遗愿能力”）：单位还在场上
+  triggerDeathwish(u, src) {
+    if (!u || !u.def.deathwish || u.status.lock) return;
+    this.log('触发遗愿', { uid: u.uid, name: u.name, by: src && src.name });
+    u.def.deathwish(this.ctx(u));
+  }
+  // 汲食：造成伤害，自身获得等量增益（按实际扣掉的战力）
+  drain(a, b, n) {
+    if (!a || !b) return;
+    const dealt = this.damage(b, n, a);
+    this.log('汲食', { a: a.name, b: b.name, n: dealt });
+    if (dealt > 0) this.boost(a, dealt, a);
+  }
   // 冷却减少（事件 cdReduced，给“相邻单位冷却减少”之类的能力用）
   reduceCd(u, n, src) {
     if (!u || !(u.cd > 0) || n <= 0) return;
@@ -900,6 +922,7 @@ class Game {
       u.status[key] = val;
     }
     this.log('状态', { uid: u.uid, name: u.name, key, val: u.status[key], by: src && src.name });
+    this.emit('statusGained', { unit: u, key, val, src });
     if (key === 'lock' && val && u.status.ambush) this.flip(u, src);   // 伏击被锁定：失去能力并翻开
     if (key === 'shield') this.emit('shieldGained', { unit: u });
   }
@@ -974,6 +997,7 @@ class Game {
     const doomed = this.isDoomed(u);
     (doomed ? this.s.sides[u.side].banished : this.s.sides[u.side].grave).push(u.name);
     this.log('摧毁', { uid: u.uid, name: u.name, by: src && src.name });
+    this.s.lastDestroyTurn = this.s.turn;
     if (u.status.bounty) this.gainCoins(OTHER[u.side], u.base, { name: '赏金' });
     // 遗愿：被摧毁并进入墓场时触发；佚亡（放逐）的不触发
     if (u.def.deathwish && !u.status.lock && !doomed) u.def.deathwish(this.ctx(u));
@@ -1823,6 +1847,338 @@ B['梅里泰莉神庙：朝圣'] = { deploy: c => {
   const e = T(c, '朝圣：洗回的敌军', c.enemies().filter(u => u.power <= lim)); if (e) c.shuffleBack(e);
 }, order: noop };
 
+
+// ================= 怪兽 · 批量补全 =================
+const DRONE = '雄蛛', BAT = '蝙魔', RAT = '老鼠';
+const HZ2 = (kind, turns, extra) => Object.assign({ hazardCard: { kind, turns } }, extra || {});   // 生成整排效果：放在哪排按对局簿的“整排效果”记录
+const frostTurnsOn = (c, side) => ['m', 'r'].reduce((a, r) => a + ((c.frost(side, r) || {}).turns || 0), 0);
+const consumeT = (c, prompt, from) => { const t = T(c, prompt, from); if (t) c.consume(t); return t; };
+const graveUnit = (c, prompt) => fromDeck(c, prompt);   // 墓场里的牌：牌名来自记录
+
+// 领袖
+B['不息虫群'] = { charges: 5, order: (c, o) => c.g.spawn(DRONE, c.side, (o && o.row) || 'm', o && o.pos, c.self) };
+B['坚硬甲壳'] = { charges: 3, order: c => { const t = T(c, '坚硬甲壳：3 增益', c.allies()); if (!t) return; c.boost(t, 3); if (!neutral(t)) c.status(t, 'veil', true); } };
+B['无尽渴望'] = { charges: 2, order: c => { const t = T(c, '无尽渴望：摧毁的友军', c.allies()); if (!t) return; const p = t.power, row = t.row; c.destroy(t); const b = c.g.spawn(BAT, c.side, row, null, c.self); if (b) c.boost(b, p); } };
+B['沼泽果实'] = { order: (c, o) => c.g.spawn('格尼阔拉的果实', c.side, (o && o.row) || 'm', o && o.pos, c.self) };
+B['白霜降临'] = HZ2('霜', 2, { charges: 2, order: c => { const t = T(c, '白霜降临：移排', c.enemies()); if (t) c.move(t, otherRow(t.row)); } });
+B['腥膻之味'] = { charges: 3, order: (c, o) => {
+  const t = T(c, '腥膻之味：重伤 3', c.enemies()); if (t) c.status(t, 'bleed', 3);
+  if (c.self.charges === 0 && !c.self.vars.done) { c.self.vars.done = true; c.g.spawn(BAT, c.side, (o && o.row) || 'm', null, c.self); }
+} };
+B['自然之力'] = { order: (c, o) => c.spawnPlay('林妖', (o && o.row) || 'm', o && o.pos) };
+
+// 神器
+B['万魔窟'] = {
+  deploy: c => { const n = fromDeck(c, '万魔窟：生成并打出'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); },
+  order: c => { const t = highestOf(c, c.g.units(), '万魔窟：最高单位并列'); if (t) c.shuffleBack(t); const row = c.g.rowOf(c.self);
+    c.g.spawn(DRONE, c.side, c.self.row, row.indexOf(c.self), c.self); c.g.spawn(DRONE, c.side, c.self.row, c.g.rowOf(c.self).indexOf(c.self) + 1, c.self); },
+};
+B['庄园的隐秘事'] = {
+  deploy: c => { c.self.chapter = 0; const u = c.g.spawn('受诅咒的少女', c.side, c.self.row, posRight(c), c.self); if (u) c.boost(u, 2); },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && d.unit.def.growth && c.self.chapter < 2, run: c => {
+    c.self.chapter++; c.g.log('剧情推进', { name: c.self.name, chapter: c.self.chapter });
+    if (c.self.chapter === 2) { const n = fromDeck(c, '庄园：从牌组打出的最高铜色单位'); if (n) c.playFromDeck(n, c.self.row); }
+  } }],
+};
+B['提尔纳丽雅'] = { deploy: c => { const t = T(c, '提尔纳丽雅：增益', c.allies()); void t; }, order: c => c.spawnPlay('红骑士') };   // 增益量按起始牌组，靠改战力
+B['畏惧者：休眠'] = {};
+B['邪灵法典'] = { order: c => { const t = T(c, '邪灵法典：触发遗愿', c.allies().filter(u => bronze(u) && u.def.deathwish)); if (t) c.deathwishOf(t); } };
+B['鬼婆'] = {
+  status: { doomed: true },
+  deploy: c => { c.self.chapter = 0; c.g.spawn('沙漠女妖', c.side, c.self.row, posRight(c), c.self); },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && d.unit.def.deathwish && c.self.chapter < 2, run: c => {
+    c.self.chapter++; c.g.log('剧情推进', { name: c.self.name, chapter: c.self.chapter });
+    c.spawnPlay(c.self.chapter === 1 ? '幽冥犬' : '夜之妖灵', c.self.row, posRight(c));
+  } }],
+};
+
+// 特殊牌
+B['伊勒瑞斯之怒'] = { onPlay: c => { const t = T(c, '伊勒瑞斯之怒：目标', c.enemies()); if (!t) return; if (c.frost(t.side, t.row)) c.destroy(t); else { const m = Math.max(0, ...c.allies().map(u => u.power)); c.damage(t, m); } } };
+B['呢喃山丘'] = { onPlay: (c, o) => { const n = fromDeck(c, '呢喃山丘：打出的遗愿单位'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['女巫夜宴'] = {};   // 双方墓场召唤：靠记录里的召唤
+B['寄生虫'] = { onPlay: c => { const t = T(c, '寄生虫：目标', c.g.units()); if (!t) return; if (t.side === c.side) c.boost(t, 6); else c.damage(t, 6); } };
+B['巨人力量腰带'] = { onPlay: c => { const t = T(c, '腰带：10 增益', c.allies()); if (t) c.boost(t, 10); } };
+B['戴维娜符文石'] = { onPlay: (c, o) => { const n = fromDeck(c, '戴维娜符文石：创造并打出'); if (n) c.spawnPlay(n, o && o.row, o && o.pos); } };
+B['猩红诅咒'] = HZ2('血月', 5, { onPlay: (c, o) => { const row = (o && o.row) || 'm'; c.g.spawn(BAT, c.side, row, null, c); c.g.spawn(BAT, c.side, row, null, c); } });
+B['纳吉尔法'] = { onPlay: (c, o) => { const n = fromDeck(c, '纳吉尔法：打出的金色牌'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['莉莉丝的预兆'] = { onPlay: (c, o) => { for (let i = 0; i < 2; i++) { const n = fromDeck(c, '莉莉丝的预兆：召唤的单位'); if (!n) break; const u = c.summon(n, c.side, (o && o.row) || 'm'); if (u) { c.status(u, 'doomed', true); c.status(u, 'rupture', true); } } } };
+B['虫群思维'] = { onPlay: noop };
+B['诸界之门'] = HZ2('霜', 3, { onPlay: noop });
+B['酸液喷射'] = { onPlay: c => { const t = T(c, '酸液喷射：目标', c.enemies()); if (!t) return;
+  const inf = { name: '酸液', on: 'unitSpawned', when: (cc, d) => d.unit.side !== cc.side && cc.self.power >= 1 && !cc.self.vars.acidTurn, run: cc => { cc.self.vars.acidTurn = true; cc.g.damage(cc.self, 1, { name: '酸液' }); } };
+  c.infuse(t, inf);
+} };
+B['暗影之瓮'] = { order: c => { const t = T(c, '暗影之瓮：触发遗愿', c.allies().filter(u => u.def.deathwish)); if (t) c.deathwishOf(t); } };
+B['可怖盛宴'] = { onPlay: c => { const e = T(c, '可怖盛宴：3 伤害', c.enemies()); if (e) c.damage(e, 3); const a = T(c, '可怖盛宴：3 增益', c.allies()); if (a) c.boost(a, 3); } };
+B['捕食俯冲'] = { onPlay: c => { const a = lowestOf(c, c.allies(), '捕食俯冲：己方最低并列'), b = lowestOf(c, c.enemies(), '捕食俯冲：对方最低并列'); if (a) c.destroy(a); if (b) c.destroy(b); } };
+B['殷红的塑像'] = { onPlay: c => { const n = graveUnit(c, '殷红的塑像：放逐的对方墓场单位'); const t = T(c, '殷红的塑像：增益', c.allies()); if (n && t) { const gr = c.g.s.sides[c.foe].grave, i = gr.indexOf(n); if (i >= 0) gr.splice(i, 1); c.boost(t, c.g.def(n).base || 0); } } };
+B['物竞天择'] = { onPlay: c => { const t = T(c, '物竞天择：4 伤害', c.enemies()); if (!t) return; const over = Math.max(0, 4 - t.armor - t.power); c.damage(t, 4); for (let i = 0; i < over; i++) c.g.spawn(DRONE, c.side, 'm', null, c); } };
+B['猩红盛宴'] = { onPlay: c => { const t = T(c, '猩红盛宴：目标', c.enemies()); if (!t) return; c.purify(t); c.damage(t, 3); if (c.allies().some(u => has(u, '吸血鬼'))) c.status(t, 'bleed', 3); } };
+B['红骑士'] = HZ2('霜', 4, { onPlay: noop });   // 择一：回合数按记录；“重新打出狂猎单位”用记录
+B['自然进化'] = { onPlay: c => {
+  const t = T(c, '自然进化：友军', c.allies()); if (!t) return;
+  if (has(t, '野兽')) c.boost(t, 9); else c.boost(t, 5);
+  if (has(t, '类虫生物')) for (let i = 0; i < 3; i++) c.g.spawn(DRONE, c.side, t.row, null, c);
+  if (has(t, '食人魔')) c.g.spawn('孽鬼', c.side, t.row, null, c);
+} };
+B['蟹蜘蛛巢穴'] = { onPlay: (c, o) => { for (let i = 0; i < 4; i++) c.g.spawn(DRONE, c.side, (o && o.row) || 'm', null, c); } };
+
+// 金色单位
+B['“魔兽”'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.power < Math.max(...c.g.units().map(u => u.power)), run: c => c.boost(c.self, 2) }] };
+B['伊勒瑞斯'] = { deploy: noop };
+B['伊迪尔'] = { charges: 0,
+  abilities: [{ on: 'unitPlayed', when: (c, d) => foePlays(c, d), run: (c, d) => { c.damage(d.unit, 1); c.self.bonusCharges++; } }],
+  order: c => c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self) };
+B['克尔图里斯'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.row === 'm', run: c => {
+  const a = c.g.units('me').length, b = c.g.units('op').length; if (a === b) return;
+  const t = lowestOf(c, c.g.units(a > b ? 'me' : 'op'), '克尔图里斯：最弱并列'); if (t) c.destroy(t);
+} }] };
+B['克鲁姆国王'] = { deploy: c => { if (c.might()) c.status(c.self, 'resilience', true); } };   // 基础战力按起始牌组：靠落地战力
+B['全知的她'] = { abilities: [{ on: 'roundEnd', when: c => c.feast(), run: c => { const t = c.allies().sort((a, b) => b.base - a.base)[0]; if (t) c.status(t, 'resilience', true); } }] };
+B['冬之女王'] = {};
+B['加尔'] = { deployRow: { m: c => { const t = T(c, '加尔：伤害', c.enemies()); if (t) c.damage(t, t.status.bleed > 0 ? 3 : 1); } }, deathblow: (c, v) => c.boost(c.self, v.base) };
+B['劳拉·朵兰'] = { deploy: c => { const n = frostTurnsOn(c, c.side); if (n) c.damage(c.self, n); }, deathwish: c => c.enemies().forEach(u => c.boost(u, 2)) };
+B['卡兰希尔'] = { deploy: c => { const n = fromDeck(c, '卡兰希尔：手牌里的单位'); if (!n) return; const u = c.g.spawn(n, c.side, c.self.row, posRight(c), c.self); if (u) c.setPower(u, 1); } };
+B['卡兰希尔：金童'] = {};
+B['卡塔卡恩'] = {
+  order: c => c.g.spawn(BAT, c.side, c.self.row, posRight(c), c.self),
+  abilities: [{ on: 'statusGained', when: (c, d) => d.key === 'bleed' && d.unit.side === c.foe, run: c => c.reduceCd(c.self, 1) }],
+};
+B['卢恩'] = { deathwish: noop };   // 从墓场召唤并吞噬：靠记录
+B['原蝠翼魔'] = { deploy: c => { const t = T(c, '原蝠翼魔：重伤 3', c.enemies()); if (t) { c.status(t, 'bleed', 3); c.boost(c.self, 3); } } };
+B['呢喃婆'] = {
+  deploy: c => { const t = T(c, '呢喃婆：伤害', c.enemies()); if (t) c.damage(t, 2 + 2 * ((c.g.s.sides[c.side].vars.played || {})['老巫妪'] || 0)); },
+};
+B['呢喃婆：献礼'] = { deployRow: { r: c => { const n = fromDeck(c, '献礼：打出的生物牌'); if (n) c.playFromDeck(n, c.self.row, posRight(c)); } } };
+B['哥亚特'] = { deathwish: noop };   // 对方召唤：靠记录
+B['夜之女王'] = { deployRow: {
+  m: c => { const t = T(c, '夜之女王：重伤 3', c.enemies()); if (t) c.status(t, 'bleed', 3); },
+  r: c => { const t = T(c, '夜之女王：净化', c.g.units().filter(u => u !== c.self)); if (t) c.purify(t); },
+} };
+B['奥莉安娜'] = {
+  deploy: c => { const n = c.allies().filter(u => has(u, '吸血鬼')).length; const t = T(c, '奥莉安娜：重伤', c.enemies()); if (t && n) c.status(t, 'bleed', n); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.row === 'r', run: c => { const n = c.enemies().filter(u => u.status.bleed > 0).length; if (n) c.boost(c.self, n); } }],
+};
+B['奥贝伦王'] = { deploy: c => { const n = fromDeck(c, '奥贝伦王：生成并打出的狂猎'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); } };
+B['入侵者奥贝伦'] = { deploy: c => { const n = fromDeck(c, '入侵者奥贝伦：创造并打出的狂猎'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); } };
+B['女捕鼠人'] = { abilities: [
+  { on: 'damaged', when: (c, d) => d.unit === c.self && d.dealt > 0 && !c.feast(), run: c => { c.self.base = Math.max(0, c.self.base - 1); } },
+  { on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '残物'), run: c => c.g.strengthen(c.self, 1, c.self) },
+] };
+B['安德莱格女王'] = {
+  deploy: c => { const t = consumeT(c, '安德莱格女王：吞噬', c.allies().filter(u => u !== c.self)); if (t) c.armor(c.self, t.def.prov || 0); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.armor > 0, run: c => { c.damage(c.self, 1); c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self); } }],
+};
+B['尼斯里拉'] = { order: c => { if (c.self.row !== 'm') return; const t = T(c, '尼斯里拉：伤害', c.g.units()); if (t) c.damage(t, c.dominance() ? 2 : 1); } };
+B['巨型蜈蚣'] = { deploy: noop };   // 护甲 = 手牌数：靠改战力
+B['巨章鱼怪'] = { deploy: c => c.g.choose({ prompt: '巨章鱼怪：吞噬 3 个友军', from: c.targets(c.allies().filter(u => u !== c.self)), n: 3, upTo: true, source: c.self.name }).forEach(u => c.consume(u)) };
+B['帝国蝎尾狮'] = { deathwish: c => { const t = lowestOf(c, c.enemies(), '蝎尾狮：最低敌军并列'); if (t) c.destroy(t); } };
+B['忏悔灵'] = { deathwish: noop };
+B['挠挠先生'] = { order: noop };
+B['暗影长者'] = {
+  deploy: c => { const t = T(c, '暗影长者：重伤 4', c.enemies()); if (t) c.status(t, 'bleed', 4); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
+    const t = R(c, '暗影长者：随机重伤 2', c.enemies().filter(u => !(u.status.bleed > 0))); if (t) c.status(t, 'bleed', 2);
+    if (c.devotion()) c.enemies().filter(u => u.status.bleed > 0).forEach(u => { u.status.bleed--; c.damage(u, 1, { ignoreArmor: true, bleed: true }); });
+  } }],
+};
+B['欧兹瑞尔'] = { deploy: c => { const n = graveUnit(c, '欧兹瑞尔：吞噬的墓场单位'); if (!n) return; const side = c.self.row === 'm' ? c.foe : c.side; const gr = c.g.s.sides[side].grave, i = gr.indexOf(n); if (i >= 0) { gr.splice(i, 1); c.g.s.sides[side].banished.push(n); } c.boost(c.self, c.g.def(n).base || 0); } };
+B['污水怪'] = { deploy: c => { const ts = c.g.units().filter(u => u !== c.self && u.power === 1); ts.forEach(u => c.destroy(u)); if (ts.length) c.boost(c.self, 2 * ts.length); } };
+B['涎魔'] = { deathwish: noop };
+B['煮婆'] = {
+  order: c => consumeT(c, '煮婆：吞噬', c.allies().filter(u => u !== c.self)),
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('老巫妪'), run: c => { c.self.bonusCharges++; } }],
+};
+B['煮婆：仪式'] = { deathwish: noop };
+B['狄拉夫·艾瑞廷'] = HZ2('血月', 2, {
+  order: c => { const t = T(c, '狄拉夫：1 伤害', c.enemies().filter(u => u.status.bleed > 0)); if (t) c.damage(t, 1); },
+  deathblow: c => c.g.spawn(BAT, c.side, c.self.row, posRight(c), c.self),
+});
+B['狄拉夫：高阶吸血鬼'] = { deathwish: noop };
+B['狼人头领'] = { deployRow: {
+  m: c => { const t = T(c, '狼人头领：野兽', c.allies().filter(u => has(u, '野兽'))); void t; },   // 增益量 = 手牌数：靠改战力
+  r: c => c.allies().filter(u => has(u, '野兽')).forEach(u => c.boost(u, 1)),
+} };
+B['猩红夫人'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.feast(), run: c => {
+  const row = c.g.rowOf(c.self); c.g.spawn('格尼阔拉的果实', c.side, c.self.row, row.indexOf(c.self), c.self);
+  c.g.spawn('格尼阔拉的果实', c.side, c.self.row, c.g.rowOf(c.self).indexOf(c.self) + 1, c.self);
+  c.transform(c.self, '格尼阔拉', { keepPower: true });
+} }] };
+function catman(c) { c.g.s.sides[c.foe].rows[c.self.row].slice().forEach(u => c.damage(u, 1)); }
+B['猫人'] = { deploy: catman, deathwish: catman };
+B['玛姆纳'] = { order: c => { const n = graveUnit(c, '玛姆纳：放逐的墓场铜色单位'); if (!n) return; const gr = c.g.s.sides[c.side].grave, i = gr.indexOf(n); if (i >= 0) { gr.splice(i, 1); c.g.s.sides[c.side].banished.push(n); } c.boost(c.self, c.g.def(n).base || 0); } };   // 召唤/打出同名牌：靠记录
+B['瘟疫妖女'] = {
+  deploy: c => { const r = T(c, '瘟疫妖女：摧毁的老鼠', c.g.units().filter(u => u.name === RAT)); if (r) c.destroy(r); const t = T(c, '瘟疫妖女：中毒', c.enemies()); if (t) c.status(t, 'poison'); },
+  deathwish: c => { for (let i = 0; i < 7; i++) c.g.spawn(RAT, c.side, c.self.row, null, c.self); },
+};
+B['盖尔'] = { deploy: c => { const n = fromDeck(c, '盖尔：从牌组打出的狂猎牌'); if (n) c.playFromDeck(n, c.self.row, posRight(c)); } };
+B['科斯切伊'] = { abilities: [{ on: 'growth', when: (c, d) => d.unit === c.self, run: c => c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self) }] };
+B['米卢娜'] = { deathwish: c => { const t = R(c, '米卢娜：随机抓捕', c.enemies().filter(u => u.power <= 4)); if (t) c.seize(t); } };
+B['约顿'] = { deploy: noop };
+B['织婆'] = { deploy: c => { const t = T(c, '织婆：增益', c.allies().filter(u => u !== c.self)); if (t) c.boost(t, 2 + 2 * ((c.g.s.sides[c.side].vars.played || {})['老巫妪'] || 0)); } };
+B['织婆：咒文'] = {
+  order: c => consumeT(c, '咒文：吞噬', c.allies().filter(u => u !== c.self)),
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && c.self.row === 'r' && d.unit.def.deathwish, run: (c, d) => c.deathwishOf(d.unit) }],
+};
+B['维尔金的女巨魔'] = { abilities: [{ on: 'destroyed', when: (c, d) => c.g.s.active === c.side && c.self.row === 'm' && d.unit !== c.self, run: c => c.boost(c.self, 2) }] };
+B['老矛头'] = {};
+B['老矛头：昏睡'] = { timer: { n: 3, run: noop } };   // 召唤老矛头：靠记录
+B['艾瑞汀‧布里克‧葛拉斯'] = HZ2('霜', 2, {});
+B['莫伍德'] = {};
+B['莫恩塔特'] = { deploy: c => { const gr = c.g.s.sides[c.side].grave; const us = gr.filter(n => c.g.def(n).type === 'unit'); c.g.s.sides[c.side].grave = gr.filter(n => c.g.def(n).type !== 'unit'); c.g.s.sides[c.side].banished.push(...us); if (us.length) c.boost(c.self, us.length); } };
+B['薇瑞娜'] = { deploy: c => { const t = T(c, '薇瑞娜：重伤 4', c.enemies()); if (t) c.status(t, 'bleed', 4); } };   // “重伤的敌军无法获得增益”：ASSUME 未实现
+B['蜜蜂幽灵'] = {
+  order: c => { if (c.self.row !== 'm') return; const t = T(c, '蜜蜂幽灵：3 伤害', c.enemies()); if (t) c.damage(t, 3); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.orderUsed === 0, run: c => c.boost(c.self, 1) }],
+};
+B['蟹蜘蛛女王'] = {
+  deploy: c => { const t = consumeT(c, '蟹蜘蛛女王：吞噬', c.allies().filter(u => u !== c.self)); if (t) c.self.vars.eaten = t.name; },
+  order: c => c.spawnPlay('蟹蜘蛛巢穴'),
+  deathwish: c => { if (c.self.vars.eaten) c.g.spawn(c.self.vars.eaten, c.side, c.self.row, null, c.self); },
+};
+B['蟹蜘蛛巨兽'] = { deploy: c => { c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self); c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self);
+  c.g.rowOf(c.self).filter(u => u !== c.self && has(u, '类虫生物')).forEach(u => c.boost(u, 1)); } };
+B['蟾蜍王子'] = { deployRow: { m: c => consumeT(c, '蟾蜍王子：吞噬', c.g.units().filter(u => u !== c.self && u.power <= 4)) } };
+B['裂流之主'] = { deployRow: { m: c => { const t = highestOf(c, c.enemies(), '裂流之主：最高敌军并列'); if (t) c.clash(t); } } };
+B['装甲蟹蜘蛛'] = {
+  deploy: c => { if (c.g.rowOf(c.self).length > 1) c.lock(c.self); },
+  timer: { n: 3, run: c => { if (c.g.rowOf(c.self).length >= (c.g.rules.rowLimit === Infinity ? 9 : c.g.rules.rowLimit)) c.boost(c.self, 12); } },
+};
+B['达冈：应许者'] = {
+  order: c => consumeT(c, '达冈：吞噬', c.allies().filter(u => u !== c.self)),
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && d.unit.def.deathwish, run: (c, d) => c.boost(d.unit, 1) }],
+};
+B['长者图戈'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
+  const us = c.allies(); if (!us.length) return; const m = Math.min(...us.map(u => u.power)); const low = us.filter(u => u.power === m);
+  if (c.might()) low.forEach(u => c.boost(u, 1)); else { const t = low.length > 1 ? R(c, '图戈：最低并列', low) : low[0]; if (t) c.boost(t, 1); }
+} }] };
+B['阿巴亚'] = { deploy: c => { const t = T(c, '阿巴亚：触发遗愿', c.allies().filter(u => u !== c.self && u.def.deathwish)); if (t) c.deathwishOf(t); } };
+B['雅加婆婆'] = {
+  deploy: c => { if (c.feast()) c.self.zeal = true; },
+  order: c => { const lim = 4 + (c.self.vars.up || 0); const t = consumeT(c, '雅加婆婆：吞噬', c.g.units().filter(u => u !== c.self && (u.def.prov || 0) === lim)); if (t) c.self.vars.up = (c.self.vars.up || 0) + 1; },
+};
+B['雅妲：诅咒恶兽'] = { order: c => {
+  const t = T(c, '雅妲：吞噬的衍生物', c.g.units().filter(u => u !== c.self && has(u, '衍生物') && u.power < c.self.power)); if (!t) return;
+  const p = t.power, ally = t.side === c.side; c.consume(t); if (ally) c.boost(c.self, p);
+} };
+B['雷吉斯：重生'] = { deploy: c => { const t = T(c, '雷吉斯：汲食 3', c.enemies()); if (t) c.drain(t, 3); } };
+B['鼠人'] = {
+  order: c => { const n = Math.max(0, c.self.power - c.self.base); for (let i = 0; i < n; i++) { c.g.spawn(RAT, c.side, c.self.row, posRight(c), c.self); c.self.power--; } },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { const r = rightOf(c); if (r) c.consume(r); } }],
+};
+B['齐齐摩女王'] = { abilities: [
+  { on: 'growth', when: (c, d) => d.unit === c.self, run: c => c.g.rowOf(c.self).filter(u => u !== c.self && has(u, '类虫生物')).forEach(u => c.boost(u, 1)) },
+  { on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('生物'), run: c => { c.boost(c.self, 1); c.g.emit('growth', { unit: c.self }); } },
+] };
+
+// 铜色单位
+B['低阶女巫'] = { deploy: c => { if (c.g.cohort(c.self)) c.g.spawn('低阶女巫', c.side, c.self.row, posRight(c), c.self); else c.g.s.sides[c.side].grave.push('低阶女巫'); } };
+B['冰巨魔'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.might(), run: c => c.boost(c.self, 1) }] };
+B['叉尾龙'] = { deploy: c => c.g.units().filter(u => u !== c.self).forEach(u => c.damage(u, 1)) };
+B['受诅咒的少女'] = { order: c => { const half = Math.floor(c.self.power / 2); c.self.power -= half; c.g.log('战力减半', { name: c.self.name, n: half });
+  const t = T(c, '受诅咒的少女：摧毁', c.enemies().filter(u => u.power <= half)); if (t) c.destroy(t); } };
+B['吸血鬼女'] = {
+  deploy: c => { const t = T(c, '吸血鬼女：重伤 3', c.enemies()); if (t) c.status(t, 'bleed', 3); },
+  order: c => { const t = T(c, '吸血鬼女：重伤 3', c.enemies()); if (t) c.status(t, 'bleed', 3); },
+};
+B['夜之妖灵'] = { deploy: c => { c.g.spawn(RAT, c.side, c.self.row, posRight(c), c.self); c.g.spawn(RAT, c.side, c.self.row, posRight(c), c.self); },
+  deathwish: c => { c.g.spawn(RAT, c.side, c.self.row, null, c.self); c.g.spawn(RAT, c.side, c.self.row, null, c.self); } };
+B['夜行吸血鬼'] = {
+  order: c => { if (c.self.row !== 'm') return; const t = T(c, '夜行吸血鬼：重伤 2', c.enemies()); if (t) c.status(t, 'bleed', 2); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('吸血鬼'), run: c => c.reduceCd(c.self, 1) }],
+};
+B['奇美拉'] = { deploy: c => consumeT(c, '奇美拉：吞噬', c.allies().filter(u => u !== c.self)) };
+B['女夜魔'] = { deathwish: noop };
+B['女巫学徒'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.feast(), run: c => c.boost(c.self, 2) }] };
+B['女海妖'] = { order: c => consumeT(c, '女海妖：吞噬', c.allies().filter(u => u !== c.self)), deathwish: c => (c.self.adjBefore || []).filter(u => c.g.find(u.uid)).forEach(u => c.boost(u, 2)) };
+B['孽鬼'] = { deploy: c => c.g.spawn('孽鬼', c.side, c.self.row, posRight(c), c.self) };
+B['孽鬼战士'] = { deploy: c => {
+  const before = c.g.trace.length; void before;
+  // ASSUME：打出这张时己方没有成长单位被触发（己方没有战力比它低的成长单位）→ 自伤 3 并获得成长
+  if (!c.allies().some(u => u !== c.self && u.def.growth && u.power < c.self.power)) { c.damage(c.self, 3); c.infuse(c.self, { name: '成长', on: 'unitPlayed', when: (cc, e) => (e.by || e.unit.side) === cc.side && e.unit !== cc.self && e.unit.power > cc.self.power, run: cc => cc.boost(cc.self, 1) }); }
+} };
+B['守桥巨魔'] = { deathwish: c => { const t = lowestOf(c, c.allies(), '守桥巨魔：最低友军并列'); if (t) c.boost(t, 4); } };
+B['安德莱格幼虫'] = { deploy: c => c.g.spawn('安德莱格幼虫', c.side, c.self.row, posRight(c), c.self) };
+B['安德莱格战士'] = { deploy: c => c.adjacent().slice().forEach(u => { const bug = has(u, '类虫生物'); c.consume(u); if (bug) c.self.bonusCharges++; }),
+  order: c => c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self) };
+B['安德莱格虫卵'] = { deathwish: c => { for (let i = 0; i < 3; i++) c.g.spawn(DRONE, c.side, c.self.row, null, c.self); } };
+B['小雾妖'] = HZ2('雾', 3, { deathwish: noop });
+B['尖啸女妖'] = { deploy: c => { const t = T(c, '尖啸女妖：重伤 2', c.enemies()); if (t) c.status(t, 'bleed', 2); } };
+B['巨型蟾蜍'] = { deploy: c => consumeT(c, '巨型蟾蜍：吞噬', c.allies().filter(u => u !== c.self)) };
+B['巨棘魔树'] = { deathwish: noop };
+B['幽冥犬'] = { deploy: c => consumeT(c, '幽冥犬：吞噬', c.allies().filter(u => u !== c.self)),
+  order: c => { if (c.dominance()) consumeT(c, '幽冥犬：吞噬', c.allies().filter(u => u !== c.self)); } };
+B['愤怒的独眼巨人'] = { timer: { n: 7, run: c => c.setPower(c.self, 10) } };   // 手牌里食人魔减少计时：靠改战力
+B['无骨者'] = { deploy: c => { const t = T(c, '无骨者：触发遗愿', c.allies().filter(u => u !== c.self && bronze(u) && u.def.deathwish)); if (t) c.deathwishOf(t); } };
+B['日间妖灵'] = { deathwish: c => { c.g.spawn(RAT, c.foe, 'm', null, c.self); c.g.spawn(RAT, c.foe, 'm', null, c.self); } };
+B['杂交兽'] = { deployRow: {
+  m: c => { if (c.g.s.lastDestroyTurn === c.g.s.turn) c.boost(c.self, 5); },
+  r: c => consumeT(c, '杂交兽：吞噬', c.allies().filter(u => u !== c.self)),
+} };
+B['果园陷阱'] = { deployRow: {
+  m: c => consumeT(c, '果园陷阱：吞噬', c.allies().filter(u => u !== c.self)),
+  r: c => c.g.choose({ prompt: '果园陷阱：灌注成长的 2 个友军', from: c.targets(c.allies().filter(u => u !== c.self)), n: 2, upTo: true, source: c.self.name })
+    .forEach(t => c.infuse(t, { name: '成长', on: 'unitPlayed', when: (cc, e) => (e.by || e.unit.side) === cc.side && e.unit !== cc.self && e.unit.power > cc.self.power, run: cc => cc.boost(cc.self, 1) })),
+} };
+B['梦魔'] = { deploy: noop };   // 双方墓场召唤：靠记录
+B['水鬼'] = { deploy: c => { const t = T(c, '水鬼：移排', c.enemies()); if (t) { c.move(t, otherRow(t.row)); c.damage(t, 2); } } };
+B['沙漠女妖'] = { order: c => consumeT(c, '沙漠女妖：吞噬', c.allies().filter(u => u !== c.self)),
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && d.unit.def.deathwish, run: c => c.boost(c.self, 1) }] };
+B['渴血鸟怪'] = { deploy: c => { const t = T(c, '渴血鸟怪：重伤', c.enemies()); if (t) c.status(t, 'bleed', c.g.cohort(c.self) ? t.base : 2); } };
+B['狂猎之犬'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.dominance(), run: c => c.boost(c.self, 1) }] };
+B['狂猎导航员'] = { deploy: c => { const t = T(c, '导航员：增益', c.allies().filter(u => u !== c.self)); if (!t) return; const n = c.dominance() ? frostTurnsOn(c, c.foe) : ((c.frost(c.foe, t.row) || {}).turns || 0); if (n) c.boost(t, n); } };
+B['狂猎战士'] = { deploy: c => { const t = T(c, '狂猎战士：2 伤害', c.enemies()); if (t) c.damage(t, 2); } };   // 统御时的霜：用“整排效果”记
+B['狂猎碾压者'] = { deploy: c => { const t = T(c, '碾压者：移排', c.enemies()); if (!t) return; c.move(t, otherRow(t.row)); if (c.frost(t.side, t.row)) c.damage(t, 2); } };
+B['狂猎骑士'] = {};
+B['独眼巨人'] = { deploy: c => { const a = T(c, '独眼巨人：摧毁相邻友军', c.adjacent()); if (!a) return; const p = a.power; c.destroy(a); const t = T(c, '独眼巨人：伤害', c.enemies()); if (t) c.damage(t, p); } };
+B['狮鹫'] = { deploy: c => { const others = c.g.rowOf(c.self).filter(u => u !== c.self); if (!others.length) { c.destroy(c.self); return; } const t = T(c, '狮鹫：摧毁同排友军', others); if (t) c.destroy(t); } };
+B['狼人'] = { deploy: c => { const t = T(c, '狼人：掠食', c.enemies().filter(u => u.power < c.self.power)); if (t) c.boost(c.self, t.power); } };
+B['甘·赛恩'] = { deploy: c => { const n = c.adjacent().filter(u => has(u, '残物')).length; if (n) c.g.strengthen(c.self, 2 * n, c.self); } };
+B['石化鸡蛇'] = { deploy: c => { const n = c.adjacent().filter(u => has(u, '野兽')).length; if (n) c.boost(c.self, 2 * n); const t = T(c, '石化鸡蛇：中毒', c.enemies().filter(u => u.power < c.self.power)); if (t) c.status(t, 'poison'); } };
+B['纳吉尔法工头'] = { deploy: c => { const t = T(c, '工头：净化', c.dominance() ? c.g.units().filter(u => u !== c.self) : c.enemies()); if (t) c.purify(t); } };
+B['纳吉尔法船员'] = HZ2('霜', 2, { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.frost(c.foe, c.self.row), run: c => c.boost(c.self, 1) }] });
+B['翼手龙'] = { deployRow: { r: c => { const t = T(c, '翼手龙：2 伤害', c.enemies()); if (t) c.damage(t, 2); } } };
+B['腐食魔'] = { deathwish: c => { const t = R(c, '腐食魔：随机 5 伤害', c.enemies()); if (t) c.damage(t, 5); } };
+B['艾恩·艾尔奴隶商'] = { deploy: c => {
+  const n = frostTurnsOn(c, c.foe); if (n) c.status(c.self, 'vitality', n);
+  const t = T(c, '奴隶商：灌注', c.enemies()); const me = c.self;
+  if (t) c.infuse(t, { name: '奴隶商', on: 'turnEnd', when: (cc, d) => d.side === cc.side && cc.g.find(me.uid) && me.power > cc.self.power, run: cc => { cc.g.setPower(cc.self, 1, me); cc.g.lock(cc.self, me); } });
+} };
+B['艾恩·艾尔征服者'] = { deploy: c => { if (!c.devotion()) c.destroy(c.self); } };
+B['艾恩·艾尔贵族'] = { order: c => { if (!c.dominance()) return; const t = T(c, '贵族：移排', c.enemies()); if (t) c.move(t, otherRow(t.row)); } };
+B['蜥蜴人战士'] = { abilities: [{ on: 'destroyed', when: (c, d) => c.g.s.active === c.side && d.unit !== c.self, run: c => c.boost(c.self, 1) }] };
+B['蝠翼脑魔'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.enemies().some(u => u.status.bleed > 0), run: c => c.boost(c.self, 1) }] };
+B['蝠翼魔'] = { abilities: [{ on: 'statusGained', when: (c, d) => d.key === 'bleed' && d.unit.side === c.foe && c.self.vars.cnt !== c.g.s.turn, run: (c, d) => { c.self.vars.cnt = c.g.s.turn; c.boost(c.self, d.val); } }] };
+B['赛尔伊诺鹰身女妖'] = { deploy: c => { consumeT(c, '鹰身女妖：吞噬', c.allies().filter(u => u !== c.self)); if (c.g.cohort(c.self)) c.g.spawn('鹰身女妖蛋', c.side, c.self.row, posRight(c), c.self); } };
+B['远古小雾妖'] = { deploy: c => { const n = ['m', 'r'].reduce((a, r) => a + ((c.g.s.hazards[c.foe][r] || {}).turns || 0), 0); if (n && n !== Infinity) c.boost(c.self, n); } };
+B['须岩怪'] = { order: c => consumeT(c, '须岩怪：吞噬', c.allies().filter(u => u !== c.self)) };
+B['飞蜥'] = { order: c => consumeT(c, '飞蜥：吞噬同排友军', c.g.rowOf(c.self).filter(u => u !== c.self)) };
+B['食人魔战士'] = { deploy: c => { const n = c.allies().filter(u => u !== c.self && u.power >= 10).length; if (n) c.boost(c.self, 2 * n); } };
+B['食尸鬼'] = { deployRow: { m: c => { const n = graveUnit(c, '食尸鬼：吞噬的墓场铜色单位'); if (!n) return; const gr = c.g.s.sides[c.side].grave, i = gr.indexOf(n); if (i >= 0) { gr.splice(i, 1); c.g.s.sides[c.side].banished.push(n); } c.boost(c.self, c.g.def(n).base || 0); } } };
+B['食己徒'] = {
+  order: c => { const b = Math.floor(c.self.base / 2); c.self.base = b; c.self.power = Math.min(c.self.power, b); const u = c.g.spawn('食己徒', c.side, c.self.row, posRight(c), c.self); if (u) { u.base = b; u.power = b; } },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '残物'), run: c => c.g.strengthen(c.self, 1, c.self) }],
+};
+B['鹰身女妖蛋'] = { deathwish: c => c.g.spawn('鹰身女妖', c.side, c.self.row, null, c.self) };
+B['鹿首魔'] = { deploy: c => { const n = c.g.s.sides[c.foe].rows[c.self.row].length; if (n) { c.self.base = Math.max(0, c.self.base - n); c.self.power = Math.max(0, c.self.power - n); c.g.log('基础战力降低', { name: c.self.name, n }); } } };
+B['齐齐摩工兵'] = {
+  abilities: [
+    { on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '类虫生物'), run: c => c.armor(c.self, 1) },
+    { on: 'armorBroken', when: (c, d) => d.unit === c.self, run: c => c.destroy(c.self) },
+  ],
+};
+B['齐齐摩幼虫'] = {
+  order: c => { if (c.self.power > c.self.base) { c.self.power--; } c.g.spawn(DRONE, c.side, c.self.row, posRight(c), c.self); },
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.unit !== c.self && (d.def.tags || []).includes('生物'), run: c => c.boost(c.self, 1) }],
+};
+B['齐齐摩追猎者'] = {
+  order: c => {
+    const t = T(c, '追猎者：伤害敌军或吞噬雄蛛', c.g.units().filter(u => u.power < c.self.power && (u.side === c.foe || u.name === DRONE)));
+    if (!t) return; if (t.side === c.side) c.consume(t); else c.damage(t, 1);
+  },
+  abilities: [{ on: 'unitSpawned', when: (c, d) => d.unit.side === c.side && has(d.unit, '类虫生物') && c.self.vars.sp !== c.g.trace.length, run: c => { c.self.vars.sp = c.g.trace.length; c.self.bonusCharges++; } }],
+};
+
 // ================= 北方王国 · 对手用过的 =================
 B['工程解决方案'] = { charges: 1, order: c => { const t = T(c, '工程解决方案目标', c.g.units(c.side)); if (t) { c.boost(t, 4); c.status(t, 'shield', true); } } };
 B['安娜·斯特伦格'] = {
@@ -2400,7 +2756,7 @@ function sim(g,r,excl){
     switch(x.a){
       case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
         if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});
-          if(def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」没记放在哪排（用“整排效果”补上）",fix:true});}}
+}
         else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场",fromGrave:x.via==="墓场",player:side});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
       case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
@@ -2434,6 +2790,8 @@ function sim(g,r,excl){
         if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
         break;}
     }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
+    // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排
+    if(x.a==="play"&&def&&def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」生成的整排效果没记在哪排（用“整排效果”补上）",fix:true});}
     if(turnAct)acted=true;
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));

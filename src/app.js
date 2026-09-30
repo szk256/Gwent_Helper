@@ -80,7 +80,7 @@ function sim(g,r,excl){
     switch(x.a){
       case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
         if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});
-          if(def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」没记放在哪排（用“整排效果”补上）",fix:true});}}
+}
         else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场",fromGrave:x.via==="墓场",player:side});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
       case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
@@ -114,6 +114,8 @@ function sim(g,r,excl){
         if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
         break;}
     }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
+    // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排
+    if(x.a==="play"&&def&&def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」生成的整排效果没记在哪排（用“整排效果”补上）",fix:true});}
     if(turnAct)acted=true;
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));

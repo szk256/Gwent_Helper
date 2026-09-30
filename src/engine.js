@@ -96,6 +96,8 @@ class Game {
     if (d.intimidate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('罪行'), run: c => c.boost(c.self, d.intimidate) });
     // 和谐：己方打出非中立单位，且其主类别（第一个类别）与己方其他单位都不同时，自身增益
     if (d.harmony) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit.def.fac !== 'NE' && (e.unit !== c.self || c.g.rules.harmonySelf) && c.g.uniquePrimary(e.unit), run: c => c.boost(c.self, d.harmony) });
+    // 成长：己方每打出 1 个战力更高的单位，自身增益（事件 growth 给“成长触发时”的能力用）
+    if (d.growth) d.abilities.push({ on: 'unitPlayed', when: (c, e) => (e.by || e.unit.side) === c.side && e.unit !== c.self && e.unit.power > c.self.power, run: c => { c.boost(c.self, d.growth); c.g.emit('growth', { unit: c.self }); } });
     // 增兵：己方打出“战争”牌时冷却 -1
     if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
@@ -132,6 +134,7 @@ class Game {
         else if (seg === '增兵') { if (apply) d.reinforce = true; }
         else if ((m = seg.match(/^和谐\s*(\d*)$/))) { if (apply) d.harmony = +(m[1] || 1); }
         else if (seg === '共生') { if (apply) d.symbiosis = true; }
+        else if ((m = seg.match(/^成长\s*(\d*)$/))) { if (apply) d.growth = +(m[1] || 1); }
         else if ((m = seg.match(/^耐性\s*(?:[（(](近战|远程)[）)])?$/))) { if (apply) d.patience = m[1] === '近战' ? 'm' : m[1] === '远程' ? 'r' : true; }
         else return false;
         return true;
@@ -229,6 +232,8 @@ class Game {
     const lead = Object.values(this.s.sides[side].abilities || {}).filter(h => h.def.symbiosis).length;
     return n + lead;
   }
+  // 本局己方打出过的各类别张数（“己方每打出 1 张老巫妪牌”之类）：side.vars.played[类别]
+  _countTags(side, d) { const P = this.s.sides[side].vars.played = this.s.sides[side].vars.played || {}; for (const t of d.tags || []) P[t] = (P[t] || 0) + 1; }
   _symbiosis(side, d) {
     if (!(d.tags || []).includes('自然')) return;
     const n = this.symbiosisCount(side); if (!n) return;
@@ -312,6 +317,8 @@ class Game {
       hoard: x => g.hoard(u.side, x), seize: t => g.seize(t, u.side, u), flip: t => g.flip(t || u, u),
       transform: (t, name, o) => g.transform(t, name, u, o), shuffleBack: t => g.shuffleBack(t, u),
       reduceCd: (t, n) => g.reduceCd(t, n, u), operate: t => g.operate(t || u),
+      deathwishOf: t => g.triggerDeathwish(t, u), drain: (t, n) => g.drain(u, t, n),
+      frost: (side, row) => { const h = g.s.hazards[side][row]; return h && h.kind === '霜' ? h : null; },
       // 生成并打出：单位走“生成（算打出）”，特殊牌直接结算
       spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
       leader: () => Object.values(g.s.sides[u.side].abilities || {}).find(h => h.def.type === 'leader') || null,
@@ -355,6 +362,7 @@ class Game {
       if (d.profit) this.gainCoins(player, d.profit, pseudo);
       if (d.onPlay) d.onPlay(this.ctx(pseudo), opts);
       this.s.sides[player].grave.push(name);
+      this._countTags(player, d);
       this.emit('cardPlayed', { side: player, name, special: true, def: d });
       this._symbiosis(player, d);
       return null;
@@ -413,6 +421,7 @@ class Game {
       // by = 打出这张牌的玩家（不忠牌落在对面半场，但算打出者“打出”）
       if (d.type !== 'artifact') this.s.sides[player].vars.lastUnit = u;
       if ((d.tags || []).includes('陷阱')) this.s.sides[player].vars.trapsRound = (this.s.sides[player].vars.trapsRound || 0) + 1;
+      this._countTags(player, d);
       this.emit('cardPlayed', { side: player, name: u.name, unit: u, def: d });
       if (d.type !== 'artifact') this.emit('unitPlayed', { unit: u, by: player });
       this._symbiosis(player, d);
@@ -499,6 +508,19 @@ class Game {
     this.log('洗回牌组', { uid: u.uid, name: u.name, by: src && src.name });
     this.emit('returned', { unit: u, src });
   }
+  // 触发遗愿（“触发 1 个友军单位的遗愿能力”）：单位还在场上
+  triggerDeathwish(u, src) {
+    if (!u || !u.def.deathwish || u.status.lock) return;
+    this.log('触发遗愿', { uid: u.uid, name: u.name, by: src && src.name });
+    u.def.deathwish(this.ctx(u));
+  }
+  // 汲食：造成伤害，自身获得等量增益（按实际扣掉的战力）
+  drain(a, b, n) {
+    if (!a || !b) return;
+    const dealt = this.damage(b, n, a);
+    this.log('汲食', { a: a.name, b: b.name, n: dealt });
+    if (dealt > 0) this.boost(a, dealt, a);
+  }
   // 冷却减少（事件 cdReduced，给“相邻单位冷却减少”之类的能力用）
   reduceCd(u, n, src) {
     if (!u || !(u.cd > 0) || n <= 0) return;
@@ -567,6 +589,7 @@ class Game {
       u.status[key] = val;
     }
     this.log('状态', { uid: u.uid, name: u.name, key, val: u.status[key], by: src && src.name });
+    this.emit('statusGained', { unit: u, key, val, src });
     if (key === 'lock' && val && u.status.ambush) this.flip(u, src);   // 伏击被锁定：失去能力并翻开
     if (key === 'shield') this.emit('shieldGained', { unit: u });
   }
@@ -641,6 +664,7 @@ class Game {
     const doomed = this.isDoomed(u);
     (doomed ? this.s.sides[u.side].banished : this.s.sides[u.side].grave).push(u.name);
     this.log('摧毁', { uid: u.uid, name: u.name, by: src && src.name });
+    this.s.lastDestroyTurn = this.s.turn;
     if (u.status.bounty) this.gainCoins(OTHER[u.side], u.base, { name: '赏金' });
     // 遗愿：被摧毁并进入墓场时触发；佚亡（放逐）的不触发
     if (u.def.deathwish && !u.status.lock && !doomed) u.def.deathwish(this.ctx(u));
