@@ -486,6 +486,7 @@ class Game {
         if ((mm = seg.match(/^囤积\s*(\d+)/))) d.hoardN = +mm[1];
         if (/^伏击/.test(seg)) d.ambush = true;
         const parts = seg.split(/\s*[、，,]\s*/);          // “坚韧、护盾.”
+        if (seg === '无特殊能力') continue;
         if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
       }
       d.vanilla = r[3] === '单位' && rest === 0;
@@ -570,7 +571,7 @@ class Game {
     return n + lead;
   }
   // 本局己方打出过的各类别张数（“己方每打出 1 张老巫妪牌”之类）：side.vars.played[类别]
-  _countTags(side, d) { const P = this.s.sides[side].vars.played = this.s.sides[side].vars.played || {}; for (const t of d.tags || []) P[t] = (P[t] || 0) + 1; }
+  _countTags(side, d) { const P = this.s.sides[side].vars.played = this.s.sides[side].vars.played || {}; for (const t of d.tags || []) P[t] = (P[t] || 0) + 1; if (d.type === 'special') P.__special = (P.__special || 0) + 1; }
   _symbiosis(side, d) {
     if (!(d.tags || []).includes('自然')) return;
     const n = this.symbiosisCount(side); if (!n) return;
@@ -759,9 +760,11 @@ class Game {
     // 列阵：近战狂热，远程自身 +1
     if (d.formation) { if (u.row === 'm') u.zeal = true; else this.boost(u, 1, u); }
     if (played && d.profit) this.gainCoins(player, d.profit, u);        // 利润：打出时获得金币
+    // 献金：先决定付不付（u.tributePaid），部署里“献金：改为……”据此分支，付了再结算献金效果
+    if (played && (d.tributeN || d.tribute)) u.tributePaid = this.decideTribute(u, player);
     if (played && !u.status.ambush && d.deploy) d.deploy(c, opts);
     if (played && !u.status.ambush && d.deployRow && d.deployRow[u.row]) d.deployRow[u.row](c, opts);
-    if (played && (d.tributeN || d.tribute) && this.find(u.uid)) this.payTribute(u, player);
+    if (played && u.tributePaid && this.find(u.uid)) this.runTribute(u);
     if (played && d.disloyal && u.side !== player) this.addStatus(u, 'spying', true, u);
     this.checkBless(u);
     this.emit('unitEnter', { unit: u, played });
@@ -795,16 +798,20 @@ class Game {
     return true;
   }
   // 献金：部署后可选择付金币触发。是否付款走 chooser（kind 'tribute'），没有输入时按 autoTribute
-  payTribute(u, side) {
+  decideTribute(u, side) {
     const d = u.def, n = d.tribute ? d.tribute.n : d.tributeN, sd = this.s.sides[side];
     const afford = sd.coins >= n;
     const ans = this.chooser ? this.chooser({ kind: 'tribute', source: u.name, n, afford }, this) : null;
     const pay = ans == null ? (afford && this.rules.autoTribute) : !!ans;
-    if (!pay) { this.log('献金未付', { name: u.name, n }); return; }
+    if (!pay) { this.log('献金未付', { name: u.name, n }); return false; }
     if (!this.spendCoins(side, n, u)) { this.log('金币不足', { side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
-    const run = d.tribute && d.tribute.run;
+    return true;
+  }
+  runTribute(u) {
+    const d = u.def, n = d.tribute ? d.tribute.n : d.tributeN, run = d.tribute && d.tribute.run;
     this.log('献金', { uid: u.uid, name: u.name, n, unmodeled: !run }, !run);
     if (run) run(this.ctx(u));
+    this.emit('tributePaid', { unit: u, side: u.side, n });
   }
   // 费用：花金币触发的能力（对局簿里和指令一样点单位记录）。癫狂：金币不够时改为对自身造成等量伤害（无视护甲），会致死则不能用
   canFee(u) {
@@ -3139,6 +3146,244 @@ B['预言家'] = { deployRow: {
   m: c => { const t = T(c, '预言家：佚亡', allUnitsExcept(c)); if (t) c.status(t, 'doomed', true); },
   r: c => { const t = T(c, '预言家：遮蔽', allUnitsExcept(c)); if (t) c.status(t, 'veil', true); },
 } };
+
+
+// ================= 辛迪加 · 批量补全 =================
+const ZEALOT = '火誓狂热者', FOOTMAN = '烈焰蔷薇骑士团步兵', CROWN = '辛迪加克朗';
+const fee = (n, run) => ({ n, run });
+const tribute = (n, run) => ({ n, run });
+// 败德 N：己方累计花费 N 个金币时触发，随后重新计数
+const debt = (n, run) => ({ on: 'coinsSpent', when: (c, d) => d.side === c.side, run: (c, d) => { c.self.vars.debt = (c.self.vars.debt || 0) + d.n; while (c.self.vars.debt >= n) { c.self.vars.debt -= n; run(c); } } });
+const hoard = (c, x) => c.hoard(x);
+const bounty = (c, t) => { if (t) c.status(t, 'bounty', true); };
+const GANGS = ['暗巷帮', '黑金会', '鬼面帮', '火誓者', '火蜥蜴帮', '踏浪帮'];
+const gangsOf = c => GANGS.filter(gn => c.allies().some(u => has(u, gn)));
+
+// 领袖
+B['军备宝箱'] = { order: c => c.gainCoins(3), abilities: [] };
+B['头号大奖'] = { order: c => { const over = Math.max(0, c.coins() + 9 - 9); c.gainCoins(9); const t = T(c, '头号大奖：溢出增益', c.allies()); if (t && over) c.boost(t, over); } };
+B['水手海湾'] = { charges: 2, order: (c, o) => c.g.spawn('海狼', c.side, (o && o.row) || 'm', o && o.pos, c.self) };
+B['盆满钵满'] = { charges: 6, order: c => c.gainCoins(1) };
+B['街头赏金'] = { order: c => { const t = T(c, '街头赏金：伤害', c.enemies()); if (!t) return; const n = 6 + (c.self.vars.plus || 0); const over = Math.max(0, n - t.armor - t.power); c.damage(t, n); if (over) c.gainCoins(over); } };
+B['集会布道'] = { charges: 3, order: (c, o) => { c.g.spawn(ZEALOT, c.side, (o && o.row) || 'm', o && o.pos, c.self); c.gainCoins(1); } };
+B['黑市买卖'] = { charges: 4, order: c => c.gainCoins(2) };
+B['虎眼石'] = { order: c => c.gainCoins(5) };
+
+// 神器
+B['卢文伯爵的宝藏'] = { deploy: noop };
+B['咒法者的蜡烛'] = { fee: fee(1, c => { const t = T(c, '蜡烛：增益', c.allies()); c.self.vars.k = (c.self.vars.k || 0) + 1; if (t) c.boost(t, c.self.vars.k); }) };
+B['寻宝之旅'] = {
+  deploy: c => { c.self.chapter = 0; c.g.spawn('古德伦·约斯多蒂尔', c.side, c.self.row, posRight(c), c.self); },
+  abilities: [
+    { on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '踏浪帮') && c.self.chapter < 2, run: c => {
+      c.self.chapter++; c.g.log('剧情推进', { name: c.self.name, chapter: c.self.chapter });
+      if (c.self.chapter === 2) { const t = highestOf(c, c.enemies(), '寻宝之旅：最高敌军并列'); if (t) c.damage(t, c.coins()); }
+    } },
+    { on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.chapter >= 1 && hoard(c, 8), run: c => c.gainCoins(9) },
+  ],
+};
+B['帕西佛罗拉一夜'] = {
+  deploy: c => { c.self.chapter = 0; c.g.spawn('狡诈的美人儿', c.side, c.self.row, posRight(c), c.self); },
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && has(d.unit, '暗巷帮') && c.self.chapter < 2, run: c => {
+    c.self.chapter++; c.g.log('剧情推进', { name: c.self.name, chapter: c.self.chapter });
+    if (c.self.chapter === 1) c.g.spawn('帕西佛罗拉佳丽', c.side, c.self.row, posRight(c), c.self); else c.gainCoins(6);
+  } }],
+};
+B['火蜥蜴帮藏身处'] = { deploy: c => { const n = fromDeck(c, '藏身处：生成并打出'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); },
+  order: c => { const a = T(c, '藏身处：移除中毒的友军', c.allies().filter(u => u.status.poison)); if (!a) return; const b = T(c, '藏身处：转移到', c.g.units().filter(u => u !== a)); a.status.poison = 0; if (b) c.status(b, 'poison'); } };
+B['神圣之火'] = { deploy: c => { const row = c.g.rowOf(c.self); c.g.spawn(ZEALOT, c.side, c.self.row, row.indexOf(c.self), c.self); c.g.spawn(ZEALOT, c.side, c.self.row, c.g.rowOf(c.self).indexOf(c.self) + 1, c.self); },
+  order: c => c.allies().filter(u => has(u, '火誓者')).forEach(u => c.boost(u, 1)) };
+B['诺维格瑞'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => c.gainCoins(1) }], order: c => { const n = fromDeck(c, '诺维格瑞：创造并打出的帮派单位'); if (n) c.spawnPlay(n, c.self.row); } };
+B['爆炸物'] = { fee: fee(3, c => { const t = T(c, '爆炸物：3 伤害', c.enemies()); if (t) c.damage(t, 3); c.destroy(c.self); }) };
+B[CROWN] = { order: c => { c.gainCoins(1); c.banish(c.self); } };
+
+// 特殊牌
+B['诺维格瑞的制裁'] = { onPlay: (c, o) => { const had = c.allies().some(u => has(u, '矮人') || has(u, '黑金会')); const n = fromDeck(c, '制裁：从牌组打出的单位'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); if (had) c.g.spawn('砍刀的打手', c.side, 'm', null, c); } };
+B['串通'] = { onPlay: (c, o) => {
+  const g = gangsOf(c), plus = g.includes('暗巷帮') ? 1 : 0;
+  if (g.includes('黑金会')) { const t = lowestOf(c, c.allies(), '串通：最低友军'); if (t) c.boost(t, 4 + plus); }
+  if (g.includes('鬼面帮')) { const t = highestOf(c, c.enemies(), '串通：最高敌军'); if (t) c.damage(t, 4 + plus); }
+  if (g.includes('火誓者')) for (let i = 0; i < 2 + plus; i++) c.g.spawn(ZEALOT, c.side, (o && o.row) || 'm', null, c);
+  if (g.includes('踏浪帮')) c.gainCoins(4 + plus);
+} };
+B['佣兵合约'] = { onPlay: (c, o) => { const k = c.coins(); c.spendCoins(k); const n = fromDeck(c, '佣兵合约：从牌组打出的单位'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['妙手空空'] = { onPlay: noop };
+B['幸运轮盘'] = { onPlay: c => { const t = T(c, '幸运轮盘：伤害（按记录）', c.enemies()); void t; } };
+B['教会除名'] = { onPlay: (c, o) => { const t = T(c, '教会除名：放逐的友军', c.allies()); if (t) c.banish(t); const n = fromDeck(c, '教会除名：打出的牌'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['烈火责罚'] = { onPlay: (c, o) => { const t = T(c, '烈火责罚：摧毁的友军', c.allies()); const p = t ? t.power : 0; if (t) c.destroy(t); const n = fromDeck(c, '烈火责罚：创造并打出的火誓者'); if (!n) return; const u = c.spawnPlay(n, (o && o.row) || 'm', o && o.pos); if (u && p) c.boost(u, p); } };
+B['神谴之日'] = { onPlay: c => { const t = T(c, '神谴之日：3 伤害', c.enemies()); if (!t) return; c.damage(t, 3); const all = !c.g.find(t.uid); c.allies().filter(u => all || has(u, '火誓者')).forEach(u => c.boost(u, 1)); } };
+B['维瓦尔第银行'] = { onPlay: (c, o) => { const n = fromDeck(c, '维瓦尔第银行：打出的牌'); if (n) c.playFromDeck(n, (o && o.row) || 'm', o && o.pos); } };
+B['酒馆乱斗'] = { onPlay: c => { const t = T(c, '酒馆乱斗：敌军', c.enemies()); if (!t) return; const b = T(c, '酒馆乱斗：相邻的单位', c.adjacent(t)); if (b) c.g.duel(t, b); } };
+B['窃听'] = { onPlay: noop };
+B['暮色窃行'] = { onPlay: noop };
+B['“白砂糖”'] = { onPlay: c => { const t = T(c, '白砂糖：中毒', c.g.units()); if (t) c.status(t, 'poison'); } };
+B['歇斯底里'] = { onPlay: c => { const t = T(c, '歇斯底里：目标', c.enemies()); if (!t) return; const had = t.status.bounty; bounty(c, t); c.damage(t, had ? 6 : 3); } };
+B['授信额度'] = { onPlay: c => { const t = T(c, '授信额度：摧毁', c.g.allUnits(c.side)); if (t) c.destroy(t); c.gainCoins(7); } };
+B['讹诈'] = { onPlay: c => { const t = T(c, '讹诈：3 增益', c.allies()); if (t) c.boost(t, 3); } };
+B['流言蜚语'] = { onPlay: c => bounty(c, T(c, '流言蜚语：赏金', c.enemies())) };
+B['私运'] = { onPlay: (c, o) => c.g.spawn(FOOTMAN, c.side, (o && o.row) || 'm', null, c) };
+B['诓瞒'] = { onPlay: c => c.gainCoins(Math.min(6, 4 + c.allies().filter(u => has(u, '黑金会')).length)) };
+B['一场好戏'] = { onPlay: c => { const k = c.coins(); c.spendCoins(k); const t = T(c, '一场好戏：伤害', c.enemies()); if (t && k) c.damage(t, k); } };
+B['与鱼共眠'] = { onPlay: c => { const t = T(c, '与鱼共眠：3 伤害', c.enemies()); if (t) c.damage(t, 3); } };
+B['坦白机'] = { onPlay: noop };
+B['幕后操纵'] = { onPlay: c => { const lim = gangsOf(c).length; const t = T(c, '幕后操纵：抓捕', c.enemies().filter(u => u.power <= lim)); if (t) c.seize(t); } };
+B['收获之日'] = { onPlay: c => { const t = T(c, '收获之日：5 伤害', c.enemies()); if (!t) return; const over = Math.max(0, 5 - t.armor - t.power); c.damage(t, 5); if (over) c.gainCoins(over); } };
+B['清洗'] = { onPlay: c => { const t = T(c, '清洗：伤害', c.enemies()); if (t) c.damage(t, 3 + c.allies().filter(u => has(u, '女巫猎人')).length); }, deathblow: c => bounty(c, highestOf(c, c.enemies(), '清洗：最高敌军并列')) };
+B['芝麻开门'] = { onPlay: noop };
+B['被偷走的突变诱发物'] = { onPlay: c => { const t = T(c, '突变诱发物：目标（红=敌军 4 伤害 / 绿=友军 +4 遮蔽）', c.g.units()); if (!t) return; if (t.side === c.side) { c.boost(t, 4); c.status(t, 'veil', true); } else c.damage(t, 4); } };
+B['袭击'] = { onPlay: c => { const t = T(c, '袭击：伤害', c.enemies()); if (t) c.damage(t, c.allies().filter(u => has(u, '火蜥蜴帮')).length >= 2 ? 6 : 4); } };
+B['集会传教'] = { onPlay: (c, o) => { const row = (o && o.row) || 'm'; const k = c.allies().some(u => u.row === row && has(u, '火誓者')) ? 3 : 2; for (let i = 0; i < k; i++) c.g.spawn(ZEALOT, c.side, row, null, c); } };
+
+// 金色单位
+B['杜德里克·略马尔茨'] = { deploy: c => { if (c.allies().some(u => u !== c.self && has(u, '密探'))) c.self.zeal = true; }, order: noop };
+B['哈蒙德'] = { deploy: c => { const t = T(c, '哈蒙德：移排并重伤', c.enemies()); if (!t) return; c.move(t, otherRow(t.row)); c.status(t, 'bleed', 2 + c.adjacent().filter(u => has(u, '水手')).length); } };
+B['哈罗德·戈多'] = { deploy: c => { const n = Math.min(12, ((c.g.s.sides[c.side].vars.played || {}))['__special'] || 0); if (n) c.boost(c.self, n); } };
+B['利可·梅耶朵夫'] = {};
+B['苏克鲁斯'] = {};   // 左侧单位免伤：ASSUME 未实现
+B['“残翼”'] = {};
+B['“砍刀”'] = { deploy: c => c.spawnPlay('讹诈'), fee: fee(4, c => c.g.spawn('砍刀的打手', c.side, c.self.row, posRight(c), c.self)) };
+B['乌瑞克'] = { deploy: c => { const n = fromDeck(c, '乌瑞克：手牌里的铜色火誓者'); if (!n) return; const u = c.spawnPlay(n, c.self.row, posRight(c)); if (u && c.devotion()) c.boost(u, 2); } };
+B['乞丐王'] = { fee: fee(1, c => c.boost(c.self, 1)) };
+B['亚戈船长'] = { deploy: noop, fee: fee(1, c => { const t = T(c, '亚戈：水手 +1', c.allies().filter(u => has(u, '水手'))); if (t) c.boost(t, 1); }) };
+B['伊克索拉'] = { abilities: [debt(8, c => { const t = lowestOf(c, c.enemies(), '伊克索拉：最低敌军并列'); if (t) c.destroy(t); })] };
+B['伊格内修斯·黑尔'] = {};
+B['伊魅珂'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.row === 'r', run: c => c.gainCoins(2) }], fee: fee(3, c => c.status(c.self, 'shield', true)) };
+B['克特'] = { deployRow: { m: c => bounty(c, T(c, '克特：赏金', c.enemies())), r: c => { const t = T(c, '克特：净化', c.g.units().filter(u => u !== c.self)); if (t) c.purify(t); } } };
+B['凯撒·比尔曾'] = { deploy: c => c.adjacent().forEach(u => { if (u.def.profit) c.gainCoins(u.def.profit); }), fee: fee(2, c => { const t = T(c, '凯撒：2 增益', c.allies()); if (t) c.boost(t, 2); }) };
+B['卡西米尔·巴席'] = { deploy: c => { const k = c.coins(); if (k) { c.spendCoins(k); c.boost(c.self, k); } } };
+B['变异兄弟'] = { fee: fee(2, c => c.armor(c.self, 2)), abilities: [{ on: 'armorBroken', when: (c, d) => d.unit === c.self, run: c => c.destroy(c.self) }] };
+B['圣格列高里：审判官'] = { deploy: c => { c.boost(c.self, c.allies().filter(u => u !== c.self).length); c.gainCoins(c.allies().filter(u => has(u, '火誓者')).length); } };
+B['塔玛拉·斯特伦格'] = { deploy: c => c.allies().filter(u => has(u, '女巫猎人')).forEach(u => c.boost(u, 1)), tribute: tribute(3, c => c.allies().filter(u => has(u, '女巫猎人')).forEach(u => c.boost(u, 1))) };
+B['先知雷比欧达'] = { abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && c.adjacent().includes(d.unit), run: (c, d) => c.status(d.unit, 'shield', true) }] };
+B['奈瑟尼尔·派斯托迪'] = { abilities: [{ on: 'boosted', when: (c, d) => d.unit === c.self, run: c => { const t = R(c, '奈瑟尼尔：随机重伤 2', c.enemies()); if (t) c.status(t, 'bleed', 2); } }] };
+B['奥克塔维亚·黑尔'] = { deploy: noop, fee: fee(2, c => { const t = T(c, '奥克塔维亚：女巫猎人增益', c.allies().filter(u => has(u, '女巫猎人'))); if (t) c.boost(t, c.g.s.lastDestroyTurn === c.g.s.turn ? 3 : 2); }) };
+B['女巫追猎者'] = { deploy: c => { for (let i = 0; i < 3; i++) c.g.spawn(CROWN, c.side, c.self.row, posRight(c), c.self); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && !c.enemies().some(u => u.status.bounty), run: c => bounty(c, highestOf(c, c.enemies(), '追猎者：最高敌军并列')) }] };
+B['宾西·布鲁默豪特'] = { abilities: [{ on: 'coinsGained', when: (c, d) => d.side === c.side && c.self.row === 'r' && d.n > 0, run: (c, d) => c.boost(c.self, d.n) }] };
+B['尊宁夫人'] = { deploy: noop, tribute: tribute(8, noop), abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.foe, run: c => c.gainCoins(1) }] };   // 召唤按记录
+B['巨魔“砸砸”'] = { deploy: c => { const us = c.allies().filter(u => u !== c.self); if (!us.length) { c.damage(c.self, 5); return; } const t = R(c, '砸砸：随机友军 3 伤害', us); if (t) c.damage(t, 3); } };
+B['巴特'] = { abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self, run: (c, d) => {
+  const newGang = GANGS.some(gn => has(d.unit, gn) && !c.allies().some(u => u !== d.unit && has(u, gn))); if (newGang) c.gainCoins(gangsOf(c).length);
+} }] };
+B['弗伦德号的船员'] = { deploy: c => { for (let i = 0; i < 3; i++) c.g.spawn(c.self.name, c.side, c.self.row, posRight(c), c.self); } };   // 倒数减少的份数：按记录
+B['恐怖变异猎犬'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.armor > 0, run: c => c.boost(c.self, 2) }], fee: fee(4, c => c.armor(c.self, 1)) };
+B['教授'] = { deploy: c => { const t = T(c, '教授：赏金并 4 伤害', c.enemies()); if (!t) return; bounty(c, t); c.damage(t, 4, { ignoreArmor: !!c.self.tributePaid }); }, tribute: tribute(3, noop) };
+B['无赖'] = { deploy: noop, tribute: tribute(2, noop), fee: fee(1, c => { const t = T(c, '无赖：赏金单位 1 伤害', c.enemies().filter(u => u.status.bounty)); if (t) c.damage(t, 1); }) };
+B['暴徒'] = { deploy: noop };
+B['死侍蕾拉'] = { tribute: tribute(3, c => { const t = T(c, '蕾拉：移除中毒', c.allies().filter(u => u.status.poison)); if (t) t.status.poison = 0; c.boost(c.self, 5); }),
+  abilities: [{ on: 'unitPlayed', when: (c, d) => foePlays(c, d), run: (c, d) => c.status(d.unit, 'poison') }] };
+B['沃尔特·维里塔司'] = { deploy: c => { const n = fromDeck(c, '沃尔特：创造并打出的辛迪加牌'); if (n) c.spawnPlay(n, c.self.row, posRight(c)); } };
+B['波里斯'] = { fee: fee(1, c => { c.move(c.self, otherRow(c.self.row)); c.boost(c.self, 1); }) };   // 费用随机：按记录修正
+B['火蜥蜴'] = { deploy: c => { const t = T(c, '火蜥蜴：中毒', c.g.units().filter(u => u !== c.self)); if (t) c.status(t, 'poison'); }, tribute: tribute(9, c => c.g.units().forEach(u => c.status(u, 'poison'))) };
+B['爱佛琳·加罗'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.coins() === 0, run: c => c.gainCoins(3) }] };
+B['白裘阿德里亚诺'] = { tribute: tribute(5, c => c.g.spawn('狡诈的美人儿', c.side, c.self.row, posRight(c), c.self)) };
+B['盖勒特·布莱尼姆'] = { fee: fee(1, c => { const t = T(c, '盖勒特：中毒并 +2', c.allies()); if (t) { c.status(t, 'poison'); c.boost(t, 2); } }) };
+B['神童贾奎斯'] = { tribute: tribute(4, c => { c.g.spawn(ZEALOT, c.side, c.self.row, posRight(c), c.self); c.g.spawn(ZEALOT, c.side, c.self.row, posRight(c), c.self); }) };
+B['艾德斯伯格的贾奎斯'] = { tribute: tribute(4, c => { c.g.spawn(FOOTMAN, c.side, c.self.row, posRight(c), c.self); c.g.spawn(FOOTMAN, c.side, c.self.row, posRight(c), c.self); }), fee: fee(1, c => c.boost(c.self, 1)) };
+B['大团长贾奎斯'] = B['艾德斯伯格的贾奎斯'];
+B['罗兰德·布莱尼姆'] = { abilities: [{ on: 'statusGained', when: (c, d) => d.key === 'poison', run: c => c.gainCoins(2) }] };
+B['罗德烈克·德·维特'] = { order: c => { if (c.self.row === 'm') c.g.spawn(FOOTMAN, c.side, 'm', posRight(c), c.self); },
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.orderUsed === 0, run: c => c.gainCoins(1) }] };
+B['艾瓦德·波索迪'] = { deploy: c => { const t = T(c, '艾瓦德：伤害', c.enemies()); if (t) c.damage(t, c.g.s.sides[c.side].grave.includes('霍斯特·波索迪') ? 4 : 2); }, fee: fee(1, c => { const t = T(c, '艾瓦德：重伤 1', c.enemies()); if (t) c.status(t, 'bleed', 1); }) };
+B['苦行队'] = { deploy: c => { const k = c.allies().filter(u => has(u, '火誓者') && has(u, '衍生物')).length; const n = Math.max(0, 10 - 2 * k); if (n) c.damage(c.self, n); } };
+B['莫雷斯'] = { deploy: c => { const t = T(c, '莫雷斯：目标', c.enemies()); if (!t) return; if (c.self.tributePaid) c.destroy(t); else c.damage(t, 4); }, tribute: tribute(6, noop) };
+B['菲丽芭·艾哈特'] = { deploy: c => { const t = T(c, '菲丽芭：抓捕', c.enemies().filter(u => u.power <= c.coins())); if (!t) return; c.spendCoins(t.power); c.seize(t); } };
+B['萨乌尔·德·那瓦雷特'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && hoard(c, 3), run: c => c.boost(c.self, hoard(c, 9) ? 3 : hoard(c, 6) ? 2 : 1) }] };
+B['萨沃拉'] = { tribute: tribute(9, c => c.g.spawn('萨沃拉的畏惧者', c.side, c.self.row, posRight(c), c.self)) };
+B['葛拉登'] = { deployRow: { m: c => { const t = T(c, '葛拉登：摧毁赏金单位', c.enemies().filter(u => u.status.bounty)); if (t) { c.self.vars.b = t.base; c.destroy(t); } } }, tribute: tribute(5, c => { if (c.self.vars.b) c.boost(c.self, c.self.vars.b); }) };
+B['西吉·卢文'] = {};
+B['西吉·卢文：幕后主谋'] = { deploy: c => { for (let i = 0; i < 2; i++) { const n = fromDeck(c, '西吉：打出的牌'); if (!n) break; c.playFromDeck(n, c.self.row); } } };
+B['费边·黑尔'] = { deploy: c => { const had = c.enemies().find(u => u.status.bounty); if (had) c.gainCoins(had.base); bounty(c, T(c, '费边：赏金', c.enemies())); } };
+B['赛勒斯·赫姆法特'] = { deploy: c => c.spawnPlay('集会传教', c.self.row), fee: fee(2, c => { const t = T(c, '赛勒斯：摧毁火誓者衍生物', c.allies().filter(u => has(u, '火誓者') && has(u, '衍生物'))); if (t) c.destroy(t); }) };   // 召唤按记录
+B['赫斯特中尉'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.allies().some(u => has(u, '传教士')), run: c => c.g.spawn(ZEALOT, c.side, c.self.row, posRight(c), c.self) }],
+  fee: fee(1, c => { const t = T(c, '赫斯特：狂热者变步兵', c.allies().filter(u => u.name === ZEALOT)); if (t) c.transform(t, FOOTMAN); }) };
+B['赫维特和阿莱蒂雅'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && hoard(c, 6), run: c => { const t = R(c, '赫维特：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }], deathblow: c => c.gainCoins(2) };
+B['路易莎夫人'] = { tribute: tribute(3, c => { c.self.zeal = true; }), order: noop };
+B['迦勒·曼吉'] = { fee: fee(3, c => { if (c.self.row === 'm') bounty(c, T(c, '迦勒：赏金', c.enemies())); }) };
+B['针牙爵士'] = { tribute: tribute(2, c => c.status(c.self, 'immune', true)) };
+B['铁钩伊果'] = { fee: fee(5, c => { const t = T(c, '伊果：复制的铜色友军', c.allies().filter(bronze)); if (t) c.g.spawn(t.name, c.side, c.self.row, posRight(c), c.self); }) };
+B['锡皮小子'] = { deploy: c => { let us; if (c.self.tributePaid) us = c.enemies(); else { const t = T(c, '锡皮小子：选对方一排（点该排的单位）', c.enemies()); us = t ? c.g.rowOf(t).slice() : []; } us.forEach(u => c.damage(u, 2)); }, tribute: tribute(8, noop) };
+B['阿扎·贾维德'] = { deploy: c => { for (let i = 0; i < (c.self.tributePaid ? 2 : 1); i++) c.g.spawn('圣甲虫', c.side, c.self.row, posRight(c), c.self); }, tribute: tribute(3, noop) };
+B['阿道伯图斯·卡尔克斯坦'] = { fee: fee(2, c => { const t = T(c, '阿道伯图斯：净化', c.g.units()); if (t) c.purify(t); }) };
+B['雕刻家佛科'] = { deployRow: { m: c => { const n = fromDeck(c, '佛科：从牌组打出的罪行'); if (n) c.playFromDeck(n); } } };
+B['霍斯特·波索迪'] = { deploy: c => c.gainCoins(c.g.s.sides[c.side].grave.includes('艾瓦德·波索迪') ? 6 : 3), fee: fee(1, c => { const t = T(c, '霍斯特：活力 1', c.allies()); if (t) c.status(t, 'vitality', 1); }) };
+B['霍桑一世'] = { deploy: c => { const t = T(c, '霍桑一世：变成侍从', c.adjacent()); if (t) c.transform(t, '霍桑的侍从'); }, tribute: tribute(3, c => c.adjacent().filter(u => u.name !== '霍桑的侍从').forEach(u => c.transform(u, '霍桑的侍从'))) };
+B['霍桑二世'] = { deploy: c => { const t = T(c, '霍桑二世：6 伤害', c.devotion() ? c.enemies() : c.enemies().filter(u => c.g.isBoosted(u))); if (!t) return; const over = Math.max(0, 6 - t.armor - t.power); c.damage(t, 6); if (over) c.gainCoins(over); },
+  fee: fee(3, c => { const t = T(c, '霍桑二世：摧毁 ≤3', c.enemies().filter(u => u.power <= 3)); if (t) c.destroy(t); }) };
+B['霍桑的怪诞秀'] = { fee: fee(2, c => { if (c.self.row !== 'm') return; const t = T(c, '怪诞秀：2 伤害', c.enemies()); if (t) c.damage(t, 2); }) };
+B['飞翔的瑞达尼亚人'] = {};
+B['香肠贩子'] = { fee: fee(3, c => { if (c.self.row === 'm') c.status(c.self, 'resilience', true); }) };
+B['鬼面天蛾号'] = { abilities: [debt(12, c => { const n = fromDeck(c, '天蛾号：打出的牌组顶端牌'); if (n) c.playFromDeck(n, c.self.row); })] };
+B['鲁多维西斯·布伦纳鲍尔'] = { timer: { n: 3, run: c => { if (!c.self.tributePaid) c.gainCoins(9); } }, tribute: tribute(5, c => c.gainCoins(9)) };
+
+// 铜色单位
+B['信使'] = { deploy: noop };
+B['永恒之火门徒'] = { fee: fee(1, c => c.g.spawn(ZEALOT, c.side, c.self.row, posRight(c), c.self)) };
+B['永恒之火审讯官'] = { deploy: c => { const t = T(c, '审讯官：摧毁火誓者衍生物', c.allies().filter(u => has(u, '火誓者') && has(u, '衍生物'))); if (!t) return; c.self.vars.tok = t.name; c.destroy(t); c.boost(c.self, 4); },
+  timer: { n: 2, run: c => { if (c.self.vars.tok) c.g.spawn(c.self.vars.tok, c.side, c.self.row, posRight(c), c.self); } } };
+B['永恒之火祭司'] = { abilities: [{ on: 'unitSpawned', when: (c, d) => d.unit.side === c.side && c.self.vars.t !== c.g.trace.length, run: c => { c.self.vars.t = c.g.trace.length; c.boost(c.self, 1); } }] };
+B['失败的实验'] = { deploy: c => c.status(c.self, 'poison'), fee: fee(4, c => { const t = T(c, '失败的实验：转移中毒', c.g.units().filter(u => u !== c.self)); c.self.status.poison = 0; if (t) c.status(t, 'poison'); }) };
+B['黑货商人'] = { deployRow: { r: c => { if (!c.self.tributePaid) { const k = c.coins(); if (k) c.status(c.self, 'vitality', k); } } }, tribute: tribute(3, c => { const k = c.coins(); if (k) c.boost(c.self, k); }) };
+B['黑巷药贩'] = { deploy: c => { const t = T(c, '黑巷药贩：中毒', c.g.units().filter(u => u !== c.self)); if (!t) return; c.status(t, 'poison'); if (t.side === c.side) c.gainCoins(3); } };
+B['半身人开锁贼'] = { deploy: noop };
+B['孤独的勇士'] = { order: c => { const ts = c.g.rowOf(c.self).filter(u => has(u, '火誓者') && has(u, '衍生物')); const p = ts.reduce((a, u) => a + u.power, 0); ts.forEach(u => c.destroy(u)); if (p) c.boost(c.self, p); } };
+B['变种人'] = { abilities: [{ on: 'statusGained', when: (c, d) => d.unit === c.self && d.key === 'poison' && !c.self.vars.done, run: c => { c.self.vars.done = true; c.g.spawn(c.self.name, c.side, c.self.row, posRight(c), c.self); } }] };
+B['变种人凶徒'] = { deploy: c => { const n = c.g.units().filter(u => u.status.poison).length; if (n) c.boost(c.self, n); } };
+B['突变研究者'] = { deploy: c => { if (!c.devotion()) { const t = T(c, '突变研究者：摧毁友军', c.allies().filter(u => u !== c.self)); if (t) c.destroy(t); } c.gainCoins(3); } };
+B['牛堡自然学家'] = { fee: fee(1, c => { const t = T(c, '自然学家：活力 1', c.allies()); if (t) c.status(t, 'vitality', 1); }) };
+B['帕西佛罗拉佳丽'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && hoard(c, 4), run: c => c.boost(c.self, 1) }] };
+B['“薪酬专员”'] = { tribute: tribute(1, c => { const t = T(c, '薪酬专员：移排', c.g.units().filter(u => u !== c.self)); if (t) c.move(t, otherRow(t.row)); }) };
+B['采珠人'] = { timer: { n: 3, run: c => c.gainCoins(6) } };
+B['脱逃的法师'] = { deploy: c => { const t = T(c, '脱逃的法师：伤害', c.enemies()); if (t) c.damage(t, c.self.tributePaid ? 3 : 1); }, tribute: tribute(1, noop) };
+B['火蜥蜴帮侍从'] = { deploy: c => { const t = T(c, '侍从：净化的友军', c.allies().filter(u => u !== c.self)); if (!t) return; const k = statusN(t); c.purify(t); if (k) c.gainCoins(2 * k); } };
+B['精明的商贩'] = { deploy: c => { const t = T(c, '商贩：伤害', c.enemies()); if (t) c.damage(t, c.g.cohort(c.self) ? 2 : 1); if (c.g.cohort(c.self)) c.gainCoins(1); }, fee: fee(1, c => c.status(c.self, 'vitality', 1)) };
+B['替罪羊'] = { deploy: c => c.status(c.self, 'bounty', true) };
+B['海狼'] = { fee: fee(2, c => c.boost(c.self, hoard(c, 7) ? 3 : 2)) };
+B['下水道匪帮'] = {};
+B['街头顽童'] = { fee: fee(1, c => c.boost(c.self, 1)) };
+B['税务官'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.row === 'r', run: c => c.gainCoins(1) }] };
+B['踏浪帮密所'] = { deployRow: { r: noop } };
+B['踏浪悍夺者'] = { deploy: c => { const t = T(c, '悍夺者：2 伤害', c.enemies()); if (!t) return; c.damage(t, 2); if (c.g.find(t.uid) && hoard(c, 5)) c.gainCoins(2); }, deathblow: c => c.gainCoins(2) };
+B['“义警”'] = { abilities: [{ on: 'statusGained', when: (c, d) => d.key === 'bounty' && d.val && d.unit.side === c.foe, run: (c, d) => c.damage(d.unit, 2) }] };
+B['女巫猎人'] = { deploy: c => bounty(c, T(c, '女巫猎人：赏金', c.enemies())) };
+B['可悲的失心者'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.status.poison, run: c => c.boost(c.self, 2) }] };
+B['一对好友'] = { fee: fee(1, c => { const t = T(c, '一对好友：目标', c.enemies()); if (!t) return; if (c.g.isBoosted(t)) c.damage(t, 1); else c.status(t, 'bleed', 1); }) };
+B['乞丐'] = { deploy: c => { if (c.g.cohort(c.self)) c.gainCoins(2); } };   // 会师：利润 3 → 5
+B['变异猎犬'] = { deployRow: { m: c => { const t = T(c, '变异猎犬：重伤 2', c.enemies()); if (t) c.status(t, 'bleed', 2); }, r: c => { const t = T(c, '变异猎犬：中毒', c.g.units().filter(u => u !== c.self)); if (t) c.status(t, 'poison'); } } };
+B['喜鹊'] = { fee: fee(1, c => c.g.spawn(CROWN, c.side, c.self.row, posRight(c), c.self)) };
+B['堕落的骑士'] = { abilities: [{ on: 'unitSpawned', when: (c, d) => d.unit.side === c.side, run: c => c.boost(c.self, 1) }] };
+B['女巫猎人行刑官'] = { fee: fee(1, c => { const t = T(c, '行刑官：目标', c.enemies()); if (!t) return; if (t.status.bounty) c.damage(t, 1); else c.status(t, 'bleed', 1); }) };
+B['宝藏女猎手'] = { fee: fee(3, c => { if (!hoard(c, 9)) return; const t = T(c, '女猎手：灌注', c.allies()); const side = c.side; if (t) c.infuse(t, { name: '宝藏女猎手', on: 'turnEnd', when: (cc, d) => d.side === side, run: cc => cc.g.gainCoins(side, 1, cc.self) }); }) };
+B['小小鸟'] = { deploy: noop, fee: fee(2, c => { const k = gangsOf(c).length; c.g.choose({ prompt: '小小鸟：' + k + ' 个友军各 1', from: c.targets(c.allies()), n: k, upTo: true, source: c.self.name }).forEach(u => c.boost(u, 1)); }) };
+B['暗场保镖'] = { fee: fee(1, noop) };   // 召唤同名牌按记录
+B['暗巷商人'] = { tribute: tribute(4, c => { const n = fromDeck(c, '暗巷商人：创造并打出的罪行'); if (n) c.spawnPlay(n); }) };
+B['暗巷帮药剂师'] = { deploy: c => {
+  const both = c.self.tributePaid;
+  if (c.self.row === 'm' || both) { const t = T(c, '药剂师：治愈', c.allies().filter(u => u !== c.self)); if (t) c.heal(t); }
+  if (c.self.row === 'r' || both) { const t = T(c, '药剂师：4 增益', c.allies().filter(u => u !== c.self)); if (t) c.boost(t, 4); }
+}, tribute: tribute(2, noop) };
+B['火蜥蜴帮异变体'] = { tribute: tribute(1, c => c.status(c.self, 'poison')), abilities: [{ on: 'statusGained', when: (c, d) => d.unit === c.self && d.key === 'poison', run: c => c.boost(c.self, 2) }] };
+B['火蜥蜴帮法师'] = { tribute: tribute(5, c => { const t = T(c, '法师：中间的敌军', c.enemies()); adjN(c, t, 3).forEach(u => c.damage(u, 2)); }),
+  abilities: [{ on: 'tributePaid', when: (c, d) => d.side === c.side, run: c => c.gainCoins(1) }] };
+B['火蜥蜴帮潜行者'] = { deploy: c => bounty(c, T(c, '潜行者：赏金', c.enemies())), order: c => c.enemies().filter(u => u.status.bounty).forEach(u => c.status(u, 'poison')) };
+B['火誓书吏'] = { tribute: tribute(2, c => c.boost(c.self, 2)), abilities: [{ on: 'unitSpawned', when: (c, d) => d.unit.side === c.side && c.self.row === 'r' && c.self.vars.t !== c.g.trace.length, run: c => { c.self.vars.t = c.g.trace.length; c.gainCoins(1); } }] };
+B['烈焰守护者'] = { deploy: c => { if (!c.self.tributePaid) c.adjacent().forEach(u => c.boost(u, 1)); }, tribute: tribute(4, c => c.g.rowOf(c.self).filter(u => u !== c.self).forEach(u => c.boost(u, 1))) };   // 传教士减献金：ASSUME 未实现
+B['烈焰蔷薇骑士团牧师'] = { tribute: tribute(2, c => c.g.spawn(ZEALOT, c.side, c.self.row, posRight(c), c.self)),
+  fee: fee(1, c => { const t = T(c, '牧师：狂热者变步兵', c.allies().filter(u => u.name === ZEALOT)); if (t) c.transform(t, FOOTMAN); }) };
+B['牛堡守卫'] = { fee: fee(2, c => { const k = c.coins() === 0 ? 2 : 1; c.adjacent().forEach(u => c.boost(u, k)); }) };
+B['狡诈的美人儿'] = { fee: fee(3, c => c.status(c.self, 'shield', true)),
+  abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.foe && (c.g.cohort(c.self) || (d.unit && d.def.type === 'unit')), run: c => c.boost(c.self, 1) }] };
+B['被胁迫的铁匠'] = { fee: fee(1, c => { const t = T(c, '铁匠：1 增益', c.allies()); if (t) c.boost(t, 1); }) };
+B['角斗场安德莱格'] = { deploy: c => { const t = T(c, '角斗场安德莱格：参考的受伤友军', c.allies().filter(u => u.power < u.base)); if (t) c.gainCoins(t.base - t.power); } };
+B['角斗场食尸鬼'] = { deploy: c => { if (!c.self.tributePaid) c.self.vars.die = c.g.s.turn; }, tribute: tribute(1, noop),
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.vars.die === c.g.s.turn, run: c => c.destroy(c.self) }] };
+B['赤手打斗者'] = { fee: fee(1, c => { const t = highestOf(c, c.enemies(), '赤手打斗者：最高敌军并列'); if (t) c.damage(t, 1); }) };
+B['镇民'] = { abilities: [{ on: 'coinsGained', when: (c, d) => d.side === c.side && d.n > 0, run: c => c.boost(c.self, 1) }] };
+B['霍桑的侍从'] = { abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('罪行'), run: c => { const t = R(c, '侍从：随机伤害', c.enemies()); if (t) c.damage(t, c.g.cohort(c.self) ? 2 : 1); } }] };
+B['鬼面天蛾号船工'] = { abilities: [debt(3, c => c.boost(c.self, 1))] };
+B['黑市炼金师'] = { order: c => { const t = T(c, '炼金师：中毒并 +2', c.allies()); if (t) { c.status(t, 'poison'); c.boost(t, 2); } } };
+B['黑金会恶棍'] = { deploy: c => { const t = T(c, '恶棍：3 伤害', c.enemies()); if (t) c.damage(t, 3); } };
+B['齐齐摩战士'] = { order: c => { const t = T(c, '齐齐摩战士：摧毁友军', c.allies().filter(u => u !== c.self)); if (t) c.destroy(t); c.g.spawn('齐齐摩战士', c.side, c.self.row, posRight(c), c.self); } };
 
 // ================= 北方王国 · 对手用过的 =================
 B['工程解决方案'] = { charges: 1, order: c => { const t = T(c, '工程解决方案目标', c.g.units(c.side)); if (t) { c.boost(t, 4); c.status(t, 'shield', true); } } };

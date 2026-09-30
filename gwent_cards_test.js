@@ -193,5 +193,28 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   g.s.active = 'op'; g.endTurn(); g.endTurn(); g.endTurn(); g.endTurn(); g.endTurn();
   ok(!g.find(big.uid) && g.find(v.uid), '维伦特瑞坦梅斯：计时归零摧毁最高');
 }
+
+// ---------- 辛迪加 ----------
+{ // 献金“改为”：锡皮小子付了献金 8 → 所有敌军 2 伤害
+  const g = game(); const a = P(g, 'me', '寒冰巨人', 'm'), b = P(g, 'me', '老矛头', 'r'); g.s.sides.op.coins = 9;
+  P(g, 'op', '锡皮小子', 'm'); ok(a.power === 5 && b.power === 10 && g.s.sides.op.coins === 1, '锡皮小子：献金 8 → 所有敌军 2 伤害');
+}
+{ // 没付献金：只打一排
+  const g = game(); const a = P(g, 'me', '寒冰巨人', 'm'), b = P(g, 'me', '老矛头', 'r'); g.s.sides.op.coins = 3; g.chooser = req => req.kind === 'tribute' ? null : [a];
+  P(g, 'op', '锡皮小子', 'm'); ok(a.power === 5 && b.power === 12, '锡皮小子：金币不够 → 只打选中的一排');
+}
+{ // 费用：海狼；囤积 7 时 +3
+  const g = game(); const w = P(g, 'op', '海狼', 'm'); g.s.sides.op.coins = 9; g.order(w.uid, { force: true });
+  ok(w.power === 7 && g.s.sides.op.coins === 7, '海狼：费用 2，囤积 7 → +3');
+}
+{ // 赏金：女巫猎人设赏金；“义警”对设赏金的敌军 2 伤害；被摧毁时对手拿金币
+  const g = game(); P(g, 'op', '“义警”', 'r'); const t = P(g, 'me', '寒冰巨人', 'm'); g.chooser = () => [t];
+  P(g, 'op', '女巫猎人', 'm'); ok(t.status.bounty && t.power === 5, '女巫猎人：赏金；义警 2 伤害');
+  const c0 = g.s.sides.op.coins; g.destroy(t); ok(g.s.sides.op.coins === c0 + 7, '赏金单位被摧毁：对手获得基础战力的金币');
+}
+{ // 败德：伊克索拉累计花 8 金币时摧毁最低敌军
+  const g = game(); P(g, 'op', '伊克索拉', 'r'); const low = P(g, 'me', '科德温骑士', 'm'); P(g, 'me', '寒冰巨人', 'm');
+  g.s.sides.op.coins = 9; g.spendCoins('op', 5); ok(g.find(low.uid), '败德：花 5 不触发'); g.spendCoins('op', 3); ok(!g.find(low.uid), '败德 8：累计花 8 → 摧毁最低敌军');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

@@ -153,6 +153,7 @@ class Game {
         if ((mm = seg.match(/^囤积\s*(\d+)/))) d.hoardN = +mm[1];
         if (/^伏击/.test(seg)) d.ambush = true;
         const parts = seg.split(/\s*[、，,]\s*/);          // “坚韧、护盾.”
+        if (seg === '无特殊能力') continue;
         if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
       }
       d.vanilla = r[3] === '单位' && rest === 0;
@@ -237,7 +238,7 @@ class Game {
     return n + lead;
   }
   // 本局己方打出过的各类别张数（“己方每打出 1 张老巫妪牌”之类）：side.vars.played[类别]
-  _countTags(side, d) { const P = this.s.sides[side].vars.played = this.s.sides[side].vars.played || {}; for (const t of d.tags || []) P[t] = (P[t] || 0) + 1; }
+  _countTags(side, d) { const P = this.s.sides[side].vars.played = this.s.sides[side].vars.played || {}; for (const t of d.tags || []) P[t] = (P[t] || 0) + 1; if (d.type === 'special') P.__special = (P.__special || 0) + 1; }
   _symbiosis(side, d) {
     if (!(d.tags || []).includes('自然')) return;
     const n = this.symbiosisCount(side); if (!n) return;
@@ -426,9 +427,11 @@ class Game {
     // 列阵：近战狂热，远程自身 +1
     if (d.formation) { if (u.row === 'm') u.zeal = true; else this.boost(u, 1, u); }
     if (played && d.profit) this.gainCoins(player, d.profit, u);        // 利润：打出时获得金币
+    // 献金：先决定付不付（u.tributePaid），部署里“献金：改为……”据此分支，付了再结算献金效果
+    if (played && (d.tributeN || d.tribute)) u.tributePaid = this.decideTribute(u, player);
     if (played && !u.status.ambush && d.deploy) d.deploy(c, opts);
     if (played && !u.status.ambush && d.deployRow && d.deployRow[u.row]) d.deployRow[u.row](c, opts);
-    if (played && (d.tributeN || d.tribute) && this.find(u.uid)) this.payTribute(u, player);
+    if (played && u.tributePaid && this.find(u.uid)) this.runTribute(u);
     if (played && d.disloyal && u.side !== player) this.addStatus(u, 'spying', true, u);
     this.checkBless(u);
     this.emit('unitEnter', { unit: u, played });
@@ -462,16 +465,20 @@ class Game {
     return true;
   }
   // 献金：部署后可选择付金币触发。是否付款走 chooser（kind 'tribute'），没有输入时按 autoTribute
-  payTribute(u, side) {
+  decideTribute(u, side) {
     const d = u.def, n = d.tribute ? d.tribute.n : d.tributeN, sd = this.s.sides[side];
     const afford = sd.coins >= n;
     const ans = this.chooser ? this.chooser({ kind: 'tribute', source: u.name, n, afford }, this) : null;
     const pay = ans == null ? (afford && this.rules.autoTribute) : !!ans;
-    if (!pay) { this.log('献金未付', { name: u.name, n }); return; }
+    if (!pay) { this.log('献金未付', { name: u.name, n }); return false; }
     if (!this.spendCoins(side, n, u)) { this.log('金币不足', { side, name: u.name, need: n, coins: sd.coins }, true); sd.coins = 0; }
-    const run = d.tribute && d.tribute.run;
+    return true;
+  }
+  runTribute(u) {
+    const d = u.def, n = d.tribute ? d.tribute.n : d.tributeN, run = d.tribute && d.tribute.run;
     this.log('献金', { uid: u.uid, name: u.name, n, unmodeled: !run }, !run);
     if (run) run(this.ctx(u));
+    this.emit('tributePaid', { unit: u, side: u.side, n });
   }
   // 费用：花金币触发的能力（对局簿里和指令一样点单位记录）。癫狂：金币不够时改为对自身造成等量伤害（无视护甲），会致死则不能用
   canFee(u) {
