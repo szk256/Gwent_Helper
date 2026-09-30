@@ -176,6 +176,22 @@ B['贝罗恒王'] = {
   } }],
 };
 
+// 维拉克萨斯：王子 →（小局开始，在手牌或牌组时历变）流放者 →（赤诚，再历变）国王
+// “重置指令能力”：已用次数、冷却清零
+function resetOrder(c, zeal) {
+  const t = T(c, '重置指令的友军', c.allies().filter(u => u !== c.self && u.def.fac !== 'NE' && u.def.order));
+  if (!t) return;
+  t.orderUsed = 0; t.cd = 0;
+  if (zeal) t.zeal = true;
+  c.g.log('重置指令', { uid: t.uid, name: t.name, zeal: !!zeal, by: c.self.name });
+}
+B['维拉克萨斯王子'] = { order: c => resetOrder(c, false) };
+B['流放者维拉克萨斯'] = { formation: true, order: c => resetOrder(c, true) };
+B['维拉克萨斯国王'] = {
+  formation: true, status: { veil: true }, order: c => resetOrder(c, true),
+  abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && (d.unit.tags || []).includes('士兵'), run: (c, d) => c.boost(d.unit, 1) }],
+};
+
 B['骑士册封'] = {
   onPlay: (c, o) => {
     const name = c.pick({ prompt: '骑士册封：从牌组打出的骑士', kind: 'deck', from: ['?'] });

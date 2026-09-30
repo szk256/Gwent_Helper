@@ -17,7 +17,7 @@ function sim(g,r,excl){
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
   const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
   E.loadData(ENGRAW);E.loadBehaviors(GwentCards.behaviors);
-  E.s.sides.me.vars.devotion=true;
+  E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
   const unitByKey=k=>{const u=key2u[k];return u&&E.find(u.uid)?u:null;};
@@ -130,6 +130,13 @@ function simBoard(g,r,excl){const S=sim(g,r,excl);if(!S)return null;const R={me:
   return{R,all,F:g.log.filter(x=>x.r===r&&x.a==="fx"),S};}
 
 const isLeader=c=>c.t==="领袖能力", isTactic=c=>c.t==="战术";
+// 小局开始时在手牌/牌组里历变的牌：第 i 次历变变成 chain[i]；dev = 这一步要求赤诚（上一形态卡面写“赤诚：……历变”）
+const EVOLVE={"维拉克萨斯王子":[{n:"流放者维拉克萨斯"},{n:"维拉克萨斯国王",dev:true}],"奥贝伦王":[{n:"入侵者奥贝伦"}],"哈罗德·奎特":[{n:"好战者哈罗德"}],"新王艾思娜":[{n:"慈母艾思娜"}],"神童贾奎斯":[{n:"艾德斯伯格的贾奎斯"}],"篡位者 - 军官":[{n:"篡位者 - 将军"}]};
+const EVBASE={};for(const[b,ch]of Object.entries(EVOLVE))ch.forEach(x=>EVBASE[x.n]=b);
+const baseOf=n=>EVBASE[n]||n;
+function formOf(n,r,dev){let cur=n;const ch=EVOLVE[n]||[];for(let i=0;i<r&&i<ch.length;i++){if(ch[i].dev&&!dev)break;cur=ch[i].n;}return cur;}
+// 赤诚：起始牌组没有中立牌
+const devotionOf=d=>!!d&&Object.keys(d.cards).every(n=>!BY[n]||BY[n].f!=="NE");
 const maxCopy=c=>c.col==="铜"?2:1;
 const KEY="gwent-tracker-v3",OLDKEYS=["gwent-tracker-v2","gwent-tracker-v1"];
 const $=s=>document.querySelector(s);
@@ -265,7 +272,7 @@ function returners(g,played){const c=BY[played];if(!c||c.t!=="单位")return[];c
 function myHand(g,uptoId){const h=[];for(const x of g.log){if(uptoId&&x.id===uptoId)break;if(x.who!=="me")continue;
   if(x.a==="draw")(x.cards||[x.c]).forEach(n=>h.push(n));
   else if(x.a==="mull"){const i=h.indexOf(x.c);if(i>=0)h.splice(i,1);if(x.into)h.push(x.into);}
-  else if((x.a==="play"||x.a==="summon")&&!x.via){const i=h.indexOf(x.c);if(i>=0)h.splice(i,1);}}return h;}
+  else if((x.a==="play"||x.a==="summon")&&!x.via){let i=h.indexOf(x.c);if(i<0)i=h.findIndex(n=>baseOf(n)===baseOf(x.c));if(i>=0)h.splice(i,1);}}return h;}
 function pushLog(e){const g=db.live;g.nextE=g.nextE||1;const x=Object.assign({r:VR(),id:"e"+(g.nextE++)},e);if(g.t0&&!ui.insertBefore&&ui.vr==null){x.t=Math.round((Date.now()-g.t0)/1000);g.lastT=Date.now();}
   if(ui.insertBefore){const i=g.log.findIndex(y=>y.id===ui.insertBefore);if(i>=0){x.r=g.log[i].r;g.log.splice(i,0,x);persist();return i;}ui.insertBefore=null;}
   g.log.push(x);persist();return g.log.length-1;}
@@ -453,13 +460,14 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       const rsum=us.reduce((a,u)=>a+(u.eu?u.eu.power:0),0);
       return `<div class="brow ${s}" data-side="${s}" data-row="${r}">${lab}${us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:""}${fxTags(s,r)}${inner}</div>`;}).join("")}</div>`;};
     const hand=g.hand?myHand(g):[];
-    const deckGrid=(opts)=>{opts=opts||{};if(!d)return"";const used={};g.log.forEach(x=>{if(x.who==="me"&&(x.a==="play"||x.a==="summon")&&x.via!=="墓场")used[x.c]=(used[x.c]||0)+1;if(x.who==="me"&&x.a==="draw"&&opts.forHand)(x.cards||[]).forEach(n=>used[n]=(used[n]||0)+1);});
+    const deckGrid=(opts)=>{opts=opts||{};if(!d)return"";const used={};const dev=devotionOf(d);g.log.forEach(x=>{if(x.who==="me"&&(x.a==="play"||x.a==="summon")&&x.via!=="墓场")used[baseOf(x.c)]=(used[baseOf(x.c)]||0)+1;if(x.who==="me"&&x.a==="draw"&&opts.forHand)(x.cards||[]).forEach(n=>used[baseOf(n)]=(used[baseOf(n)]||0)+1);});
       if(opts.forHand)hand.forEach(()=>{});
       const names=Object.keys(d.cards).sort((a,b)=>(BY[b]?.pv||0)-(BY[a]?.pv||0));
-      const handSet={};hand.forEach(n=>handSet[n]=(handSet[n]||0)+1);
+      const handSet={};hand.forEach(n=>handSet[baseOf(n)]=(handSet[baseOf(n)]||0)+1);
       let html="";
-      if(g.hand&&!opts.forHand&&hand.length&&!opts.deckOnly){html+=`<div class="lab gl">手牌 ${hand.length} 张</div><div class="grid">${hand.map(n=>tile(n,"手牌","",`data-nm="${esc(n)}"`)).join("")}</div><div class="lab gl">牌组中其他牌</div>`;}
-      html+=`<div class="grid">${names.map(n=>{const left=d.cards[n]-(used[n]||0)-(opts.forHand?0:(handSet[n]||0));return tile(n,`剩${Math.max(0,left)}`,left<=0?"gone":"",`data-nm="${esc(n)}"`);}).join("")}</div>`;return html;};
+      if(g.hand&&!opts.forHand&&hand.length&&!opts.deckOnly){html+=`<div class="lab gl">手牌 ${hand.length} 张</div><div class="grid">${hand.map(n=>{const f=formOf(baseOf(n),vr,dev);return tile(f,"手牌","",`data-nm="${esc(f)}"`);}).join("")}</div><div class="lab gl">牌组中其他牌</div>`;}
+      // 历变的牌按当前小局显示成变身后的样子（记录时直接记变身后的牌名）
+      html+=`<div class="grid">${names.map(n=>{const left=d.cards[n]-(used[n]||0)-(opts.forHand?0:(handSet[n]||0));const f=formOf(n,vr,dev);return tile(f,`剩${Math.max(0,left)}`,left<=0?"gone":"",`data-nm="${esc(f)}"`);}).join("")}</div>`;return html;};
     const searchBox=(ph)=>`<div class="row"><input id="q" placeholder="${ph}" value="${esc(ui.q)}" autocomplete="off"></div>`;
     h+=`<div class="sheet pcOnly"><div class="lab">场面（根据记录推算）</div>${lanes("none")}</div></div><div class="colR">`;
     if(ui.insertBefore){const e=entry(ui.insertBefore);h+=`<div class="sheet flow"><div class="btns" style="justify-content:space-between;align-items:center"><span>插入模式：记录会放在「${esc(e?logText(e).slice(2):"")}」之前</span><button class="ghost" data-do="insertOff">退出插入</button></div></div>`;}
