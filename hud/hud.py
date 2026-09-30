@@ -1,7 +1,7 @@
 """昆特牌对局 HUD 原型：识别屏幕右侧展示的对方出牌，置顶小窗列出本局对方已出的牌，解牌标红。
 
 用法：python hud/hud.py [--monitor N] [--interval 0.3] [--no-hide]
-  --monitor  游戏所在显示器编号（mss 编号，1 起；默认选分辨率最大的）
+  --monitor  截整个显示器（mss 编号，1 起）；默认自动找游戏窗口（Gwent.exe）的画面区域，窗口模式也行
   --no-hide  不把 HUD 窗口从截屏里排除（默认排除：自己截屏看不到它，录屏也录不到它）
 只截屏幕上公开显示的画面，不读游戏内存、不抓网络包。
 """
@@ -24,6 +24,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import detect  # noqa: E402
+import gamewin  # noqa: E402
 from matcher import FAC_CN, Matcher, removal_kind  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +38,13 @@ def pick_monitor(sct, n):
     if n:
         return mons[n]
     return max(mons[1:], key=lambda m: m['width'] * m['height'])
+
+
+def game_area(sct, args):
+    """截哪块：指定了 --monitor 就用整个显示器，否则用游戏窗口的画面区域（窗口模式也对得上）。"""
+    if args.monitor:
+        return pick_monitor(sct, args.monitor)
+    return gamewin.find()
 
 
 def region(mon, box):
@@ -101,14 +109,26 @@ class Watcher(threading.Thread):
     def run(self):
         self.reset()
         with MSS() as sct:
-            mon = pick_monitor(sct, self.args.monitor)
-            reg = region(mon, self.OUTER)
-            self.q.put(('status', f"显示器 {mon['width']}×{mon['height']}，每 {self.args.interval}s 检查一次"))
+            area, found_t = None, 0
             while not self.stop:
                 t0 = time.time()
                 if self.paused:
                     time.sleep(0.3)
                     continue
+                if t0 - found_t > 2:  # 每 2 秒重新找一次游戏窗口（窗口可能被移动、缩放）
+                    found_t = t0
+                    new = game_area(sct, self.args)
+                    if new != area:
+                        area = new
+                        if area:
+                            self.q.put(('status', f"游戏画面 {area['width']}×{area['height']}"
+                                                  f"（{area['left']},{area['top']}），识别中"))
+                        else:
+                            self.q.put(('status', '没找到游戏窗口（Gwent.exe），等待中…'))
+                if not area:
+                    time.sleep(1)
+                    continue
+                reg = region(area, self.OUTER)
                 try:
                     img = grab(sct, reg)
                 except Exception as e:  # noqa: BLE001
@@ -137,7 +157,7 @@ class App:
         bar = tk.Frame(root, bg=BG)
         bar.pack(fill='x', padx=6, pady=(6, 2))
         for txt, cmd in (('下一小局', self.next_round), ('扫墓场', self.scan_grave), ('撤销', self.undo),
-                         ('复制', self.copy)):
+                         ('复制', self.copy), ('诊断', self.diagnose)):
             tk.Button(bar, text=txt, command=cmd, bg='#343a46', fg=FG, activebackground=GOLD, relief='flat',
                       font=self.small, padx=6).pack(side='left', padx=2)
         self.pause_btn = tk.Button(bar, text='暂停', command=self.toggle_pause, bg='#343a46', fg=FG,
@@ -330,10 +350,8 @@ class App:
         self.set_status('已复制')
 
     def scan_grave(self):
-        """打开墓场界面后点这个：截整屏，找出每张牌并识别。"""
-        with MSS() as sct:
-            mon = pick_monitor(sct, self.args.monitor)
-            frame = grab(sct, mon)
+        """打开墓场界面后点这个：截游戏画面，找出每张牌并识别。"""
+        frame = self.grab_game()
         cards = detect.find_cards(frame)
         names = []
         for i, (*_, img) in enumerate(cards):
@@ -345,6 +363,22 @@ class App:
             cnt[n] = cnt.get(n, 0) + 1
         txt = '\n'.join(f'{n} ×{k}' if k > 1 else n for n, k in cnt.items()) or '没找到卡牌（先打开墓场界面）'
         messagebox.showinfo(f'墓场 {len(cards)} 张（只看得到当前一屏）', txt)
+
+    def grab_game(self):
+        with MSS() as sct:
+            area = game_area(sct, self.args) or pick_monitor(sct, 0)
+            return grab(sct, area)
+
+    def diagnose(self):
+        """存一张游戏画面，显示展示区检测值，识别不到时用。"""
+        frame = self.grab_game()
+        path = os.path.join(LOG_DIR, self.session, f"diag_{time.strftime('%H%M%S')}.png")
+        cv2.imencode('.png', frame)[1].tofile(path)
+        pr = detect.paper_ratio(frame)
+        sc = detect.showcase(frame)
+        res = self.m.match(sc) if sc is not None else []
+        top = f"{res[0][2][0]['name']} {res[0][0]:.0f}票" if res and res[0][2] else '无'
+        self.set_status(f"画面 {frame.shape[1]}×{frame.shape[0]} 羊皮纸 {pr:.2f} 展示区：{top}；已存 {os.path.basename(path)}")
 
     def save_log(self):
         path = os.path.join(LOG_DIR, self.session, 'log.json')
