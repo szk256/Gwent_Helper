@@ -11,7 +11,7 @@
 用户卡组：北方王国“北境赤诚骑士少女改”，领袖皇家激励，战术战术优势，25 张，无中立牌（赤诚成立）。
 
 ## 文件
-源文件在 `src/`，改完运行 `node build.js` 打包成单文件 `dist/gwent_tracker.html`（手机用这个）。`src/index.html` 可直接在浏览器打开调试。
+源文件在 `src/`，改完运行 `node build.js` 打包成单文件 `dist/gwent_tracker.html`（用户主要在**电脑网页**上用，也兼容手机）。`src/index.html` 可直接在浏览器打开调试。
 - `src/engine.js`：底层引擎，不含任何具体卡牌。浏览器里是 `window.GwentEngine`，Node 里 `require`。
 - `src/cards.js`：卡牌行为（只写“做什么”），`window.GwentCards.behaviors`。数值来自 `RAW`。
 - `src/data.js`：卡牌数据 `const RAW=[...]`（单行，很大）。
@@ -125,4 +125,4 @@ R1 W 46:24 4:5
 ## 测试
 - `node gwent_engine_test.js`：底层机制。
 - 界面：用 jsdom 载入 HTML，往 `db.live` 塞一局记录后调用 `rMatch()`，检查 `.eng .score`、`.brow`、`.warn`。脚本结束要 `process.exit(0)`，否则计时器会卡住。
-- 截图：playwright，视口 420×1100，检查手机布局。
+- 截图：playwright，视口 1440×900 检查电脑布局（≥1100px 两栏：对局页左边比分+场面常驻、右边记录；牌库左边筛选），420×1100 检查手机布局。

@@ -237,6 +237,18 @@ table th{color:#6E5C3E}
 .rsum{align-self:center;min-width:26px;margin-right:4px;text-align:center;font-weight:700;color:#D9C28D}
 .eng .score{display:flex;align-items:baseline;gap:6px;font-size:22px}.eng .sm{color:var(--mine)}.eng .so{color:var(--theirs)}
 .eng .warn{font-size:12px;margin:4px 0;display:flex;gap:6px;align-items:center}
+
+/* 电脑宽屏：两栏 */
+.pcOnly{display:none}
+@media (min-width:1100px){
+  .wrap{max-width:1320px}
+  .duo{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:0 16px;align-items:start}
+  .duo.coll{grid-template-columns:300px minmax(0,1fr)}
+  .duo>.colL{position:sticky;top:8px;max-height:calc(100vh - 80px);overflow:auto}
+  .pcOnly{display:block}
+  .mbOnly{display:none}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
+}
 </style>
 </head>
 <body>
@@ -1358,7 +1370,7 @@ const BASE=["落难的少女","水路突袭","法利波","安赛斯王子","赤�
 const toMap=a=>a.reduce((m,n)=>(m[n]=(m[n]||0)+1,m),{});
 function seed(){return{v:3,owned:{},decks:[],games:[],live:null,nextId:1,edits:{},custom:[],tactics:[]};}
 let db=seed();
-let ui={tab:"match",deckSel:2,collF:"NR",collQ:"",collOwned:false,deckQ:"",who:"me",act:"play",q:"",statA:1,statB:2};
+let ui={cfilOpen:typeof matchMedia!=="undefined"&&matchMedia("(min-width:1100px)").matches,tab:"match",deckSel:2,collF:"NR",collQ:"",collOwned:false,deckQ:"",who:"me",act:"play",q:"",statA:1,statB:2};
 let setup={deck:2,fac:null,coin:null};
 
 // ---------- storage ----------
@@ -1634,6 +1646,8 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
    ${editing?`<p class="note">正在查看/修改第${vr+1}局的记录，新记录会加到这一局。</p>`:""}</div>`;
   if(!o||editing){
     const {R,all,F,S}=board(g,vr);const step=ui.flow&&ui.flow[0];
+    // 电脑宽屏：左边比分 + 场面常驻，右边记录；手机上 .duo 不分栏，场面仍在记录面板里折叠
+    h+=`<div class="duo"><div class="colL">`;
     if(S){const rr=g.rounds[vr];const me=S.score.me.total,op=S.score.op.total;
       const cal=rr&&rr.me!==""&&rr.me!=null?`<span class="note">　真实 ${rr.me}:${rr.op}${(+rr.me!==me||+rr.op!==op)?`，差 ${me-rr.me>=0?"+":""}${me-rr.me} : ${op-rr.op>=0?"+":""}${op-rr.op}`:"，一致"}</span>`:"";
       const um=Object.entries(S.unmod);
@@ -1664,6 +1678,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       if(g.hand&&!opts.forHand&&hand.length&&!opts.deckOnly){html+=`<div class="lab gl">手牌 ${hand.length} 张</div><div class="grid">${hand.map(n=>tile(n,"手牌","",`data-nm="${esc(n)}"`)).join("")}</div><div class="lab gl">牌组中其他牌</div>`;}
       html+=`<div class="grid">${names.map(n=>{const left=d.cards[n]-(used[n]||0)-(opts.forHand?0:(handSet[n]||0));return tile(n,`剩${Math.max(0,left)}`,left<=0?"gone":"",`data-nm="${esc(n)}"`);}).join("")}</div>`;return html;};
     const searchBox=(ph)=>`<div class="row"><input id="q" placeholder="${ph}" value="${esc(ui.q)}" autocomplete="off"></div>`;
+    h+=`<div class="sheet pcOnly"><div class="lab">场面（根据记录推算）</div>${lanes("none")}</div></div><div class="colR">`;
     if(ui.insertBefore){const e=entry(ui.insertBefore);h+=`<div class="sheet flow"><div class="btns" style="justify-content:space-between;align-items:center"><span>插入模式：记录会放在「${esc(e?logText(e).slice(2):"")}」之前</span><button class="ghost" data-do="insertOff">退出插入</button></div></div>`;}
     if(step){
       h+=`<div class="sheet flow">`;
@@ -1725,7 +1740,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(ui.act==="kill"){h+=`<p class="note" style="margin:10px 0 4px">点被摧毁的单位：</p>${lanes("pick")}`;}
       else if(ui.act==="note"){h+=`<div class="row"><input id="noteIn" placeholder="例如：对方洗回 2 张牌 / 我方被锁定" autocomplete="off"></div><button class="primary" data-do="noteRec">记录备注</button>`;}
       else h+=`<div class="row"><button class="primary" data-do="${ui.act}">${ui.who==="me"?"记录：我停牌":"记录：对方停牌"}</button></div>`;
-      if(!["order","move","kill"].includes(ui.act))h+=`<details class="row" ${ui.showBoard?"open":""} id="bdet"><summary class="note">场面（根据记录推算）</summary>${lanes("none")}</details>`;
+      if(!["order","move","kill"].includes(ui.act))h+=`<details class="row mbOnly" ${ui.showBoard?"open":""} id="bdet"><summary class="note">场面（根据记录推算）</summary>${lanes("none")}</details>`;
       h+=`</div>`;
     }
     const lg=g.log.map((x,i)=>[x,i]).filter(([x])=>x.r===vr);
@@ -1736,6 +1751,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
      <div class="row"><div class="lab">本局结束时的手牌数${hmAuto!=null?`（按记录我方是 ${hmAuto} 张，不填就用这个）`:""}</div><div class="seg"><input id="hMe" inputmode="numeric" placeholder="我方手牌" value="${p.hm??""}"><input id="hOp" inputmode="numeric" placeholder="对方手牌" value="${p.ho??""}"></div></div>
      <div class="row"><div class="lab">比分（可不填）</div><div class="seg"><input id="sMe" inputmode="numeric" placeholder="我方" value="${p.me??""}"><input id="sOp" inputmode="numeric" placeholder="对方" value="${p.op??""}"></div></div>
      <button class="primary" data-do="endRound">结束第${cur+1}局</button></div>`;}
+    h+=`</div></div>`;
   }
   if(o){
     const uniq=d?Object.keys(d.cards):[];const playedMe=new Set(g.log.filter(x=>x.who==="me"&&x.a==="play").map(x=>x.c));
@@ -1836,16 +1852,16 @@ function rColl(){const f=ui.collF;const all=collBase();const own=all.filter(c=>d
   const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length;
   const grp=(lab,key,items)=>`<div class="row"><div class="lab">${lab}</div><div class="chips">${items.map(([v,t])=>`<button class="chip ${F[key].includes(v)?"on":""}" data-cfil="${key}|${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
   let h=`<div class="chips" style="margin-bottom:10px"><button class="chip ${f==="ALL"?"on":""}" data-cf="ALL">全部</button>${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
-   <details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(all).length}</b> 张）`:""}</summary>
+   <div class="duo coll"><div class="colL"><details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(all).length}</b> 张）`:""}</summary>
     ${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,x]))}
-    ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details>
+    ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details></div><div class="colR">
    <div class="sheet"><div class="sum"><span>${f==="ALL"?"全部阵营":FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
    <p class="note">「按游戏算法」：铜卡算 2 份，不算初始卡、领袖和战术。数据库总数会比游戏多约 9，拥有数应该和游戏一致。</p>
    <div class="btns" style="align-items:center"><input id="cQ" placeholder="搜牌名" value="${esc(ui.collQ)}" style="flex:1" autocomplete="off"><button class="chip ${ui.collOwned?"on":""}" data-do="collOwned">只看已拥有</button></div>
    <div class="seg" style="margin:8px 0"><button class="${ui.collMode!=="info"?"on":""}" data-do="collCount">点牌：登记张数</button><button class="${ui.collMode==="info"?"on":""}" data-do="collInfo">点牌：看详情/改数值</button></div>
    <p class="note">铜卡最多 2 张，金卡最多 1 张，没有的牌显示为灰色。领袖默认全部解锁，不用登记。</p>
    <div class="btns"><button class="ghost" data-do="exColl">导出牌库代码</button><button class="ghost" data-do="impColl">批量导入</button><button class="ghost" data-do="addCard">新增卡牌</button></div></div>
-   <div id="collList">${collList()}</div>`;
+   <div id="collList">${collList()}</div></div></div>`;
   $("#tab-coll").innerHTML=h;const fb=$("#cfilBox");if(fb)fb.ontoggle=()=>{ui.cfilOpen=fb.open;};bindSearch("#cQ",v=>ui.collQ=v,()=>{$("#collList").innerHTML=collList();});}
 
 // ---------- actions ----------

@@ -230,3 +230,15 @@ table th{color:#6E5C3E}
 .rsum{align-self:center;min-width:26px;margin-right:4px;text-align:center;font-weight:700;color:#D9C28D}
 .eng .score{display:flex;align-items:baseline;gap:6px;font-size:22px}.eng .sm{color:var(--mine)}.eng .so{color:var(--theirs)}
 .eng .warn{font-size:12px;margin:4px 0;display:flex;gap:6px;align-items:center}
+
+/* 电脑宽屏：两栏 */
+.pcOnly{display:none}
+@media (min-width:1100px){
+  .wrap{max-width:1320px}
+  .duo{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:0 16px;align-items:start}
+  .duo.coll{grid-template-columns:300px minmax(0,1fr)}
+  .duo>.colL{position:sticky;top:8px;max-height:calc(100vh - 80px);overflow:auto}
+  .pcOnly{display:block}
+  .mbOnly{display:none}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
+}
