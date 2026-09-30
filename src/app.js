@@ -441,7 +441,7 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
       const cm=S.E.s.sides.me.coins,co=S.E.s.sides.op.coins,coinUsed=cm||co||S.E.trace.some(t=>/金币|献金|费用/.test(t.type));
       h+=`<div class="sheet eng"><div class="score"><b class="sm">${me}</b><span>:</span><b class="so">${op}</b>${cal}</div>${coinUsed?`<p class="note coins">金币　我方 <b>${cm}</b>　对方 <b>${co}</b></p>`:""}<p class="note coins">手牌（推算）　我方 <b>${S.E.s.sides.me.handCount}</b>　对方 <b>${S.E.s.sides.op.handCount}</b></p>${(()=>{const t=["me","op"].map(sd=>{const L=leaderInfo(S,g,sd);return L?sideN(sd)+" "+esc(L.nm)+" <b>"+(L.left>0?"剩 "+L.left+" 次":"已用完")+"</b>"+(L.next!=null&&L.left>0?"（下次 +"+L.next+"）":""):"";}).filter(Boolean);return t.length?`<p class="note coins">领袖　${t.join("　")}</p>`:"";})()}${extraLine(S.E)}
         ${S.warns.length?`<details><summary class="note">引擎提示 ${S.warns.length} 条</summary>${S.warns.map(w=>`<div class="warn">${w.fix?`<button class="ghost" data-fixtgt="${w.id}">补目标</button>`:""}${w.step?`<button class="ghost" data-fixstep="${esc(JSON.stringify(w.step))}">补上</button>`:""}${esc(logText(entry(w.id)||{}).slice(0,24))}：${esc(w.m)}</div>`).join("")}</details>`:""}
-        ${um.length?`<p class="note">未建模：${um.map(([n,k])=>esc(n)+(k>1?"×"+k:"")).join("、")}</p>`:""}
+        ${um.length?`<p class="note">未建模：${um.map(([n,k])=>esc(n)+(k>1?"×"+k:"")+(n==="战术"?"（选一下对方的战术牌）":"")).join("、")}</p>`:""}
         <div class="btns" style="margin-top:6px"><button class="ghost" data-do="realScore">录入真实比分</button></div></div>`;
       const DR=devReport(g,vr,S);if(DR)h+=`<details class="sheet" ${DR.bad?"open":""}><summary><b>偏差报告</b>${DR.n?`　<span class="note">${DR.bad?"有偏差":"一致"}（核对点 ${DR.n} 个）</span>`:""}</summary>${DR.html}</details>`;}
     const hz=S&&S.E&&S.E.s.hazards;
@@ -561,7 +561,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       // 对方先手：第一局对方近战排最左边有战术牌，开局选一下是哪张（之后对方用战术就按它结算）
       const askOpTac=vr===0&&g.tacCard&&g.coin==="后"&&g.opTactic===undefined;
       h+=`<div class="sheet"><div class="who"><button class="me ${ui.who==="me"?"on":""}" data-who="me">我方</button><button class="op ${ui.who==="op"?"on":""}" data-who="op">对方</button></div>
-       ${askOpTac?`<div class="optac"><p class="note" style="margin:8px 0 4px">对方先手：对方的战术牌是哪张？（放在对方近战排最左边）</p><div class="grid">${[...new Set(["战术优势",...C.filter(isTactic).map(c=>c.n)])].map(n=>tile(n,"","",`data-optacset="${esc(n)}"`)).join("")}</div><div class="btns" style="margin-top:6px"><button class="ghost" data-optacset="">不知道，先跳过</button></div></div>`:""}
+       ${askOpTac?`<div class="optac"><span class="note">对方先手，战术牌是：</span>${[...new Set([g.opTactic||"战术优势",...C.filter(isTactic).map(c=>c.n)])].map(n=>`<button class="ghost" data-optacset="${esc(n)}">${esc(n)}</button>`).join("")}<button class="ghost" data-optacset="">不知道</button></div>`:""}
        ${pe?`<div class="btns" style="margin:6px 0 0"><button class="ghost endturn" data-do="endTurn" title="结算${sideN(pe)}的回合结束效果（快捷键 Z）。之后改战力按回合结束后的值填">⏎ 结束${sideN(pe)}回合</button></div>`:""}
        <div class="acts">${acts.map(k=>`<button data-act="${k}" class="${ui.act===k?"on":""}">${ACT[k].replace("整排效果","整排")}</button>`).join("")}</div>
        <div class="btns" style="margin-top:8px;align-items:center"><button class="chip ${g.hand?"on":""}" data-do="handToggle">记录手牌</button>${g.hand&&!roundHasHand?`<button class="ghost" data-do="handStart">选第${vr+1}局${vr===0?"起手 10 张":"抽到的 3 张"}</button>`:""}</div>`;

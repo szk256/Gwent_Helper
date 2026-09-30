@@ -422,4 +422,5 @@ html[data-theme="black"] .fxtag{box-shadow:none}
 button.endturn{flex:1;font-weight:600;border-color:var(--gold)}
 button.cur{outline:2px solid var(--gold)}
 .lab.gl{margin-top:8px}
+.optac{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:8px 0 2px}.optac .ghost{padding:4px 8px;font-size:13px}
 .askend{margin:8px 0;padding:8px 10px;border:1px solid var(--gold);border-radius:4px;background:rgba(212,175,90,.10)}.askend p{margin:0 0 6px}.askend .btns{flex-wrap:nowrap}.askend .btns button{flex:none}
