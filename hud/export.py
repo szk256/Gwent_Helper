@@ -1,6 +1,6 @@
 """把场面时间线导出成对局簿的 v2 对局代码。
 
-python hud/export.py 帧目录 [日期YYYYMMDD] [--jobs=4] [--deck=卡组代码或对局簿备份路径]      （没扫过的帧会先扫描，结果缓存在 帧目录/scan.json）
+python hud/export.py 帧目录 [日期YYYYMMDD] [--jobs=4] [--deck=卡组代码或对局簿备份路径] [--sync-power]      （没扫过的帧会先扫描，结果缓存在 帧目录/scan.json）
 输出 帧目录/game.json 和 帧目录/game_v2.txt，可直接在对局簿“导入对局”里粘贴。
 
 对应关系（看不准的都写成备注，不让推算引擎误用）：
@@ -85,9 +85,11 @@ def infer_passes(log, runs):
 
 
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
-               runs=None, extra=None):
+               runs=None, extra=None, sync_states=None):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
-    my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。"""
+    my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
+    sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
+    （对局簿棋盘就是每个单位的实际战力；偏差报告会因此几乎总是一致，核查规则时别开）。"""
     log, rounds = [], []
     r, n = 0, 0
     t_start = min([e[0] for e in events] + [s[0] for s in scores]) if events or scores else 0
@@ -103,6 +105,36 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     extra = extra or {}
     step_t = [0.0]   # 最近一手（打出 / 领袖）的时间
 
+    units = {}   # 排 -> [[记录 id, 牌名, 上次的战力]]，按排内位置
+    sync_t = [s[0] for s in sync_states] if sync_states else []
+
+    def rowkey(who, rr):
+        return ('我方' if who == 'me' else '对方') + ('近战' if rr == 'm' else '远程')
+
+    def sync_powers(t):
+        """画面上读到的单位战力和上次不同的，写成改战力记录（整排的牌名顺序对得上才写）。"""
+        import bisect
+        i = bisect.bisect_right(sync_t, t) - 1
+        if i < 1:
+            return
+
+        def row_of(ent, rk):
+            names = ent.get('rows', {}).get(rk, [])
+            pws = (ent.get('pw') or {}).get(rk, [])
+            keep = [j for j, nm in enumerate(names) if cards_by_name.get(nm, {}).get('type') != '战术']
+            return [names[j] for j in keep], [pws[j] if j < len(pws) else None for j in keep]
+
+        for rk, us in units.items():
+            names, pws = row_of(sync_states[i][1], rk)
+            names2, pws2 = row_of(sync_states[i - 1][1], rk)
+            if names != [u[1] for u in us] or names2 != names:
+                continue
+            for u, p, p2 in zip(us, pws, pws2):
+                if p is not None and p == p2 and p != u[2]:  # 连续两帧读到同样的数才写
+                    push({'who': 'me' if rk.startswith('我方') else 'op', 'a': 'adj', 'uid': u[0], 'v': str(p),
+                          'hud': '画面读到的战力'}, t)
+                    u[2] = p
+
     def push(x, t):
         nonlocal n
         ex = extra.get((t, x.get('c'), cur_row[0])) if x['a'] in ('play', 'summon') else None
@@ -116,6 +148,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         log.append(x)
         if x['a'] in ('play', 'leader'):
             step_t[0] = t
+        if sync_states and x['a'] in ('play', 'summon') and x.get('row'):
+            us = units.setdefault(rowkey(x['who'], x['row']), [])
+            us.insert(min(x.get('pos', len(us)), len(us)), [x['id'], x['c'], x.get('pw')])
         if x['a'] in ('play', 'summon') and x.get('row'):
             recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}[x['row']], '打出' if x['a'] == 'play' else '进场'))
 
@@ -130,6 +165,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         if best:
             round_score = best[1]
             if pending_step and best[1] != last_real:
+                if sync_states:
+                    sync_powers(best[0])
                 push({'who': 'me', 'a': 'real', 'v': f'{best[1][0]}:{best[1][1]}'}, best[0])
                 last_real = best[1]
                 pending_step = False
@@ -172,6 +209,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             rounds.append({'res': res, 'me': str(me), 'op': str(op), 'hm': None, 'ho': None, 'sec': None})
             r += 1
             last_real, round_score = None, None
+            units.clear()
             continue
         c = cards_by_name.get(name, {})
         if kind == '打出':
@@ -207,6 +245,12 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             pending_step = True
         elif kind in ('离场', '移动', '回手'):
             push({'who': who, 'a': 'note', 'c': f'画面：{name} {kind}（{row}）'}, t)
+            src = row.split('→')[0]
+            u = next((u for u in units.get(src, []) if u[1] == name), None)
+            if u:
+                units[src].remove(u)
+                if kind == '移动' and '→' in row:
+                    units.setdefault(row.split('→')[1], []).append(u)
     flush_scores(float('inf'))
     if round_score is not None or (log and log[-1]['r'] == r):
         me, op = round_score or ('', '')
@@ -217,9 +261,15 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         i = next((i for i, x in enumerate(log) if x['r'] == rr and x.get('ts', 0) >= ts and x['a'] != 'real'), None)
         rec = {'who': who, 'a': 'pass', 'r': rr, 'vt': vt(ts), 'ts': ts, 'hud': '由回合顺序推出'}
         log.insert(i if i is not None else len(log), rec)
+    remap = {}
     for i, x in enumerate(log):
+        if 'id' in x:
+            remap[x['id']] = f'e{i + 1}'
         x['id'] = f'e{i + 1}'
         x.pop('ts', None)
+    for x in log:
+        if x.get('uid') in remap:
+            x['uid'] = remap[x['uid']]
     facs = Counter(cards_by_name[x['c']]['fac'] for x in log
                    if x['who'] == 'op' and x.get('c') in cards_by_name and cards_by_name[x['c']]['fac'] != 'NE')
     return {
@@ -249,8 +299,9 @@ def main():
     has_show = any(ent.get('show') for _t, ent in states) or not any(ent.get('smin') == 200 for _t, ent in states)
     spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
     my_deck = deck.load(spec, m.cards)
+    sync = '--sync-power' in sys.argv
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
-                      runs=turn_runs(states), extra=tr.extra)
+                      runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)

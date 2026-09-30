@@ -1,6 +1,7 @@
 """昆特牌对局 HUD：实时扫描整个场面，记录双方出牌、离场、比分，置顶小窗显示；一键导出对局簿 v2 对局代码。
 
-用法：python hud/hud.py [--monitor N] [--no-hide] [--save-frames] [--deck=卡组代码或对局簿备份路径]
+用法：python hud/hud.py [--monitor N] [--no-hide] [--save-frames] [--deck=卡组代码或对局簿备份路径] [--no-sync]
+  导出默认把画面读到的每个单位战力写成改战力记录（对局簿里复盘时场面就是实际场面）；--no-sync 关掉，用来核查推算引擎
   默认自动找游戏窗口（Gwent.exe）的画面区域，窗口模式也行；--monitor N 改为截整个显示器
   --no-hide      不把小窗从截屏里排除（默认排除：自己截屏看不到它，录屏也录不到它）
   --save-frames  把扫描过的画面存到 cache/log/<时间>/frames/（给离线分析、调参数用，一局几百 MB）
@@ -183,7 +184,7 @@ class BoardWatcher(threading.Thread):
                         self.tr.shows.append((st, name))
                     ent['show'] = None
                     self.tr.update(t0, ent)
-                    self.states.append((t0, {k: ent.get(k) for k in ('score', 'sharp', 'smin', 'turn')}))
+                    self.states.append((t0, {k: ent.get(k) for k in ('score', 'sharp', 'smin', 'turn', 'rows', 'pw')}))
                     snap = self.tr.snapshot()
                 if self.frames_dir:
                     name = time.strftime('%H%M%S', time.localtime(t0)) + f'_{int(t0 * 10) % 10}.jpg'
@@ -196,8 +197,9 @@ class BoardWatcher(threading.Thread):
             scores = export.stable_scores(self.states)
             runs = export.turn_runs(self.states)
             extra = dict(self.tr.extra)
+            states = list(self.states) if not self.args.no_sync else None
         return export.build_game(events, scores, date, {c['name']: c for c in (self.m.cards if self.m else [])},
-                                 my_deck=my_deck, runs=runs, extra=extra)
+                                 my_deck=my_deck, runs=runs, extra=extra, sync_states=states)
 
 
 class App:
@@ -427,6 +429,7 @@ def main():
     ap.add_argument('--monitor', type=int, default=0)
     ap.add_argument('--no-hide', action='store_true')
     ap.add_argument('--save-frames', action='store_true')
+    ap.add_argument('--no-sync', action='store_true', help='导出时不把画面读到的战力写成改战力记录（核查引擎规则时用）')
     ap.add_argument('--deck', default=None, help='我方卡组：卡组代码或对局簿备份路径（默认读 hud/deck.txt）')
     args = ap.parse_args()
     if not os.path.exists(os.path.join(HERE, 'cache', 'db.npz')):
