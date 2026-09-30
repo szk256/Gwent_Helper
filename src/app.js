@@ -130,10 +130,12 @@ function simBoard(g,r,excl){const S=sim(g,r,excl);if(!S)return null;const R={me:
   return{R,all,F:g.log.filter(x=>x.r===r&&x.a==="fx"),S};}
 
 const isLeader=c=>c.t==="领袖能力", isTactic=c=>c.t==="战术";
-// 小局开始时在手牌/牌组里历变的牌：第 i 次历变变成 chain[i]；dev = 这一步要求赤诚（上一形态卡面写“赤诚：……历变”）
+// 小局开始时历变的牌（用户确认：只有在手牌里才会变，在牌组里不变）：第 i 次历变变成 chain[i]；dev = 这一步要求赤诚（上一形态卡面写“赤诚：……历变”）
 const EVOLVE={"维拉克萨斯王子":[{n:"流放者维拉克萨斯"},{n:"维拉克萨斯国王",dev:true}],"奥贝伦王":[{n:"入侵者奥贝伦"}],"哈罗德·奎特":[{n:"好战者哈罗德"}],"新王艾思娜":[{n:"慈母艾思娜"}],"神童贾奎斯":[{n:"艾德斯伯格的贾奎斯"}],"篡位者 - 军官":[{n:"篡位者 - 将军"}]};
 const EVBASE={};for(const[b,ch]of Object.entries(EVOLVE))ch.forEach(x=>EVBASE[x.n]=b);
 const baseOf=n=>EVBASE[n]||n;
+// 手牌里的牌历变了几次：从抽到它的那一局之后，每个小局开始变一次（起手牌算第 1 局抽到）
+function handForm(g,n,vr,dev){const b=baseOf(n);const x=g.log.find(y=>y.who==="me"&&y.a==="draw"&&y.r<=vr&&(y.cards||[y.c]).some(m=>baseOf(m)===b));return formOf(b,x?vr-x.r:0,dev);}
 function formOf(n,r,dev){let cur=n;const ch=EVOLVE[n]||[];for(let i=0;i<r&&i<ch.length;i++){if(ch[i].dev&&!dev)break;cur=ch[i].n;}return cur;}
 // 赤诚：起始牌组没有中立牌
 const devotionOf=d=>!!d&&Object.keys(d.cards).every(n=>!BY[n]||BY[n].f!=="NE");
@@ -465,9 +467,10 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       const names=Object.keys(d.cards).sort((a,b)=>(BY[b]?.pv||0)-(BY[a]?.pv||0));
       const handSet={};hand.forEach(n=>handSet[baseOf(n)]=(handSet[baseOf(n)]||0)+1);
       let html="";
-      if(g.hand&&!opts.forHand&&hand.length&&!opts.deckOnly){html+=`<div class="lab gl">手牌 ${hand.length} 张</div><div class="grid">${hand.map(n=>{const f=formOf(baseOf(n),vr,dev);return tile(f,"手牌","",`data-nm="${esc(f)}"`);}).join("")}</div><div class="lab gl">牌组中其他牌</div>`;}
-      // 历变的牌按当前小局显示成变身后的样子（记录时直接记变身后的牌名）
-      html+=`<div class="grid">${names.map(n=>{const left=d.cards[n]-(used[n]||0)-(opts.forHand?0:(handSet[n]||0));const f=formOf(n,vr,dev);return tile(f,`剩${Math.max(0,left)}`,left<=0?"gone":"",`data-nm="${esc(f)}"`);}).join("")}</div>`;return html;};
+      if(g.hand&&!opts.forHand&&hand.length&&!opts.deckOnly){html+=`<div class="lab gl">手牌 ${hand.length} 张</div><div class="grid">${hand.map(n=>{const f=handForm(g,n,vr,dev);return tile(f,"手牌","",`data-nm="${esc(f)}"`);}).join("")}</div><div class="lab gl">牌组中其他牌</div>`;}
+      // 牌组里的牌不历变；没记手牌时不知道它在不在手里，把可能的变身形态一起列出来（标“手牌历变”）
+      const extra=n=>{if(g.hand||!EVOLVE[n]||!vr)return"";const out=[];for(let k=1;k<=vr;k++){const f=formOf(n,k,dev);if(f!==n&&!out.includes(f))out.push(f);}return out.map(f=>tile(f,"手牌历变","",`data-nm="${esc(f)}"`)).join("");};
+      html+=`<div class="grid">${names.map(n=>{const left=d.cards[n]-(used[n]||0)-(opts.forHand?0:(handSet[n]||0));return tile(n,`剩${Math.max(0,left)}`,left<=0?"gone":"",`data-nm="${esc(n)}"`)+(left>0?extra(n):"");}).join("")}</div>`;return html;};
     const searchBox=(ph)=>`<div class="row"><input id="q" placeholder="${ph}" value="${esc(ui.q)}" autocomplete="off"></div>`;
     h+=`<div class="sheet pcOnly"><div class="lab">场面（根据记录推算）</div>${lanes("none")}</div></div><div class="colR">`;
     if(ui.insertBefore){const e=entry(ui.insertBefore);h+=`<div class="sheet flow"><div class="btns" style="justify-content:space-between;align-items:center"><span>插入模式：记录会放在「${esc(e?logText(e).slice(2):"")}」之前</span><button class="ghost" data-do="insertOff">退出插入</button></div></div>`;}
