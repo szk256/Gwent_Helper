@@ -16,7 +16,7 @@ const DEFAULT_RULES = {
   shieldBeforeArmor: true,    // 护盾先于护甲抵挡
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
-  reynardSelf: true,          // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（未确认）
+  reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
 };
 
 const OTHER = { me: 'op', op: 'me' };

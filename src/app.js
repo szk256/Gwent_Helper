@@ -309,6 +309,11 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     eUp(){sw(-1);},eDown(){sw(1);},
     eDel(){const e=entry(step.id);g.log.splice(g.log.indexOf(e),1);persist();nextStep();},
     eRename(){ui.flow=[{t:"rename",id:step.id}];ui.q="";rMatch();},
+    eFlip(){const e=entry(step.id);const i=g.log.indexOf(e);const from=e.who,to=from==="me"?"op":"me";
+      // 连同这张牌带出的后续记录一起改方；落在自己一侧的，位置也跟着换边
+      const fl=x=>{if(!x.side||x.side===from)x.side=to;x.who=to;};fl(e);
+      for(let j=i+1;j<g.log.length;j++){const y=g.log[j];if(y.via&&y.via===e.c&&y.who===from)fl(y);else if(!y.via)break;}
+      persist();toast("已改为"+sideN(to));rMatch();},
     ePlace(){const e=entry(step.id);ui.flow=[{t:"place",editId:e.id,card:e.c,side:e.side||e.who,who:e.who,move:e.a==="move"}];rMatch();},
     eTgt(){const e=entry(step.id);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();},
     eInsert(){ui.insertBefore=step.id;ui.flow=null;rMatch();toast("插入模式：新记录会放在这一步之前");},
@@ -435,6 +440,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="edit"){const e=entry(step.id);if(!e){ui.flow=null;}else{const placeable=e.row||e.a==="move";
         h+=`<h2>修改这一步</h2><p>${esc(logText(e))}</p><div class="ebtns">
           ${e.c&&!["note","fx","pass","draw"].includes(e.a)?`<button class="ghost" data-do="eRename">换牌名</button>`:""}
+          ${["play","order","leader","tactic","summon","spawn","effect","adj"].includes(e.a)?`<button class="ghost" data-do="eFlip">改成${e.who==="me"?"对方":"我方"}</button>`:""}
           ${placeable?`<button class="ghost" data-do="ePlace">改位置</button>`:""}
           ${["play","order","leader","summon"].includes(e.a)?`<button class="ghost" data-do="eTgt">改目标</button>`:""}
           <button class="ghost" data-do="eUp">↑ 上移</button><button class="ghost" data-do="eDown">↓ 下移</button>
