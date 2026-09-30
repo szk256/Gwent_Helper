@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="97c015f";</script>
+<script>window.GWENT_BUILD="72966ce";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -500,7 +500,7 @@ const DEFAULT_RULES = {
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
   passedTurnsTick: true,      // 停牌之后停牌方的回合开始/结束效果照常结算（NamuWiki；用户确认对方停牌后数值还会涨）。另一方出完最后一张牌强制停牌时没有这个回合（对局簿 deferPassedTick）
-  veteranOffBoard: true,      // 老兵在手牌/牌组里也加（用户实测手牌；牌组 ASSUME）
+  veteranOffBoard: true,      // 老兵在手牌/牌组里也加（用户实测：手牌、牌组都会变）
   passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
@@ -946,7 +946,7 @@ class Game {
     return u;
   }
 
-  // 老兵（用户实测：第二局开局手牌里的图尔赛克家族入侵者 5 → 6）：手牌、牌组里的也加，第二局 +1、第三局 +2（ASSUME：牌组里的同样算）
+  // 老兵（用户实测：第二局开局手牌里的图尔赛克家族入侵者 5 → 6）：手牌、牌组里的也加（牌组也实测过），第二局 +1、第三局 +2
   _veteranOffBoard(u) {
     if (!u.def.veteran || !this.rules.veteranOffBoard || !(this.s.round > 0)) return;
     const n = u.def.veteran * this.s.round; u.base += n; u.power += n;
