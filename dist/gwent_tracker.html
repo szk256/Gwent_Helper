@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="107c8a8";</script>
+<script>window.GWENT_BUILD="a9f6338";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -202,6 +202,28 @@ nav button.on{color:#F4DC9A;box-shadow:inset 0 3px 0 var(--gold);background:radi
 .slot{min-width:18px;height:60px;padding:0;border:1px dashed rgba(212,175,90,.55);color:#D4AF5A;background:rgba(0,0,0,.2)}
 .slot:hover,.slot:focus-visible{background:var(--gold);color:#2A1C08}
 .brow.drop{outline:2px dashed var(--gold);background-color:rgba(212,175,90,.12)}
+/* 一排最多 9 张不换行：单位按比例缩小（最窄 34px），再放不下就在这一排里横向滑动 */
+.brow{flex-wrap:nowrap;min-width:0}
+.board{grid-template-columns:minmax(0,1fr)}
+.bmeta{flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:28px}
+.bmeta .rsum{margin:0;min-width:0}
+.bmeta .fxtag{font-size:10px;padding:1px 5px;border-radius:8px;text-align:center;line-height:1.3}
+.bu{flex:1;min-width:0;display:flex;align-items:center;gap:5px;padding:4px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.bu.slots{gap:2px}
+.bu.slots .chip.unit{min-width:28px}
+.bu .chip.unit{flex:0 1 54px;min-width:34px;width:auto;height:auto;aspect-ratio:54/74;container-type:inline-size}
+.bu .slot{flex:none;min-width:14px;width:14px}
+.bu .chip.unit .unm{top:27%}.bu .chip.unit .ust{top:35%}.bu .chip.unit .uord{top:51%}
+@media (max-width:600px){
+  .brow{padding:4px 3px 4px 2px;gap:3px}.bl{width:18px;margin-right:0}.bmeta{min-width:22px}.bmeta .rsum{font-size:13px}
+  .bu{gap:3px;padding:4px 1px}.bu .chip.unit{min-width:28px}.bu.slots .chip.unit{min-width:24px}.bu .slot{min-width:10px;width:10px}
+}
+@container (max-width:44px){
+  .chip.unit .upw{min-width:16px;height:16px;font-size:10px;left:1px;top:1px}
+  .chip.unit .uar,.chip.unit .unm,.chip.unit .uord{min-width:13px;width:13px;height:13px;font-size:9px;right:1px}
+  .chip.unit .un{font-size:9px;padding:6px 1px 1px;line-height:1.1}
+  .chip.unit .ust{font-size:8px;line-height:10px}
+}
 /* ---------- card tiles ---------- */
 .tile{border-radius:5px;border:2px solid #7a5334;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6),0 3px 8px rgba(0,0,0,.45);background:#2b2116;transition:transform .12s}
 .tile:hover{transform:translateY(-2px)}
@@ -239,6 +261,8 @@ table th{color:#6E5C3E}
 .chip.unit .upw.up{color:#7CE07C;border-color:#7CE07C}.chip.unit .upw.dn{color:#FF7A6B;border-color:#FF7A6B}.chip.unit .ust{z-index:2}.chip.unit .uar,.chip.unit .unm{z-index:2}
 .uar{position:absolute;right:2px;top:2px;min-width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;background:#556;border:1px solid #aab;border-radius:3px}
 .unm{position:absolute;right:2px;top:20px;width:16px;height:16px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#111;background:#FFD24A;border-radius:50%}
+.uord{position:absolute;right:2px;top:38px;z-index:3;width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;border-radius:3px;color:#241B08;background:var(--gold);border:1px solid #241B08}
+.uord.wait{color:#E8E0CC;background:rgba(0,0,0,.72);border:1px dashed #BFB59C}
 .ust{position:absolute;left:0;right:0;top:26px;font-size:9px;text-align:center;color:#fff;background:rgba(0,0,0,.6);line-height:12px}
 .rsum{align-self:center;min-width:26px;margin-right:4px;text-align:center;font-weight:700;color:#D9C28D}
 .eng .score{display:flex;align-items:baseline;gap:6px;font-size:22px}.eng .sm{color:var(--mine)}.eng .so{color:var(--theirs)}
@@ -1234,7 +1258,9 @@ class Game {
 
   move(u, row, pos, src) {
     const from = this.rowOf(u); from.splice(from.indexOf(u), 1);
+    const et = u.enteredTurn;
     this._place(u, u.side, row, pos);
+    u.enteredTurn = et;                 // 移位不算重新进场（指令照常可用）
     this.log('移位', { uid: u.uid, name: u.name, row, by: src && src.name });
     this.emit('moved', { unit: u, src });
   }
@@ -1324,12 +1350,21 @@ class Game {
     // 进场当回合不能用；狂热例外
     return u.zeal || this.s.turn > u.enteredTurn;
   }
+  // 指令为什么不能用（界面指示器、提示用）：null = 能用
+  orderBlock(u) {
+    if (!u.def.order) return 'none';
+    if (u.status.lock) return 'lock';
+    if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return 'cd'; }
+    else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return 'used';
+    return u.zeal || this.s.turn > u.enteredTurn ? null : 'new';
+  }
   order(uid, opts = {}) {
     const u = this.find(uid);
     if (!u) return;
     if ((!u.def.order || opts.fee) && (u.def.fee || u.def.feeN != null)) return this.fee(u, opts);
     if (!u.def.order) { this.log('没有指令', { uid, name: u.name, unmodeled: true }, true); return; }
-    if (!this.canOrder(u) && !opts.force) this.log('指令不可用', { uid, name: u.name }, true);
+    // force（对局簿按记录推算）照样结算，但仍提示，方便发现记错回合
+    if (!this.canOrder(u)) this.log('指令不可用', { uid, name: u.name, reason: this.orderBlock(u) }, true);
     u.orderUsed++;
     this.s.sides[u.side].vars.usedOrderTurn = this.s.turn;
     if (u.def.cooldown != null) u.cd = u.def.cooldown;
@@ -4565,13 +4600,13 @@ function sim(g,r,excl){
       if((rec==null||rec==="")&&P&&R0){const lost=R0.res==="D"||(R0.res==="L")===(sd==="me");const A=P.E.s.sides[sd];
         if(lost&&(A.grave.includes("希里")||P.E.allUnits(sd).some(u=>u.name==="希里")))prev=Math.min(E.rules.handLimit,prev+1);}
       const S=E.s.sides[sd];S.handCount=r===0?E.rules.draws[0]:Math.min(E.rules.handLimit,(prev==null?Math.max(0,E.rules.draws[0]-4*r):prev)+E.rules.draws[r]);S.handKnown=true;}}
-  const consumed=new Set();let acted=false,justEnded=false;
+  const consumed=new Set();let acted=false,justEnded=false,lastHand=null;
   // 逐步记录：第几手（每方各自计数，换人行动算新的一手）和这一步结算后的比分，偏差报告用
   const steps={},turnCnt={me:0,op:0};let lastTurn=null;
   const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
   const pushHz=y=>{(hzQ[y.c]=hzQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);};
   for(let i=0;i<log.length;i++){const x=log[i];if(consumed.has(x.id))continue;
-    let side=x.who;
+    let side=x.who;const def0=x.c?E.def(x.c):null;
     // 领袖记错方（记录时停在“对方”）：目标是另一方单位且另一方领袖同名时，按另一方推算
     if(x.a==="leader"&&x.tgts&&x.tgts[0]&&x.tgts[0].uid!=null){const tu=unitByKey(x.tgts[0].uid);const other=side==="me"?"op":"me";const otherLeader=other==="me"?g.leader:g.opLeader;
       if(tu&&tu.side===other&&x.c&&x.c===otherLeader){warns.push({id:x.id,m:"目标是"+sideN(other)+"单位，已按"+sideN(other)+"领袖推算（建议改记录的方）"});side=other;}}
@@ -4579,6 +4614,9 @@ function sim(g,r,excl){
     const turnAct=isTurnAct(x);
     // 整排效果的命中记录可能记在回合行动前后：换回合结算整排效果前先备好
     if(turnAct)for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];if(y.a==="effect"&&HZ[y.c]&&!consumed.has(y.id))pushHz(y);}
+    // 另一方已停牌时同一方连续出牌：每回合只能从手牌打出 1 张，再打出一张 = 新回合（指令、领袖留在打出的那一回合；要分开就记“结束回合”）
+    const handPlay=x.a==="play"&&!x.via&&!(def0&&(def0.type==="tactic"||def0.type==="leader"));
+    if(handPlay&&side===E.s.active&&E.s.sides[ENG.OTHER[side]].passed&&lastHand&&lastHand.side===side&&lastHand.turn===E.s.turn){E.endTurn();acted=false;}
     if(turnAct&&side!==E.s.active&&justEnded){E.s.active=side;acted=false;}
     else if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
     else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
@@ -4642,6 +4680,7 @@ function sim(g,r,excl){
     // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排
     if(x.a==="play"&&def&&def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」生成的整排效果没记在哪排（用“整排效果”补上）",fix:true});}
     if(turnAct){acted=true;justEnded=false;}
+    if(handPlay)lastHand={side,turn:E.s.turn};
     if(turnAct&&side!==lastTurn){turnCnt[side]++;lastTurn=side;}
     {const who=lastTurn||side;const cards=new Set(),boosted=new Set();let wn=0;
       for(const t of E.trace.slice(t0)){const d=t.data||{};if(d.by&&d.by!=="手动")cards.add(d.by);if(t.type==="打出"||t.type==="生成"||t.type==="召唤")cards.add(d.name);if(t.type==="增益"&&d.uid)boosted.add(d.uid);if(t.warn)wn++;}
@@ -4661,7 +4700,7 @@ function sim(g,r,excl){
     // 提示：未建模、待选
     for(const t of E.trace.slice(t0)){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
-      if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+" 本回合不能用指令"});
+      if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
       if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
       if((t.type==="献金"||t.type==="费用")&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 的"+t.type+"效果未建模（用改战力修正）"});
       if(t.type==="亢奋未知"&&t.data.name===x.c&&x.a==="play")warns.push({id:x.id,m:t.data.name+" 亢奋 "+t.data.n+" 是否成立没记，按"+(E.rules.frenzyDefault?"成立":"不成立")+"算",step:{t:"frenzy",id:x.id,n:t.data.n}});
@@ -4712,7 +4751,7 @@ function extraLine(E){const out=[];for(const sd of["me","op"]){const S=E.s.sides
   if(p.length)out.push(sideN(sd)+"："+p.join("，"));}
   return out.length?`<p class="note coins">${esc(out.join("　"))}</p>`:"";}
 function simBoard(g,r,excl){const S=sim(g,r,excl);if(!S)return null;const R={me:{m:[],r:[]},op:{m:[],r:[]}},all={};
-  for(const s of["me","op"])for(const w of["m","r"])for(const u of S.E.s.sides[s].rows[w]){const k=S.u2key.get(u)||("?"+u.uid);const o={uid:k,n:u.name,side:s,row:w,eu:u};R[s][w].push(o);all[k]=o;}
+  for(const s of["me","op"])for(const w of["m","r"])for(const u of S.E.s.sides[s].rows[w]){const k=S.u2key.get(u)||("?"+u.uid);const o={uid:k,n:u.name,side:s,row:w,eu:u,ob:u.isTactic?"none":S.E.orderBlock(u)};R[s][w].push(o);all[k]=o;}
   return{R,all,F:g.log.filter(x=>x.r===r&&x.a==="fx"),S};}
 
 
@@ -5160,7 +5199,11 @@ const unitFaceU=u=>{const e=u.eu;if(!e)return unitFace(u.n);const c=BY[u.n];cons
       const cls=e.power>e.base?"up":e.power<e.base?"dn":"";
       const marks=[st.shield?"盾":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:"",st.lock?"锁":"",st.poison?"毒":"",st.veil?"遮":"",st.resilience?"坚":"",
         st.spying?"潜":"",st.ambush?"伏":"",st.bounty?"赏":"",e.timer!=null?"计"+e.timer:"",e.def.cooldown!=null&&e.cd>0?"冷"+e.cd:"",e.def.order&&e.def.cooldown==null&&((e.def.charges!=null?e.def.charges:1)+(e.bonusCharges||0))!==1?"充"+Math.max(0,(e.def.charges!=null?e.def.charges:1)+(e.bonusCharges||0)-e.orderUsed):"",e.pat!=null?"耐"+e.pat:"",e.vars&&e.vars.count!=null?"倒"+e.vars.count:"",st.immune&&!e.def.status?.immune?"免":""].filter(Boolean).join(" ");
-      return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"&&!e.isTactic?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled&&!e.isTactic?`<span class="unm">?</span>`:""}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
+      return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${e.def.type!=="artifact"&&!e.isTactic?`<span class="upw ${cls}">${e.power}</span>`:""}${e.armor?`<span class="uar">${e.armor}</span>`:""}${e.unmodeled&&!e.isTactic?`<span class="unm">?</span>`:""}${ordMark(u)}${marks?`<span class="ust">${marks}</span>`:""}<span class="un">${esc(u.n)}</span>`;};
+// 指令指示器：金色“令”= 现在能用；虚线“令”= 进场当回合，下回合才能用（列阵在近战排、狂热的当回合就能用）
+const ordMark=u=>{const e=u.eu;if(!e||u.ob==null&&!e.def.order)return "";const zeal=e.zeal&&e.def.formation&&e.row==="m"?"列阵狂热，":e.zeal?"狂热，":"";
+  if(u.ob===null)return `<span class="uord" title="${zeal}指令现在可用">令</span>`;
+  if(u.ob==="new")return `<span class="uord wait" title="进场当回合，下回合才能用指令">令</span>`;return "";};
 const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small class="upw">${c.pw}</small>`:"";};
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{
       const us=RR[s][r];let inner="";
@@ -5168,7 +5211,9 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else inner=us.map(u=>{const on=mode==="multi"&&(ui.sel||[]).some(t=>t.uid===u.uid);return `<button class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} ${on?"on":""}" data-u="${u.uid}" data-umode="${mode}" title="${esc(u.n)}">${unitFaceU(u)}</button>`;}).join("")||`<span class="note">空</span>`;
       const lab=mode==="multi"?`<button class="bl rowpick ${(ui.sel||[]).some(t=>t.row===s+r)?"on":""}" data-rowpick="${s}${r}">${s==="me"?"我":"对"}·${ROWN[r]}</button>`:`<span class="bl">${s==="me"?"我":"对"}·${ROWN[r]}</span>`;
       const rsum=us.reduce((a,u)=>a+(u.eu?u.eu.power:0),0);
-      return `<div class="brow ${s}" data-side="${s}" data-row="${r}">${lab}${us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:""}${fxTags(s,r)}${inner}</div>`;}).join("")}</div>`;};
+      const meta=(us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:"")+fxTags(s,r);
+      // 单位不换行：多了按比例缩小，手机上再放不下就在这一排里横向滑动
+      return `<div class="brow ${s}" data-side="${s}" data-row="${r}">${lab}${meta?`<span class="bmeta">${meta}</span>`:""}<div class="bu${mode==="slots"?" slots":""}">${inner}</div></div>`;}).join("")}</div>`;};
     const hand=g.hand?myHand(g):[];
     const deckGrid=(opts)=>{opts=opts||{};if(!d)return"";const used={};const dev=devotionOf(d);const setSel=opts.sel&&opts.sel.set?opts.sel:null;
       g.log.forEach(x=>{if(x===opts.sel)return;if(x.who==="me"&&(x.a==="play"||x.a==="summon")&&x.via!=="墓场"&&!(setSel&&x.r>=setSel.r))used[baseOf(x.c)]=(used[baseOf(x.c)]||0)+1;if(x.who==="me"&&x.a==="draw"&&opts.forHand&&!setSel)(x.cards||[]).forEach(n=>used[baseOf(n)]=(used[baseOf(n)]||0)+1);});

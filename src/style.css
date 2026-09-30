@@ -189,6 +189,28 @@ nav button.on{color:#F4DC9A;box-shadow:inset 0 3px 0 var(--gold);background:radi
 .slot{min-width:18px;height:60px;padding:0;border:1px dashed rgba(212,175,90,.55);color:#D4AF5A;background:rgba(0,0,0,.2)}
 .slot:hover,.slot:focus-visible{background:var(--gold);color:#2A1C08}
 .brow.drop{outline:2px dashed var(--gold);background-color:rgba(212,175,90,.12)}
+/* 一排最多 9 张不换行：单位按比例缩小（最窄 34px），再放不下就在这一排里横向滑动 */
+.brow{flex-wrap:nowrap;min-width:0}
+.board{grid-template-columns:minmax(0,1fr)}
+.bmeta{flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:28px}
+.bmeta .rsum{margin:0;min-width:0}
+.bmeta .fxtag{font-size:10px;padding:1px 5px;border-radius:8px;text-align:center;line-height:1.3}
+.bu{flex:1;min-width:0;display:flex;align-items:center;gap:5px;padding:4px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.bu.slots{gap:2px}
+.bu.slots .chip.unit{min-width:28px}
+.bu .chip.unit{flex:0 1 54px;min-width:34px;width:auto;height:auto;aspect-ratio:54/74;container-type:inline-size}
+.bu .slot{flex:none;min-width:14px;width:14px}
+.bu .chip.unit .unm{top:27%}.bu .chip.unit .ust{top:35%}.bu .chip.unit .uord{top:51%}
+@media (max-width:600px){
+  .brow{padding:4px 3px 4px 2px;gap:3px}.bl{width:18px;margin-right:0}.bmeta{min-width:22px}.bmeta .rsum{font-size:13px}
+  .bu{gap:3px;padding:4px 1px}.bu .chip.unit{min-width:28px}.bu.slots .chip.unit{min-width:24px}.bu .slot{min-width:10px;width:10px}
+}
+@container (max-width:44px){
+  .chip.unit .upw{min-width:16px;height:16px;font-size:10px;left:1px;top:1px}
+  .chip.unit .uar,.chip.unit .unm,.chip.unit .uord{min-width:13px;width:13px;height:13px;font-size:9px;right:1px}
+  .chip.unit .un{font-size:9px;padding:6px 1px 1px;line-height:1.1}
+  .chip.unit .ust{font-size:8px;line-height:10px}
+}
 /* ---------- card tiles ---------- */
 .tile{border-radius:5px;border:2px solid #7a5334;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6),0 3px 8px rgba(0,0,0,.45);background:#2b2116;transition:transform .12s}
 .tile:hover{transform:translateY(-2px)}
@@ -226,6 +248,8 @@ table th{color:#6E5C3E}
 .chip.unit .upw.up{color:#7CE07C;border-color:#7CE07C}.chip.unit .upw.dn{color:#FF7A6B;border-color:#FF7A6B}.chip.unit .ust{z-index:2}.chip.unit .uar,.chip.unit .unm{z-index:2}
 .uar{position:absolute;right:2px;top:2px;min-width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;background:#556;border:1px solid #aab;border-radius:3px}
 .unm{position:absolute;right:2px;top:20px;width:16px;height:16px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#111;background:#FFD24A;border-radius:50%}
+.uord{position:absolute;right:2px;top:38px;z-index:3;width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;border-radius:3px;color:#241B08;background:var(--gold);border:1px solid #241B08}
+.uord.wait{color:#E8E0CC;background:rgba(0,0,0,.72);border:1px dashed #BFB59C}
 .ust{position:absolute;left:0;right:0;top:26px;font-size:9px;text-align:center;color:#fff;background:rgba(0,0,0,.6);line-height:12px}
 .rsum{align-self:center;min-width:26px;margin-right:4px;text-align:center;font-weight:700;color:#D9C28D}
 .eng .score{display:flex;align-items:baseline;gap:6px;font-size:22px}.eng .sm{color:var(--mine)}.eng .so{color:var(--theirs)}
