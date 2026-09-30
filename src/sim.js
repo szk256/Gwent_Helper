@@ -101,7 +101,10 @@ function sim(g,r,excl,ov){
   const steps={},turnCnt={me:0,op:0};let lastTurn=null;
   const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
   const pushHz=y=>{(hzQ[y.c]=hzQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);};
+  // 同一批连续修正里直接填过数值的单位（你看到的就是最终值）：后面的修正触发神赐等效果时不再改动它们
+  const pinned=new Map();
   for(let i=0;i<log.length;i++){const x=log[i];if(consumed.has(x.id))continue;
+    if(!["adj","note","real"].includes(x.a))pinned.clear();
     let side=x.who;const def0=x.c?E.def(x.c):null;
     // 领袖记错方（记录时停在“对方”）：目标是另一方单位且另一方领袖同名时，按另一方推算
     if(x.a==="leader"&&x.tgts&&x.tgts[0]&&x.tgts[0].uid!=null){const tu=unitByKey(x.tgts[0].uid);const other=side==="me"?"op":"me";const otherLeader=other==="me"?g.leader:g.opLeader;
@@ -152,7 +155,8 @@ function sim(g,r,excl,ov){
           else{const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的修正「"+v+"」"});continue;}
             if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});const up=n>u.power;u.power=n;if(u.power<=0)E.destroy(u);
               // 设到神赐阈值以上：神赐照样触发（生成布朗温、刷新领袖等），它自己的战力仍以填的为准
-              else if(up){E.checkBless(u);if(E.find(u.uid))u.power=n;}}}}
+              else if(up){E.checkBless(u);if(E.find(u.uid))u.power=n;}
+              pinned.set(u,n);for(const [v,pv] of pinned)if(v!==u&&E.find(v.uid)&&v.power!==pv){E.log("保留填的战力",{name:v.name,from:v.power,to:pv});v.power=pv;}}}}
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "coin":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的金币修正「"+v+"」"});break;}
         const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}

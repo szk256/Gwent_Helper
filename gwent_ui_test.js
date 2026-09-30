@@ -69,6 +69,12 @@ setTimeout(() => {
     live([{ id: 'd1', who: 'me', a: 'draw', set: true, cards: ['科德温骑士', '赤红男爵', '安赛斯王子'] }, { id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
       { id: 'f1', r: 1, who: 'me', a: 'play', c: '赤红男爵', row: 'm', side: 'me' }], { hand: true, cur: 1, rounds: [{ res: 'W', me: '5', op: '0' }] });
     ok(w.eval('myHand(db.live,undefined,1).length') === 1 && w.eval('myHand(db.live,undefined,0).length') === 2 && html.includes('myHand(g,undefined,vr)'), '手牌格子：看第一局时显示第一局的手牌');
+    // 同一批修正里先填过数值的单位，后面的修正触发神赐（瑞达尼亚骑士神赐 8：相邻 +1）不再改它
+    live([{ id: 'e1', who: 'me', a: 'play', c: '法利波', row: 'r', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '瑞达尼亚骑士', row: 'r', side: 'me' },
+      { id: 'e3', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' },
+      { id: 'e4', who: 'me', a: 'adj', c: '法利波', uid: 'e1', side: 'me', v: '4' }, { id: 'e5', who: 'me', a: 'adj', c: '瑞达尼亚骑士', uid: 'e2', side: 'me', v: '8' }]);
+    S = w.eval('sim(db.live,0)');
+    ok(S.key2u.e1.power === 4 && S.key2u.e2.power === 8 && S.key2u.e2.blessFired[8], '批量修正：先填的法利波 4 不被后面骑士神赐 +1 改掉');
     // 偏差报告的规则对比：对方停牌后安娜·斯特伦格（回合结束 +1）不再推进才对得上 → 标“更准”
     live([{ id: 'e1', who: 'op', a: 'play', c: '科德温骑士', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '安娜·斯特伦格', row: 'm', pos: 0, side: 'op' },
       { id: 'e3', who: 'op', a: 'pass' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
