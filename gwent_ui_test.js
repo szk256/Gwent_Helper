@@ -138,6 +138,67 @@ setTimeout(() => {
     ok(w.eval('db.live.log[db.live.log.length-1].pw') === 4 && w.eval('sim(db.live,0).score.me.total') === 4, '落地战力：选的数值写进记录并用于推算');
     live([]); w.eval('startCard("科德温骑士","play","me")'); w.document.querySelector('[data-slot^="me|m|"]').click();
     ok(!(w.eval('ui.flow') || []).some(x => x.t === 'pw'), '落地战力：已建模的牌不多问');
+    // ---- 2026-09-30 用户反馈 ----
+    const Q = s => w.document.querySelector(s), QA = s => [...w.document.querySelectorAll(s)];
+    const ub = n => QA('.board [data-u]').filter(b => b.dataset.umode !== 'none').find(b => b.title === n);
+    const us = sd => w.eval(`sim(db.live,db.live.cur).E.allUnits("${sd}").map(u=>u.name+u.power).join(" ")`);
+    const fl = () => w.eval('ui.flow&&ui.flow[0]&&ui.flow[0].t');
+    // 改战力：按钮面板，不用输入；设到神赐阈值以上时神赐照样触发（少女的盾牌生成布朗温）
+    live([{ id: 'e1', who: 'me', a: 'play', c: '少女的盾牌', row: 'm', side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
+    w.eval('ui.act="adj";rMatch()'); ub('少女的盾牌').click();
+    ok(fl() === 'adj' && Q('[data-adjv="9"]') && !Q('dialog[open]'), '改战力：点单位进按钮面板');
+    Q('[data-adjv="9"]').click();
+    ok(us('me') === '少女的盾牌9 “无畏者”布朗温2', '改战力：设成 9 触发神赐 8，自动生成布朗温');
+    w.eval('ui.flow=null;ui.act="leader";rMatch()'); Q('[data-do="leader"]').click(); ub('少女的盾牌').click(); Q('[data-do="tgtDone"]').click();
+    ok(/皇家激励 剩 1 次（下次 \+4）/.test(QA('.eng .coins').map(e => e.textContent).join(' ')), '皇家激励：触发神赐后刷新，下次 +4，比分下显示');
+    // 落难的少女第二章：连带打出的疯狂的冲锋接着问目标
+    live([{ id: 'e1', who: 'me', a: 'play', c: '落难的少女', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', via: '落难的少女', side: 'me' },
+      { id: 'e3', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
+    w.eval('startCard("亚特里的温德哈姆","play","me")'); QA('[data-slot^="me|r|"]').pop().click();
+    ok(fl() === 'target' && /疯狂的冲锋/.test(Q('.sheet.flow h2').textContent), '落难的少女：第二章的疯狂的冲锋接着问目标');
+    ub('亚特里的温德哈姆').click(); Q('[data-do="tgtDone"]').click();
+    ok(/亚特里的温德哈姆9/.test(us('me')), '落难的少女：疯狂的冲锋 +5 给打出的骑士');
+    // 不朽者骑兵：引擎自己复制，不再问生成了什么
+    live([]); w.eval('startCard("不朽者骑兵","play","me")'); Q('[data-slot^="me|m|"]').click();
+    ok(!fl() && us('me') === '不朽者骑兵4 不朽者骑兵4', '不朽者骑兵：自动复制，不再问');
+    // 揭竿而起：同一目标连用 3 次，用完问镰刀手放哪
+    live([{ id: 'e1', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }], { fac: 'NR' });
+    w.eval('ui.who="op";ui.act="leader";rMatch()'); Q('[data-oplead="揭竿而起"]').click(); ub('寒冰巨人').click(); Q('[data-rep="3"]').click(); Q('[data-do="tgtDone"]').click();
+    ok(w.eval('db.live.log.filter(x=>x.a==="leader").length') === 3 && fl() === 'place', '领袖：连用 3 次，充能用完问生成的镰刀手放哪');
+    QA('[data-slot^="op|r|"]').pop().click();
+    ok(us('op') === '寒冰巨人10 莱里亚镰刀手5' && /揭竿而起 已用完/.test(Q('.eng').textContent), '揭竿而起：+3、生成镰刀手、显示已用完');
+    // 没完没了的朗维德：在墓场，己方打出士兵自动回场
+    live([{ id: 'e1', who: 'op', a: 'play', c: '没完没了的朗维德', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'kill', c: '没完没了的朗维德', uid: 'e1', side: 'op' },
+      { id: 'e3', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e4', who: 'op', a: 'play', c: '崔丹姆步兵', row: 'm', side: 'op' }, { id: 'e5', who: 'op', a: 'summon', c: '没完没了的朗维德', row: 'r', side: 'op' }]);
+    ok(us('op') === '崔丹姆步兵5 没完没了的朗维德1' && w.eval('sim(db.live,0).E.s.sides.op.rows.r.length') === 1, '朗维德：自动回场，后面手动记的召唤对应到它、不重复');
+    // 结束回合：之后的改战力是回合结束后的值
+    live([{ id: 'e1', who: 'op', a: 'play', c: '泰莫利亚鼓手', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
+    ok(/结束对方回合/.test(Q('[data-do="endTurn"]').textContent), '结束回合：按钮显示该结束哪一方');
+    Q('[data-do="endTurn"]').click();
+    ok(us('op') === '泰莫利亚鼓手5 寒冰巨人8' && !Q('[data-do="endTurn"]'), '结束回合：结算回合结束效果');
+    w.eval('db.live.log.push({r:0,id:"e9",who:"op",a:"adj",c:"寒冰巨人",uid:"e2",side:"op",v:"8"},{r:0,id:"e10",who:"me",a:"play",c:"科德温骑士",row:"m",side:"me"})');
+    ok(us('op') === '泰莫利亚鼓手5 寒冰巨人8', '结束回合：之后换人不再重复结算');
+    // 停牌不结算回合结束效果（rules.passTurnEnd，未确认）
+    live([{ id: 'e1', who: 'op', a: 'play', c: '泰莫利亚鼓手', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e3', who: 'op', a: 'pass' }]);
+    ok(us('op') === '泰莫利亚鼓手5 寒冰巨人7', '停牌：默认不结算回合结束效果');
+    // 泰莫利亚步兵：领袖还没用过也按剩余充能算
+    live([{ id: 'e1', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '泰莫利亚步兵', row: 'm', side: 'op' }, { id: 'e3', who: 'op', a: 'order', c: '泰莫利亚步兵', uid: 'e2', tgts: [{ uid: 'e1' }] }], { opLeader: '揭竿而起' });
+    ok(/寒冰巨人13/.test(us('op')), '泰莫利亚步兵：领袖没用过按 3 层充能');
+    // 对方战术：选具体的牌
+    live([{ id: 'e1', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }], { coin: '后' });
+    w.eval('ui.who="op";ui.act="tactic";rMatch()'); Q('[data-optac="战术优势"]').click(); ub('寒冰巨人').click(); Q('[data-do="tgtDone"]').click();
+    ok(us('op') === '寒冰巨人12', '对方战术：选战术优势，+5');
+    // 手牌：第二局起整手重选，上一局留下的先选上
+    live([{ id: 'e1', who: 'me', a: 'draw', cards: ['少女的盾牌', '科德温骑士', '不朽者骑兵'] }, { id: 'e2', who: 'me', a: 'play', c: '不朽者骑兵', row: 'm', side: 'me' }], { hand: true, cur: 1, rounds: [{ res: 'W', me: '5', op: '0' }] });
+    w.eval('db.decks.push({id:77,name:"测手牌",f:"NR",leader:"皇家激励",cards:{"少女的盾牌":1,"科德温骑士":2,"不朽者骑兵":2}});db.live.deck=77;rMatch()');
+    Q('[data-do="handStart"]').click();
+    ok(w.eval('JSON.stringify(myHand(db.live))') === '["少女的盾牌","科德温骑士"]' && QA('#resBox .tile.gone').map(b => b.dataset.nm).join() === '少女的盾牌', '手牌：整手重选，牌组剩余按已选算');
+    w.eval('db.decks=db.decks.filter(d=>d.id!==77)');
+    // 修改记录：原地展开，上下移后仍在修改这一条
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }]);
+    Q('[data-edit="e1"]').click(); Q('[data-do="eDown"]').click();
+    ok(Q('.log .sheet.flow.inline') && w.eval('db.live.log.map(x=>x.id).join()') === 'e2,e1' && w.eval('ui.flow[0].id') === 'e1', '修改记录：原地展开，移动后仍聚焦在这一条');
+    ok(/ Z$/.test(w.eval('GwentCodec.encodeGame(Object.assign({},db.live,{log:[{r:0,id:"e1",who:"op",a:"end"}]}))')), '导出码：结束回合 Z');
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }

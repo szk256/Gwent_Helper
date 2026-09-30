@@ -431,7 +431,12 @@ B['柯恩'] = { order: c => { const p = c.self.power; c.allies().filter(u => u !
 B['梅里泰莉'] = { deploy: c => { const t = T(c, '梅里泰莉：5 增益', c.allies().filter(u => u !== c.self)); if (t) c.boost(t, 5); } };
 B['欧德林'] = {};
 B['沃米尔'] = { deploy: c => { const t = T(c, '沃米尔目标', c.allies().filter(u => u !== c.self)); if (!t) return; c.allies().filter(u => u.name === t.name).forEach(u => { c.boost(u, 1); c.armor(u, 1); }); } };
-B['没完没了的朗维德'] = { deploy: c => c.boost(c.self, 5) };
+B['没完没了的朗维德'] = { deploy: c => c.boost(c.self, 5),
+  // 在墓场里：己方每打出 1 个士兵，从墓场召唤自身至随机排（排来自记录里的召唤，没记按近战）
+  graveUnit: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && has(d.unit, '士兵'), run: c => {
+    const row = c.pick({ kind: 'row', prompt: '朗维德：随机排', from: ['m', 'r'] }) || 'm';
+    c.leaveGrave(); c.summon('没完没了的朗维德', c.side, row);
+  } }] };
 B['特罗伊的多尼米尔'] = { status: { defender: true, shield: true } };
 B['玛格丽塔·露克斯安提尔'] = { order: c => { const t = T(c, '玛格丽塔：锁定', c.enemies()); if (t) c.lock(t); } };
 B['班纳德·罗列'] = { order: c => { const t = R(c, '班纳德：随机对决目标', c.enemies()); if (t) c.duel(t); } };

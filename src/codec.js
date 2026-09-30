@@ -20,7 +20,7 @@
   const VMAP = [['盾', 'sh'], ['锁', 'lk'], ['坚', 'rs'], ['遮', 'vl'], ['潜', 'sp'], ['伏', 'am'], ['赏', 'bt'], ['甲', 'ar'], ['活', 'vi'], ['伤', 'bl'], ['，', ',']];
   const encV = v => { let s = String(v); for (const [a, b] of VMAP) s = s.split(a).join('~' + b); return enc(s); };
   const decV = v => { let s = dec(v); for (const [a, b] of VMAP) s = s.split('~' + b).join(a); return s; };
-  const ACODE = { play: 'P', summon: 'S', spawn: 'Y', tactic: 'T', effect: 'E', order: 'O', leader: 'L', draw: 'D', fx: 'F', move: 'V', kill: 'K', adj: 'J', coin: 'G', hand: 'H', real: 'C', mull: 'X', pass: '-', note: 'N' };
+  const ACODE = { play: 'P', summon: 'S', spawn: 'Y', tactic: 'T', effect: 'E', order: 'O', leader: 'L', draw: 'D', fx: 'F', move: 'V', kill: 'K', adj: 'J', coin: 'G', hand: 'H', real: 'C', mull: 'X', pass: '-', note: 'N', end: 'Z' };
   const ADEC = {}; for (const [k, v] of Object.entries(ACODE)) ADEC[v] = k;
   const SIDE = s => s === 'me' ? 'A' : s === 'op' ? 'B' : enc(s);
   const UNSIDE = s => s === 'A' ? 'me' : s === 'B' ? 'op' : dec(s);
@@ -137,7 +137,7 @@
   const toId = n => typeof n === 'string' && IDS[n] != null ? '#' + IDS[n] : n;
   const fromId = v => typeof v === 'string' && /^#\d+$/.test(v) && NAME[+v.slice(1)] ? NAME[+v.slice(1)] : v;
   const mapKeys = (o, f) => o && typeof o === 'object' && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [f(k), v])) : o;
-  const NOCARD = new Set(['note', 'real', 'hand', 'coin', 'pass', 'fx']);   // 这些动作的 c 不是牌名
+  const NOCARD = new Set(['note', 'real', 'hand', 'coin', 'pass', 'fx', 'end']);   // 这些动作的 c 不是牌名
   function mapGame(g, f) {
     if (!g || typeof g !== 'object') return g;
     const o = Object.assign({}, g, { leader: f(g.leader), opLeader: f(g.opLeader) });
