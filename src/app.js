@@ -614,7 +614,10 @@ function rDeck(){let d=deckById(ui.deckSel);let h=`<div class="btns" style="marg
 // 牌库筛选：同一组内“或”，组之间“且”；不存盘
 const PVB=[["4","≤4",c=>c.pv<=4],["5","5",c=>c.pv===5],["6","6",c=>c.pv===6],["7","7",c=>c.pv===7],["8","8",c=>c.pv===8],["9","9",c=>c.pv===9],["10","10",c=>c.pv===10],["11","11–13",c=>c.pv>=11&&c.pv<=13],["14","14+",c=>c.pv>=14]];
 const RARS=["普通","稀有","史诗","传奇"],COLS=["金","铜"];
-const SERS=[...new Set(C.filter(c=>!c.token&&c.ser&&c.ser!=="basic").map(c=>c.ser))];
+// 扩展包中文名（用户提供），按这个顺序显示；数据里有、这里没有的排在最后显示原名
+const SERN={"unmillable":"新手卡组","baseset":"核心卡牌","thronebreaker":"王权的陨落","crimsoncurse":"猩红诅咒","novigrad":"诺城之火","iron judgment":"钢铁审判","merchants of ofir":"异域游商","master mirror":"镜子大师","way of the witcher":"猎魔人之道","price of power":"权力的代价","cursed toad":"蟾蜍王子","uroboros":"衔尾蛇"};
+const serName=k=>SERN[k]||k;
+const SERS=(()=>{const have=new Set(C.filter(c=>!c.token&&c.ser&&c.ser!=="basic").map(c=>c.ser));return[...Object.keys(SERN).filter(k=>have.has(k)),...[...have].filter(k=>!SERN[k])];})();
 ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};
 const collBase=()=>C.filter(c=>(ui.collF==="ALL"||inFac(c,ui.collF))&&!isLeader(c)&&!c.token);
 const TYPES=["单位","神器","特殊","战术"];
@@ -640,7 +643,7 @@ function rColl(){const f=ui.collF;const all=collBase().filter(c=>!isTactic(c));c
   const grp=(lab,key,items)=>`<div class="row"><div class="lab">${lab}</div><div class="chips">${items.map(([v,t])=>`<button class="chip ${F[key].includes(v)?"on":""}" data-cfil="${key}|${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
   let h=`<div class="chips" style="margin-bottom:10px"><button class="chip ${f==="ALL"?"on":""}" data-cf="ALL">全部</button>${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
    <div class="duo coll"><div class="colL"><details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(base).length}</b> 张）`:""}</summary>
-    ${grp("类型","t",TYPES.map(x=>[x,x]))}${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,x]))}${grp("词条（同时具备）","kw",kwc.map(([k,n])=>[k,k+" "+n]))}
+    ${grp("类型","t",TYPES.map(x=>[x,x]))}${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,serName(x)]))}${grp("词条（同时具备）","kw",kwc.map(([k,n])=>[k,k+" "+n]))}
     ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details></div><div class="colR">
    <div class="sheet"><div class="sum"><span>${f==="ALL"?"全部阵营":FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
    <p class="note">「按游戏算法」：铜卡算 2 份，不算初始卡、领袖和战术。数据库总数会比游戏多约 9，拥有数应该和游戏一致。</p>
@@ -727,7 +730,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
   })[act]?.();
 });
 function openCard(c){$("#cdN").textContent=c.n;
-  $("#cdMeta").textContent=`${FN[c.f]}　${c.col} ${c.t}　${c.rar}${c.tags?"　"+c.tags:""}${c.en&&c.en!==c.n?"　英文名 "+c.en:""}${db.edits[c.n]?"　（已修改）":""}`;
+  $("#cdMeta").textContent=`${FN[c.f]}　${c.col} ${c.t}　${c.rar}${c.tags?"　"+c.tags:""}${c.ser&&!c.custom?"　"+serName(c.ser):""}${c.en&&c.en!==c.n?"　英文名 "+c.en:""}${db.edits[c.n]?"　（已修改）":""}`;
   $("#cdPv").value=c.pv;$("#cdPw").value=c.pw;$("#cdTx").value=c.tx;$("#cdAl").value=c.alias||"";
   let f2=(c.f2||[]).slice();
   const drawF2=()=>{$("#cdF2").innerHTML=["NR","MO","NG","ST","SK","SY"].filter(x=>x!==c.f).map(x=>`<button class="chip fac ${f2.includes(x)?"on":""}" style="--c:var(--${x})" data-f2="${x}">${FN[x]}</button>`).join("");
