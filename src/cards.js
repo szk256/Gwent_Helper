@@ -136,10 +136,10 @@ B['科德温骑士'] = {
 B['拉多维德皇家护卫'] = {
   formation: true,
   order: c => {
-    const insp = c.g.inspired(c.self);                 // ASSUME：激励是指令的附加条件（同赤红男爵）
+    const insp = c.g.inspired(c.self);                 // 激励是指令的附加条件（同赤红男爵）
     const t = T(c, '皇家护卫：2 增益', c.allies());
     if (t) c.boost(t, 2);
-    if (insp) c.armor(c.self, 2);
+    if (insp && t) c.armor(t, 2);                     // 用户确认：激励时护甲给被增益的单位
   },
 };
 

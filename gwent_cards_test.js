@@ -299,5 +299,9 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g2 = game(); g2.s.sides.me.handKnown = true; g2.s.sides.me.handCount = 8; const b = P(g2, 'op', '寒冰巨人', 'm'); P(g2, 'me', '格德', 'm'); ok(b.power === b.base - 1, '格德：手牌多 → 整排 1 伤害'); }
 { const g = game(); g.s.sides.me.handKnown = true; g.s.sides.me.handCount = 2; const k = P(g, 'me', '凯尔达', 'm'); g.endTurn();
   ok(g.units('me').filter(u => u.name === '猎魔人学徒').length === 1, '凯尔达：亢奋 4 → 回合结束生成学徒'); }
+{ // 拉多维德皇家护卫：激励时护甲给被增益的单位
+  const g = game(); const rg = P(g, 'me', '拉多维德皇家护卫', 'm'); const a = P(g, 'me', '科德温骑士', 'm'); g.boost(rg, 1);
+  g.chooser = () => [a]; g.order(rg.uid, { force: true }); ok(a.armor === 2 && !rg.armor, '皇家护卫：激励 → 目标 +2 护甲');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
