@@ -297,3 +297,11 @@ dialog{background:#241b13;color:var(--ink);box-shadow:0 0 0 1px #76603f,0 20px 5
   .mbOnly{display:none}
   .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
 }
+/* 记录里的“第几手 · 比分 · 时间”和偏差报告 */
+.log .lmeta{display:block;font-size:11px;opacity:.75;margin-bottom:1px}
+.dev{display:flex;flex-direction:column;gap:4px;margin:6px 0;font-size:13px}
+.dev>div{padding:5px 8px;border-radius:6px;background:var(--field,rgba(255,255,255,.05));border-left:3px solid transparent}
+.dev>div.ok{border-left-color:#4caf50}.dev>div.bad{border-left-color:#e05a4f}
+.dev.steps>div.me{border-left-color:var(--NR)}.dev.steps>div.op{border-left-color:var(--loss)}
+.dev small{opacity:.8}.dev .fl{color:var(--gold)}
+details.sheet>summary{cursor:pointer}
