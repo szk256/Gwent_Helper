@@ -88,6 +88,18 @@ $("#dlgPaste").onclick=async()=>{try{const t=await navigator.clipboard.readText(
 // 全部迁移：整个对局簿（卡组、对局、进行中的对局、牌库、改过的牌、自定义牌）
 // 版本：构建号（打包时按内容生成，调试页面是“开发版”）+ 卡牌数据版本（patches.js 最新一条，没有则基线）
 const BUILD=(typeof window!=="undefined"&&window.GWENT_BUILD)||"开发版";
+// 外观（每台设备各自记住，存 localStorage，不进对局簿数据）：主题 + 字号缩放
+const THEMES=[["classic","经典（木纹金）"],["slate","石板冷灰"],["table","昆特牌桌"],["black","极简黑（防光晕）"],["navy","午夜蓝"]];
+const ZOOMS=[1,1.15,1.3,1.5];
+function loadPref(){try{return JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}")||{};}catch(e){return {};}}
+function savePref(p){try{localStorage.setItem("gwent-ui-pref",JSON.stringify(p));}catch(e){}}
+function applyPref(){const p=loadPref(),r=document.documentElement;if(p.theme&&p.theme!=="classic")r.setAttribute("data-theme",p.theme);else r.removeAttribute("data-theme");r.style.zoom=p.zoom&&p.zoom!==1?String(p.zoom):"";}
+function prefControls(){const p=loadPref(),t=p.theme||"classic",z=p.zoom||1;
+  return `<div class="prefs"><div class="navlab">外观</div><select data-pref="theme" aria-label="主题">${THEMES.map(([k,n])=>`<option value="${k}" ${k===t?"selected":""}>${n}</option>`).join("")}</select>
+  <select data-pref="zoom" aria-label="字号">${ZOOMS.map(v=>`<option value="${v}" ${v===z?"selected":""}>字号 ${Math.round(v*100)}%</option>`).join("")}</select></div>`;}
+applyPref();
+document.addEventListener("change",e=>{const k=e.target.dataset&&e.target.dataset.pref;if(!k)return;const p=loadPref();p[k]=k==="zoom"?+e.target.value:e.target.value;savePref(p);applyPref();
+  document.querySelectorAll(`[data-pref="${k}"]`).forEach(s=>{s.value=e.target.value;});});
 const dataVer=()=>{const P=typeof GwentPatches!=="undefined"?GwentPatches:null;if(!P)return "?";const l=P.PATCHES.slice().sort((a,b)=>a.date<b.date?-1:1).pop();return "v"+((l&&l.ver)||P.BASE.ver);};
 const verText=()=>"构建 "+BUILD+" · 卡牌数据 "+dataVer();
 // 备份：记录上次下载备份/迁移导出的时间，超过 7 天提醒
@@ -113,7 +125,7 @@ function importGames(txt){const chunks=String(txt||"").split(/(?=^#GWLOG v2)/m).
   if(n){persist();render();toast("导入了 "+n+" 局");}return n;}
 function markBackup(){db.lastBackup=Date.now();persist();renderBackup();}
 function backupAge(){return db.lastBackup?Math.floor((Date.now()-db.lastBackup)/86400000):null;}
-function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
+function renderBackup(){const vi=document.getElementById("verInfo");if(vi)vi.textContent=verText();const pb=document.getElementById("prefBox");if(pb&&!pb.firstChild)pb.innerHTML=prefControls();{const p=loadPref();document.querySelectorAll("[data-pref=theme]").forEach(x=>{x.value=p.theme||"classic";});document.querySelectorAll("[data-pref=zoom]").forEach(x=>{x.value=String(p.zoom||1);});}const el=document.getElementById("bkInfo");if(!el)return;const d=backupAge();const has=(db.games||[]).length||db.live;
   el.textContent=d==null?"还没有备份过":d===0?"今天已备份":"上次备份："+d+" 天前";el.classList.toggle("bad",!!has&&(d==null||d>=7));}
 function migText(){return GwentCodec.encodeDb(db).replace("\n"," build="+BUILD+" data="+dataVer()+"\n");}   // 纯代码 v2（牌用官方编号，纯 ASCII）
 function parseAll(txt){txt=(txt||"").trim();const v2=/^#GWMIG v2\b/.test(txt);if(txt.startsWith("#GWMIG"))txt=txt.slice(txt.indexOf("\n")+1);const d=JSON.parse(txt);return v2?GwentCodec.decodeDb(d):d;}   // v1（中文 JSON）、v2（纯代码）、备份文件都认
@@ -528,7 +540,7 @@ function rStats(){if(!db.decks.length){$("#tab-stats").innerHTML=`<p class="note
   const stT=(R,name)=>{const e=Object.entries(R.stuck).sort((x,y)=>y[1]-x[1]).slice(0,8);return `<div class="sheet"><h2>最常卡手：${esc(name)}</h2>${e.length?`<table><tr><th>牌</th><th>次数</th><th>占对局</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td><td>${pct(k,R.n)}</td></tr>`).join("")}</table>`:`<p class="note">还没有卡手记录。</p>`}</div>`;};
   const opT=R=>{const e=Object.entries(R.opp).sort((x,y)=>y[1]-x[1]).slice(0,10);return e.length?`<div class="sheet"><h2>对手最常打出的牌</h2><table><tr><th>牌</th><th>次数</th></tr>${e.map(([c,k])=>`<tr><td>${esc(c)}</td><td>${k}</td></tr>`).join("")}</table></div>`:"";};
   h+=cardT(a,na)+stT(a,na);if(!same)h+=cardT(b,nb)+stT(b,nb);h+=opT(a);
-  h+=`<p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
+  h+=`<div class="sheet mbOnly">${prefControls()}</div><p class="note mbOnly" style="text-align:center;margin-top:12px">${esc(verText())}</p>`;
   $("#tab-stats").innerHTML=h;$("#stA").onchange=e=>{ui.statA=+e.target.value;rStats();};$("#stB").onchange=e=>{ui.statB=+e.target.value;rStats();};}
 
 function deckRes(d){const pool=C.filter(c=>!isLeader(c)&&!isTactic(c)&&!c.token&&(!ui.deckOwned||db.owned[c.n]));

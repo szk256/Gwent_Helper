@@ -8,6 +8,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#18202E">
+<script>/* 外观：页面画出来之前就套上主题和字号，避免闪一下 */try{var P=JSON.parse(localStorage.getItem("gwent-ui-pref")||"{}");if(P.theme&&P.theme!=="classic")document.documentElement.setAttribute("data-theme",P.theme);if(P.zoom&&P.zoom!=1)document.documentElement.style.zoom=P.zoom;}catch(e){}</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -21,7 +22,7 @@
 <nav>
 <div class="brand">昆特对局簿</div>
 <button data-t="match" class="on">对局</button><button data-t="stats">数据</button><button data-t="deck">卡组</button><button data-t="coll">牌库</button>
-<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button><div class="navlab" id="bkInfo"></div><div class="navlab ver" id="verInfo"></div></div>
+<div class="navdata"><div class="navlab">数据迁移</div><button data-do="migAll">全部迁移导出</button><button data-do="impAll">全部导入</button><button data-do="dl">下载备份</button><div class="navlab" id="bkInfo"></div><div class="navlab ver" id="verInfo"></div><div id="prefBox"></div></div>
 </nav>
 <div class="toast" id="toast"></div>
 <dialog id="cdlg"><h2 id="cdN"></h2><p class="note" id="cdMeta"></p>

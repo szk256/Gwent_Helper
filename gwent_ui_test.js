@@ -123,6 +123,12 @@ setTimeout(() => {
       ok(c2['科德温骑士'] === 2 && c2['雷纳德·奥多'] === 1, '纯代码导出：牌库往返');
       w.eval('db.games=db.games.filter(g=>g.deckName!=="北境 测试")');
     }
+    // 外观：切换主题和字号，存在本机（不进对局簿数据）
+    { const sel = w.document.querySelector('[data-pref="theme"]'); sel.value = 'navy'; sel.dispatchEvent(new w.Event('change', { bubbles: true }));
+      const zs = w.document.querySelector('[data-pref="zoom"]'); zs.value = '1.3'; zs.dispatchEvent(new w.Event('change', { bubbles: true }));
+      ok(w.document.documentElement.getAttribute('data-theme') === 'navy' && w.document.documentElement.style.zoom === '1.3' && !('theme' in w.eval('db')), '外观：切换主题和字号，存本机');
+      sel.value = 'classic'; sel.dispatchEvent(new w.Event('change', { bubbles: true })); zs.value = '1'; zs.dispatchEvent(new w.Event('change', { bubbles: true }));
+      ok(!w.document.documentElement.hasAttribute('data-theme') && !w.document.documentElement.style.zoom, '外观：切回经典'); }
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }
