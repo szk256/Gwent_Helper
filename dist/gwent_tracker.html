@@ -4121,6 +4121,54 @@ const RAW=[["不息虫群","MO","领袖","领袖能力","-","15","传奇","领�
 
 </script>
 <script>
+// 月度平衡补丁：data.js 是基线，这里按日期记录之后的改动（战力、粮草、效果文字），载入时套用到最新。
+// 每条改动都写旧值和新值：对局推算时按对局日期回退到当时的版本（rawAt），旧对局不受新补丁影响。
+// 字段：pw 战力、pv 粮草、tx 中文效果、txe 英文效果，都写成 [旧, 新]；效果文字改了的牌要同步改 cards.js（gwent_numbers_check.js 会查）。
+(function (root) {
+  'use strict';
+  const PATCHES = [
+    // { date: '2025-08-05', title: '2025 年 8 月社区补丁', src: 'https://…', cards: [
+    //   { n: '牌名', pw: [5, 6], pv: [8, 7], tx: ['旧效果', '新效果'], txe: ['old', 'new'], note: '' },
+    // ] },
+  ];
+  const COL = { pw: 4, pv: 5, tx: 8, txe: 10 };
+  const sorted = () => PATCHES.slice().sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  // 把 RAW 就地更新到最新（浏览器载入时、测试里调用）；已经是新值的跳过，重复调用无害
+  function applyAll(RAW) {
+    const by = {}; RAW.forEach(r => { by[r[0]] = r; });
+    const miss = [];
+    for (const p of sorted()) for (const c of p.cards) {
+      const r = by[c.n]; if (!r) { miss.push(c.n); continue; }
+      for (const [k, i] of Object.entries(COL)) if (c[k]) r[i] = String(c[k][1]);
+    }
+    return miss;
+  }
+  // 某天的版本：从最新回退该日期之后的补丁（只复制改到的行）
+  function rawAt(RAW, date) {
+    const later = sorted().filter(p => date && p.date > date).reverse();
+    if (!later.length) return RAW;
+    const idx = {}; RAW.forEach((r, i) => { idx[r[0]] = i; });
+    const out = RAW.slice();
+    for (const p of later) for (const c of p.cards) {
+      const i = idx[c.n]; if (i == null) continue;
+      if (out[i] === RAW[i]) out[i] = RAW[i].slice();
+      for (const [k, j] of Object.entries(COL)) if (c[k]) out[i][j] = String(c[k][0]);
+    }
+    return out;
+  }
+  // 一张牌的改动历史（卡牌详情显示）
+  function history(name) {
+    const out = [];
+    for (const p of sorted()) for (const c of p.cards) if (c.n === name) out.push(Object.assign({ date: p.date, title: p.title }, c));
+    return out;
+  }
+  const API = { PATCHES, applyAll, rawAt, history, latest: () => (sorted().pop() || {}).date || null };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API;
+  else { root.GwentPatches = API; if (typeof RAW !== 'undefined') applyAll(RAW); }
+})(this);
+
+</script>
+<script>
 // 由 build.js 从 cards.js 注释生成，不要手改
 (function (root) { const F = {"神殿守卫":"推测","贝罗恒王":"推测","突变装置":"推测","禁术":"需手动","伊斯崔德":"需手动","狮鹫学派猎魔人游侠":"推测","舰载弩炮":"推测","红骑士":"需手动","薇瑞娜":"推测","女夜魔":"需手动","孽鬼战士":"推测","日轮之师":"需手动","哈吉的伊斯贝尔":"推测","寇格林姆":"需手动","瑟瑞特":"需手动","史提芬·史凯伦":"需手动","篡位者 - 军官":"需手动","瘟疫制造者":"需手动","异兽园看管":"需手动","毒蛇学派猎魔人导师":"需手动","巨蝎煎药":"需手动","登舰作战":"需手动","群岛战争":"需手动","巨熊":"推测","布兰王":"需手动","索佛":"需手动","德拉蒙家族持盾女卫":"需手动","海巨蟒":"需手动","传送门":"需手动","华丽香炉":"需手动","恩荫之戒":"需手动","湖女之剑":"需手动","春分":"需手动","兰伯特":"需手动","维瑟米尔":"需手动","艾斯卡尔":"需手动","卡罗·凡瑞西":"需手动","安古兰":"需手动","希里：新星":"需手动","柯西莫·马拉斯宾那":"需手动","落雪":"推测","炸弹手":"需手动","幸运轮盘":"需手动","苏克鲁斯":"推测","尊宁夫人":"需手动","弗伦德号的船员":"需手动","波里斯":"需手动","赛勒斯·赫姆法特":"需手动","暗场保镖":"需手动","火蜥蜴帮异变体":"推测","烈焰守护者":"推测","自然法则":"推测","法兰茜丝卡·芬达贝":"推测","猫学派猎魔人导师":"推测","维里赫德旅先锋":"推测","棘手困境":"推测","校友会":"需手动"};
 if (typeof module !== 'undefined' && module.exports) module.exports = F; else root.GwentCardFlags = F; })(this);
@@ -4132,16 +4180,18 @@ if (typeof module !== 'undefined' && module.exports) module.exports = F; else ro
 // ---------- 规则引擎接入：按记录逐步推算场面 ----------
 const ENG=(typeof GwentEngine!=="undefined")?GwentEngine:null;
 const ENGRAW=RAW;
+// 对局日期当时的卡牌版本（月度补丁之前的对局按旧数值推算）
+const rawFor=g=>typeof GwentPatches!=="undefined"?GwentPatches.rawAt(ENGRAW,g.date):ENGRAW;
 let simCache={key:"",res:null};
 // 未确认规则的覆盖值（校准用），见引擎 DEFAULT_RULES
 const SIM_RULES={};
 function sim(g,r,excl){
   if(!ENG)return null;
-  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
+  const key=g.id+"|"+(g.date||"")+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
   if(simCache.key===key)return simCache.res;
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
   const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
-  E.loadData(ENGRAW);E.loadBehaviors(GwentCards.behaviors);
+  E.loadData(rawFor(g));E.loadBehaviors(GwentCards.behaviors);
   E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
@@ -5043,7 +5093,8 @@ function openCard(c){$("#cdN").textContent=c.n;
   const drawF2=()=>{$("#cdF2").innerHTML=["NR","MO","NG","ST","SK","SY"].filter(x=>x!==c.f).map(x=>`<button class="chip fac ${f2.includes(x)?"on":""}" style="--c:var(--${x})" data-f2="${x}">${FN[x]}</button>`).join("");
     $("#cdF2").querySelectorAll("[data-f2]").forEach(b=>b.onclick=()=>{const x=b.dataset.f2;f2=f2.includes(x)?f2.filter(y=>y!==x):[...f2,x];drawF2();});};
   $("#cdF2row").classList.toggle("hidden",c.f==="NE"||isLeader(c));drawF2();
-  $("#cdEn").textContent=c.txe?"游戏当前英文描述（数值以这个为准，上面的中文描述可能是旧版本）：\n"+c.txe:"";
+  const hist=typeof GwentPatches!=="undefined"?GwentPatches.history(c.n):[];
+  $("#cdEn").textContent=(c.txe?"游戏当前英文描述（数值以这个为准，上面的中文描述可能是旧版本）：\n"+c.txe:"")+(hist.length?(c.txe?"\n\n":"")+"平衡改动：\n"+hist.map(h=>h.date+" "+[h.pw?"战力 "+h.pw.join("→"):"",h.pv?"粮草 "+h.pv.join("→"):"",h.tx||h.txe?"效果改动":"",h.note||""].filter(Boolean).join("，")).join("\n"):"");
   $("#cdOk").onclick=()=>{const pv=parseInt($("#cdPv").value),pw=$("#cdPw").value.trim(),tx=$("#cdTx").value.trim(),al=$("#cdAl").value.trim();const e={};
     if(!isNaN(pv)&&pv!==c.orig.pv)e.pv=pv;if(pw&&pw!==String(c.orig.pw))e.pw=pw;if(tx&&tx!==c.orig.tx)e.tx=tx;if(al)e.alias=al;const d2=dualOf(c);if(f2.slice().sort().join()!==d2.slice().sort().join())e.f2=f2;
     if(Object.keys(e).length)db.edits[c.n]=e;else delete db.edits[c.n];applyEdits();persist();$("#cdlg").close();render();toast("已保存修改");};

@@ -17,6 +17,9 @@
 - `src/data.js`：卡牌数据 `const RAW=[...]`（单行，很大）。
 - `src/app.js`：对局簿界面与逻辑。`src/sim.js`：推算（sim / simBoard）、偏差报告（devReport）、场外计数（extraLine），从 app.js 拆出，和 app.js 共用全局，在它之前载入。`src/keys.js`：电脑快捷键（只模拟点击已有按钮），在 app.js 之后载入。`src/style.css`：样式。
 - 可安装网页（PWA）：`src/manifest.webmanifest` `src/sw.js`（先网络后缓存）`src/icon-192/512.png` `icon.svg`，打包时复制到 `dist/`；只在 http(s) 网址下注册，本地打开 html 不受影响。
+- `src/patches.js`：月度平衡补丁（`PATCHES`，按日期记 `pw/pv/tx/txe` 的 `[旧, 新]`）。data.js 是基线，浏览器载入时 `applyAll(RAW)` 套到最新；推算按对局日期 `rawAt(RAW, g.date)` 回退到当时版本（旧对局不受新补丁影响）；卡牌详情显示改动历史。测试脚本里载入 RAW 后也要 `applyAll`。
+- `gwent_numbers_check.js`：代码里的数字（2~30）卡面上必须也有，防止补丁改了数值代码没跟上；已知正常情况记在 `numbers_baseline.json`（`--update` 重写）。补丁里改了效果文字的牌必须写 `code: '已同步'|'无需改'`。已加进 `npm test`。
+- 月度更新流程：用户给补丁说明（链接或粘贴）→ 写进 `patches.js` → 效果改了的同步 `cards.js` → `npm test` + 冒烟 → PR。
 - `src/cardflags.js`：`node build.js` 时从 `cards.js` 注释自动生成（ASSUME → 推测，用改战力/推算不了/按记录 → 需手动），偏差报告用，不要手改。
 - 对局簿数据存 localStorage 键 `gwent-tracker-v3`，**修改时必须保证旧数据能继续用**。
 - `gwent_engine_test.js`：底层测试（假卡），`node gwent_engine_test.js`。

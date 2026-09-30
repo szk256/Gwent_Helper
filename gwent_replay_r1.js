@@ -5,6 +5,7 @@ const fs = require('fs');
 const html = fs.readFileSync(process.env.TRACKER || require('path').join(__dirname, 'src', 'data.js'), 'utf8');
 const s0 = html.indexOf('const RAW='), e0 = html.indexOf('];', s0);
 const RAW = JSON.parse(html.slice(s0 + 10, e0 + 1));
+require('./src/patches.js').applyAll(RAW);   // 套用月度补丁到最新
 
 function run(script, first, real) {
   let queue = [];

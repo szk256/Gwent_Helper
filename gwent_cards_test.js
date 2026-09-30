@@ -2,6 +2,7 @@
 const E = require('./src/engine.js');
 const B = require('./src/cards.js').behaviors;
 eval(require('fs').readFileSync('./src/data.js', 'utf8').replace('const RAW', 'global.RAW'));
+require('./src/patches.js').applyAll(RAW);
 let fails = 0; const ok = (c, m) => { if (!c) { fails++; console.log('✗', m); } else console.log('✓', m); };
 // picks：按顺序给出的选择（单位、牌名、true/false）
 function game(picks = []) {

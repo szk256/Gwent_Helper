@@ -3,16 +3,18 @@
 // ---------- 规则引擎接入：按记录逐步推算场面 ----------
 const ENG=(typeof GwentEngine!=="undefined")?GwentEngine:null;
 const ENGRAW=RAW;
+// 对局日期当时的卡牌版本（月度补丁之前的对局按旧数值推算）
+const rawFor=g=>typeof GwentPatches!=="undefined"?GwentPatches.rawAt(ENGRAW,g.date):ENGRAW;
 let simCache={key:"",res:null};
 // 未确认规则的覆盖值（校准用），见引擎 DEFAULT_RULES
 const SIM_RULES={};
 function sim(g,r,excl){
   if(!ENG)return null;
-  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
+  const key=g.id+"|"+(g.date||"")+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
   if(simCache.key===key)return simCache.res;
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
   const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
-  E.loadData(ENGRAW);E.loadBehaviors(GwentCards.behaviors);
+  E.loadData(rawFor(g));E.loadBehaviors(GwentCards.behaviors);
   E.s.sides.me.vars.devotion=devotionOf(deckById(g.deck))||!deckById(g.deck);
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
