@@ -399,7 +399,7 @@ class Game {
   play(side, name, row, pos, opts = {}) {
     const d = this.def(name);
     const player = opts.player || side;
-    if (!opts.fromDeck && !opts.spawned) this.s.sides[player].handCount = Math.max(0, this.s.sides[player].handCount - 1);
+    if (!opts.fromDeck && !opts.spawned && !opts.fromGrave) this.s.sides[player].handCount = Math.max(0, this.s.sides[player].handCount - 1);
     if (opts.fromGrave) { const gr = this.s.sides[player].grave, i = gr.lastIndexOf(name); if (i >= 0) gr.splice(i, 1); }
     if (d.type === 'special') {
       const pseudo = { side: player, name, def: d, uid: null };
@@ -474,6 +474,8 @@ class Game {
   frenzy(side, n, src) {
     const v = this.chooser ? this.chooser({ kind: 'frenzy', n, side, source: src && src.name }, this) : null;
     if (v != null) return !!v;
+    // 对局簿推算的手牌数（side.handKnown）：打出到场上之后的手牌数（用户确认）
+    if (this.s.sides[side].handKnown) return this.s.sides[side].handCount <= n;
     this.log('亢奋未知', { name: src && src.name, n, side });
     return !!this.rules.frenzyDefault;
   }
