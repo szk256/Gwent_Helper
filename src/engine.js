@@ -93,6 +93,8 @@ class Game {
     d.abilities = (d.abilities || []).slice();
     // 恐吓：己方打出“罪行”牌时自身增益
     if (d.intimidate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('罪行'), run: c => c.boost(c.self, d.intimidate) });
+    // 增兵：己方打出“战争”牌时冷却 -1
+    if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
     if (!data) d.unknown = true;
     this.cards[name] = d;
@@ -124,6 +126,8 @@ class Game {
         else if (seg === '伏击') { if (apply) d.ambush = true; }
         else if (seg === '回响') { if (apply) d.echo = true; }
         else if (seg === '癫狂') { if (apply) d.insanity = true; }
+        else if (seg === '增兵') { if (apply) d.reinforce = true; }
+        else if ((m = seg.match(/^耐性\s*(?:[（(](近战|远程)[）)])?$/))) { if (apply) d.patience = m[1] === '近战' ? 'm' : m[1] === '远程' ? 'r' : true; }
         else return false;
         return true;
       };
@@ -140,6 +144,7 @@ class Game {
         if (parts.every(x => kw(x, false))) parts.forEach(x => kw(x, true)); else rest++;
       }
       d.vanilla = r[3] === '单位' && rest === 0;
+      if (d.patience) { const pm = text.match(/\[(\d+)\]/); d.patInit = pm ? +pm[1] : 0; }
     }
   }
   loadBehaviors(map) { this.behaviors = Object.assign(this.behaviors || {}, map); this.cards = {}; }
@@ -202,6 +207,12 @@ class Game {
   cohort(u) { return this.allUnits(u.side).some(v => v !== u && v.name === u.name); }
   // 操控：相邻两侧均为“士兵”
   harmonyFlank(u) { const row = this.rowOf(u), i = row.indexOf(u); return [row[i - 1], row[i + 1]].every(v => v && this.hasTag(v, '士兵')); }
+  // 操控（卡牌里用）：两侧都是士兵（def.operateMages 时法师也算）；“欧德林”一人即可
+  operate(u) {
+    const row = this.rowOf(u), i = row.indexOf(u), nb = [row[i - 1], row[i + 1]];
+    if (nb.some(v => v && v.name === '欧德林')) return true;
+    return nb.every(v => v && (this.hasTag(v, '士兵') || (u.def.operateMages && this.hasTag(v, '法师'))));
+  }
   // 翼守：仅与 1 张牌相邻
   flanked1(u) { return this.adjacent(u).length === 1; }
   // 战狂 N：受伤的敌军单位数量达到 N
@@ -275,6 +286,11 @@ class Game {
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
       coins: () => g.s.sides[u.side].coins, gainCoins: n => g.gainCoins(u.side, n, u), spendCoins: n => g.spendCoins(u.side, n, u),
       hoard: x => g.hoard(u.side, x), seize: t => g.seize(t, u.side, u), flip: t => g.flip(t || u, u),
+      transform: (t, name, o) => g.transform(t, name, u, o), shuffleBack: t => g.shuffleBack(t, u),
+      reduceCd: (t, n) => g.reduceCd(t, n, u), operate: t => g.operate(t || u),
+      // 生成并打出：单位走“生成（算打出）”，特殊牌直接结算
+      spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
+      leader: () => Object.values(g.s.sides[u.side].abilities || {}).find(h => h.def.type === 'leader') || null,
     };
   }
 
@@ -287,6 +303,7 @@ class Game {
       tags: d.tags || [], status: Object.assign({}, d.status || {}),
       infused: [], blessFired: {}, enteredTurn: this.s.turn, orderUsed: 0,
       zeal: !!d.zeal, unmodeled: !!d.unmodeled, origin: null, timer: d.timer ? d.timer.n : (d.timerN || null),
+      pat: d.patience ? (d.patInit || 0) : null, bonusCharges: 0, vars: {},
     };
   }
 
@@ -349,6 +366,7 @@ class Game {
     if (!this._place(u, side, row, pos)) return null;
     this.log('生成', { side, name, uid: u.uid, row, by: src && src.name });
     this._enter(u, !!opts.andPlay, opts);
+    this.emit('unitSpawned', { unit: u, src });
     return u;
   }
 
@@ -433,6 +451,32 @@ class Game {
     if (u.status.spying) { u.status.spying = false; this.log('状态', { uid: u.uid, name: u.name, key: 'spying', val: false }); }
     else this.addStatus(u, 'spying', true, src);
     this.emit('moved', { unit: u, src, seized: true });
+  }
+  // 变形：变成另一张牌（默认按新牌的基础战力；keepPower 保留当前战力）
+  transform(u, name, src, o = {}) {
+    if (!u || !this.find(u.uid)) return;
+    const d = this.def(name), p = u.power;
+    Object.assign(u, { name, def: d, base: d.base || 0, tags: d.tags || [], unmodeled: !!d.unmodeled,
+      status: Object.assign({}, d.status || {}), infused: [], blessFired: {}, orderUsed: 0, cd: 0, zeal: !!d.zeal,
+      timer: d.timer ? d.timer.n : (d.timerN || null), pat: d.patience ? (d.patInit || 0) : null });
+    u.power = o.keepPower ? p : u.base;
+    this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
+    this.checkBless(u);
+  }
+  // 洗回牌组：离场，不算摧毁
+  shuffleBack(u, src) {
+    if (!u || !this.find(u.uid)) return;
+    const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
+    if (u.origin !== 'spawn' || !this.isDoomed(u)) this.s.sides[u.side].deck.push(u.name);
+    this.log('洗回牌组', { uid: u.uid, name: u.name, by: src && src.name });
+    this.emit('returned', { unit: u, src });
+  }
+  // 冷却减少（事件 cdReduced，给“相邻单位冷却减少”之类的能力用）
+  reduceCd(u, n, src) {
+    if (!u || !(u.cd > 0) || n <= 0) return;
+    const k = Math.min(u.cd, n); u.cd -= k;
+    this.log('冷却减少', { uid: u.uid, name: u.name, n: k, cd: u.cd, by: src && src.name });
+    this.emit('cdReduced', { unit: u, n: k, src });
   }
   // 翻开：伏击的牌翻到正面
   flip(u, src) {
@@ -614,8 +658,10 @@ class Game {
     if (h.charges <= 0 && !opts.force) this.log('能力已用完', { side, name }, true);
     h.charges--;
     this.s.sides[side].vars.usedOrderTurn = this.s.turn;   // 领袖、战术也是指令（先机）
+    if (h.def.type === 'leader') this.s.sides[side].vars.leaderUses = (this.s.sides[side].vars.leaderUses || 0) + 1;
     this.log('能力', { side, name, left: h.charges, unmodeled: !!h.def.unmodeled });
     if (h.def.order) h.def.order(this.ctx(h), opts);
+    this.emit('ordered', { unit: h, side, ability: true });
     return h;
   }
   lock(u, src) { this.addStatus(u, 'lock', true, src); }
@@ -639,7 +685,7 @@ class Game {
   canOrder(u) {
     if (!u.def.order || u.status.lock) return false;
     if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return false; }
-    else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1)) return false;
+    else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return false;
     // 进场当回合不能用；狂热例外
     return u.zeal || this.s.turn > u.enteredTurn;
   }
@@ -652,8 +698,10 @@ class Game {
     u.orderUsed++;
     this.s.sides[u.side].vars.usedOrderTurn = this.s.turn;
     if (u.def.cooldown != null) u.cd = u.def.cooldown;
+    u.orderTurn = this.s.turn;
     this.log('指令', { uid, name: u.name });
     u.def.order(this.ctx(u), opts);
+    this.emit('ordered', { unit: u, side: u.side });
   }
 
   // ---------- 回合 ----------
@@ -683,6 +731,13 @@ class Game {
         const n = u.def.timer ? u.def.timer.n : u.def.timerN;
         u.timer = this.rules.timerRepeats ? n : null;
       }
+    }
+    // 耐性：己方回合结束时指令还没用过，则数值永久 +1（带“近战/远程”的只在那一排）
+    for (const u of this.allUnits(side)) {
+      const pt = u.def.patience;
+      if (u.pat == null || u.status.lock || u.orderUsed > 0 || (pt !== true && pt !== u.row)) continue;
+      u.pat++; this.log('耐性', { uid: u.uid, name: u.name, pat: u.pat });
+      this.emit('patience', { unit: u });
     }
     this.emit('turnEnd', { side });
     // 活力 / 重伤：单位拥有者回合结束
@@ -759,7 +814,8 @@ class Game {
   counters(u) {
     const o = {};
     if (u.timer != null) o.timer = u.timer;
-    if (u.def.order && u.def.cooldown == null && u.def.charges != null) o.charges = Math.max(0, u.def.charges - u.orderUsed);
+    if (u.def.order && u.def.cooldown == null && (u.def.charges != null || u.bonusCharges)) o.charges = Math.max(0, (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0) - u.orderUsed);
+    if (u.pat != null) o.pat = u.pat;
     if (u.def.cooldown != null) o.cd = u.cd || 0;
     const fn = u.def.fee ? u.def.fee.n : u.def.feeN;
     if (fn != null) o.fee = fn;

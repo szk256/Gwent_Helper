@@ -18,6 +18,7 @@
 - `src/app.js`：对局簿界面与逻辑（sim / simBoard 等）。`src/style.css`：样式。
 - 对局簿数据存 localStorage 键 `gwent-tracker-v3`，**修改时必须保证旧数据能继续用**。
 - `gwent_engine_test.js`：底层测试（假卡），`node gwent_engine_test.js`。
+- `gwent_cards_test.js`：卡牌效果测试（真实数据），`gwent_cards_smoke.js`：每张已建模的牌都打一遍检查不报错（可带牌名只测几张）。
 - `gwent_replay_r1.js`：第一局回放，`node gwent_replay_r1.js`（默认读 `src/data.js`；设 `TRACKER=./dist/gwent_tracker.html` 则从打包产物读）。
 - 卡牌数据库：`northern_realms.md` `neutral.md` `monster.md` `nilfgaard.md` `scoiatael.md` `skellige.md` `syndicate.md`；关键词：`词条辞典.md`（标“游戏内”的条目最可靠）。中文效果可能比游戏旧，以“当前英文效果”和游戏内说明为准。
 
@@ -36,6 +37,8 @@
 - **潜伏**：状态 `spying`。不忠（`disloyal`）打出时落到出牌方对面半场并获得潜伏；`play(side,…,{player})` 区分“放在哪边”和“谁打的”，`unitPlayed` 带 `by`，卡牌里 `own()` 按打出者判断（ASSUME）。`seize`（抓捕）：移到己方同排并获得潜伏，已有潜伏则改为移除；`conspiring`（共谋）。
 - **伏击**：打出时状态 `ambush`（背面朝上，部署不触发），被锁定自动 `flip`；是否计分看 `ambushCounts`（未确认，暂计）。
 - **回响**：小局开始时墓场里的回响牌回到牌组顶端，再打出时带佚亡。
+- 其他通用机制：`增兵`（`reinforce`，己方打出战争牌冷却 -1，`def()` 里合成）、`耐性`（`patience`，数值 `u.pat`，初值取卡面 `[n]`，回合结束指令没用过 +1，事件 `patience`）、`operate(u)`（操控，欧德林一人即可，`operateMages` 时法师也算）、`transform(u,名,{keepPower})`、`shuffleBack`（洗回牌组）、`reduceCd`（事件 `cdReduced`）、`bonusCharges`（额外充能）、事件 `ordered`（单位指令和领袖/战术都发）、`unitSpawned`；`side.vars.leaderUses`。ctx 里有 `spawnPlay`（生成并打出）、`leader()`。
+- 卡牌脚本约定（`cards.js` 顶部）：`T` 手动目标、`R` 随机结果、`fromDeck` 牌组/墓场/创造出的牌名（来自记录里带出的后续）、`noop` 只影响手牌/牌组/墓场的效果（场面靠后续记录和落地战力）。
 - 整排效果 `HAZARDS`（霜、雨、雾、风暴、龙之梦、血月、灾厄）：拥有者回合开始时结算，每排一个，新的替换旧的，持续回合按卡面，结算后 -1。随机结果走 `choose`（来源 = 效果名）。
 - 选择：`choose(req)` 统一处理目标、随机结果、牌组里拉出的牌；没有输入时记“待选”。
 - 可调规则在 `DEFAULT_RULES`，未确认的规则都放这里。
@@ -145,6 +148,6 @@ R1 W 46:24 4:5
 - 导入导出：保留原有的各类导出（对局代码、卡组代码、牌库代码、下载备份）。“全部迁移导出”= `#GWMIG v1` 开头的一行说明 + 整个 `db` 的 JSON；“全部导入”接受它或备份文件（也兼容旧版备份），确认后替换全部数据。所有导入对话框都有“点击粘贴”（`openDlg(...,{paste:true})`）。
 
 ## 测试
-- `node gwent_engine_test.js`：底层机制。
+- `node gwent_engine_test.js`：底层机制；`node gwent_cards_test.js`：卡牌效果；`node gwent_cards_smoke.js`：全部卡牌冒烟。
 - 界面：用 jsdom 载入 HTML，往 `db.live` 塞一局记录后调用 `rMatch()`，检查 `.eng .score`、`.brow`、`.warn`。脚本结束要 `process.exit(0)`，否则计时器会卡住。
 - 截图：playwright，视口 1440×900 检查电脑布局（≥1100px 两栏：对局页左边比分+场面常驻、右边记录；牌库左边筛选），420×1100 检查手机布局。
