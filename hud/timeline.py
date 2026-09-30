@@ -34,8 +34,10 @@ def hms(t):
 
 def sharpness(im):
     """左侧场景的清晰度：正常对局约 1000；调度、墓场、过场画面是模糊的暗背景，接近 0。"""
+    import layout
     H, W = im.shape[:2]
-    g = cv2.cvtColor(im[int(.3 * H):int(.6 * H), :int(.12 * W)], cv2.COLOR_BGR2GRAY)
+    x0, y0, x1, y1 = layout.get(im)['sharp']
+    g = cv2.cvtColor(im[int(y0 * H):int(y1 * H), int(x0 * W):int(x1 * W)], cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(g, cv2.CV_32F).var())
 
 
@@ -51,8 +53,9 @@ def reader():
 
 
 def scan_frame(m, im):
+    import layout
     ent = {'rows': board.names(m, board.scan(m, im)), 'sharp': sharpness(im), 'show': None,
-           'score': reader().scores(im)}
+           'score': reader().scores(im), 'smin': layout.get(im)['sharp_min']}
     sc = detect.showcase(im)
     if sc is not None:
         res = m.match(sc)
@@ -127,7 +130,7 @@ class Tracker:
     """按“排 × 牌名”记张数，带迟滞：连续 IN_N 次多看到才算进场，连续 OUT_N 次（且至少 OUT_S 秒）少看到才算离场。
     一次扫描里一大半已知的牌同时不见（被窗口挡住、动画）不算；持续 ROUND_S 秒都这样 = 小局结束，清空。
     展示框里认出的牌（对方刚打出）用来把对方的进场分成“打出”和“召唤/生成”。"""
-    IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S = 2, 3, 2.5, 8.0, 10.0
+    IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S = 2, 3, 2.5, 8.0, 10.0, 40.0
 
     def __init__(self):
         self.count = {}      # (排, 名) -> 张数
@@ -145,7 +148,7 @@ class Tracker:
         if ent.get('show') and (not self.shows or self.shows[-1][1] != ent['show'] or t - self.shows[-1][0] > 3):
             self.shows.append((t, ent['show']))
         sc = ent.get('score') or (None, None)
-        if ent['sharp'] < 300 or sc[0] is None or sc[1] is None:
+        if ent['sharp'] < ent.get('smin', 300) or sc[0] is None or sc[1] is None:
             # 调度、墓场、选牌、过场画面（背景模糊、右侧没有总分），或开局前的界面：不看
             self.blur_seen = True
             return
@@ -197,6 +200,14 @@ class Tracker:
     def enter(self, t, k):
         row, name = k
         side = SIDES[row]
+        # 同一排的同名牌离场后不久又出现：多半是识别闪烁（画面糊、被挡），撤销那次离场
+        for i in range(len(self.events) - 1, -1, -1):
+            e = self.events[i]
+            if t - e[0] > self.REENTER_S:
+                break
+            if e[1] in ('离场', '离手') and e[2] == side and e[3] == name and e[4] == row:
+                del self.events[i]
+                return
         # 同一方同名牌刚从另一排离场 = 移动
         for i in range(len(self.events) - 1, -1, -1):
             e = self.events[i]
@@ -235,13 +246,9 @@ class Tracker:
             return
         self.emit(t, '离场', row, name)
 
-    def finish(self, transient=5.0):
-        """没落到场上的展示（特殊牌、或者展示了但没看到进场）记为“展示”；
-        进场后几秒内就离场的（拖动中的牌、动画）去掉。"""
-        for t, n in self.shows:
-            self.events.append((t, '展示', '对方', n, ''))
-        self.shows = []
-        ev = sorted(self.events, key=lambda e: e[0])
+    def snapshot(self, transient=5.0):
+        """当前时间线（不改内部状态，实时显示用）：没落到场上的展示记为“展示”；进场后几秒内就离场的去掉。"""
+        ev = sorted(self.events + [(t, '展示', '对方', n, '') for t, n in self.shows], key=lambda e: e[0])
         drop = set()
         for i, e in enumerate(ev):
             if e[1] not in ('进场', '抽到') or i in drop:
@@ -251,7 +258,11 @@ class Tracker:
                       and ev[j][2:] == e[2:] and ev[j][0] - e[0] < transient), None)
             if j is not None:
                 drop |= {i, j}
-        self.events = [e for i, e in enumerate(ev) if i not in drop]
+        return [e for i, e in enumerate(ev) if i not in drop]
+
+    def finish(self, transient=5.0):
+        self.events = self.snapshot(transient)
+        self.shows = []
         return self.events
 
 

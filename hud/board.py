@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 import detect
+import layout
 
 # 排的分界（画面高度比例）：录像统计出的 5 层——对方远程 ~0.20、对方近战 ~0.34、我方近战 ~0.53、我方远程 ~0.72、手牌 ≥0.85
 ROWS = [('对方远程', 0.00, 0.27), ('对方近战', 0.27, 0.44), ('我方近战', 0.44, 0.645), ('我方远程', 0.645, 0.815),
@@ -76,28 +77,31 @@ def scan(matcher, frame, card_h=220, min_votes=4, detail=False):
     每个特征点反推卡牌中心和高度，按中心聚成一张张牌；高度大的是手牌，其余按中心高度分排。
     同一个中心、同一个大小上的几票互相印证，随机误匹配很难凑到一起，所以 4 票就够；高亮（金光）的牌票数少，
     card_h（扫描时把场上牌缩放到的高度）从 160 提到 220 能多认出来，代价是每帧约 1.1 → 1.8 秒。
-    detail=True 时每项为 (x, 卡图, 票数, y, 高度)。"""
+    位置参数按画面比例取 layout（电脑 16:9 / iPad 4:3）。detail=True 时每项为 (x, 卡图, 票数, y, 高度)。"""
+    L = layout.get(frame)
     H, W = frame.shape[:2]
     showing = detect.paper_ratio(frame) > 0.5
-    X0, Y0, X1, Y1 = int(.17 * W), int(.08 * H), int(.81 * W), H
+    sx0, sy0, sx1 = L['scan']
+    X0, Y0, X1, Y1 = int(sx0 * W), int(sy0 * H), int(sx1 * W), H
     g = cv2.cvtColor(frame[Y0:Y1, X0:X1], cv2.COLOR_BGR2GRAY)
-    k = card_h / (0.155 * H)
+    k = card_h / (L['card_h'] * H)
     g = cv2.resize(g, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
     pts = {}
     for owner, cx, cy, h, _ang in matcher.match_cards(g):
         pts.setdefault(owner, []).append((cx / k + X0, cy / k + Y0, h / k))
     rows = {r: [] for r in ROW_KEYS}
+    bx, by = L['show_block']
     for o, ps in pts.items():
         if len(ps) < min_votes:
             continue
         for v, cx, cy, h in _cluster(np.array(ps), min_votes):
             x, y, hh = cx / W, cy / H, h / H
-            if showing and x > 0.64 and y < 0.45:  # 展示框（右上）里的牌不算场上的
+            if showing and x > bx and y < by:  # 展示框（右上）里的牌不算场上的
                 continue
-            if hh >= HAND_H:
+            if hh >= L['hand_h'] or y >= L['hand_y']:
                 row = '手牌'
             else:
-                row = next(r for r, lim in ROW_CY if y < lim)
+                row = next(r for r, lim in L['row_cy'] if y < lim)
             rows[row].append((x, matcher.arts[o], v, y, hh) if detail else (x, matcher.arts[o], v))
     for r in rows.values():
         r.sort()

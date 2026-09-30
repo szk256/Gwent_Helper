@@ -1,6 +1,6 @@
 """把场面时间线导出成对局簿的 v2 对局代码。
 
-python hud/export.py 帧目录 [日期YYYYMMDD]      （先用 timeline.py 扫过，读 帧目录/scan.json）
+python hud/export.py 帧目录 [日期YYYYMMDD] [--jobs=4] [--deck=卡组代码或对局簿备份路径]      （没扫过的帧会先扫描，结果缓存在 帧目录/scan.json）
 输出 帧目录/game.json 和 帧目录/game_v2.txt，可直接在对局簿“导入对局”里粘贴。
 
 对应关系（看不准的都写成备注，不让推算引擎误用）：
@@ -17,6 +17,7 @@ import time
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import deck  # noqa: E402
 import timeline  # noqa: E402
 from matcher import Matcher  # noqa: E402
 
@@ -29,7 +30,7 @@ def stable_scores(states, need=2):
     out, last, run = [], None, 0
     for t, ent in states:
         sc = ent.get('score')
-        if not sc or sc[0] is None or sc[1] is None or ent.get('sharp', 0) < 300:
+        if not sc or sc[0] is None or sc[1] is None or ent.get('sharp', 0) < ent.get('smin', 300):
             continue
         pair = (sc[1], sc[0])  # scores() 返回 (对方, 我方)
         if max(pair) > 250:
@@ -47,7 +48,9 @@ def stable_scores(states, need=2):
     return out
 
 
-def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励'):
+def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None):
+    """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
+    my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。"""
     log, rounds = [], []
     r, n = 0, 0
     t_start = min([e[0] for e in events] + [s[0] for s in scores]) if events or scores else 0
@@ -65,6 +68,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         n += 1
         x.update(id=f'e{n}', r=r, vt=vt(t))
         log.append(x)
+        if x['a'] in ('play', 'summon') and x.get('row'):
+            recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}[x['row']], '打出' if x['a'] == 'play' else '进场'))
 
     def flush_scores(upto):
         """把 upto 之前的稳定总分里、最后一个写成核对点（每一手之后一个）。"""
@@ -81,9 +86,33 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 pending_step = False
 
     first_side = None
+    recent = []  # [(时间, 方, 牌名, 排, 类型)] 最近的打出 / 进场（判断完当前这张再加进去）
+
+    def summoner(t, who, name, row):
+        """这张进场的牌是不是由几秒内刚打出的牌带出来的：同一排同名（复制、召唤同名牌），或卡面写着“召唤”的牌。"""
+        for t2, w2, n2, r2, k2 in reversed(recent):
+            if t - t2 > 8:
+                break
+            if w2 != who:
+                continue
+            if n2 == name and r2 == row[-2:] and t - t2 <= 4:
+                return n2
+            if n2 != name and k2 == '打出' and '召唤' in (cards_by_name.get(n2, {}).get('text') or ''):
+                return n2
+        return None
+
     for t, kind, side, name, row in events:
-        if row == '手牌' or kind in ('离手', '抽到'):
+        c = cards_by_name.get(name, {})
+        if my_deck and side == '我方' and name not in my_deck and c.get('set') != 'token':
             continue
+        if kind == '离手' and c.get('type') == '特殊' and side == '我方':
+            # 我方手牌里的特殊牌消失（不是闪烁）：打出了特殊牌（特殊牌不上场，只能这样看）
+            flush_scores(t)
+            push({'who': 'me', 'a': 'play', 'c': name, 'side': 'me', 'hud': '手牌里消失的特殊牌'}, t)
+            pending_step = True
+            continue
+        if row == '手牌' or kind in ('离手', '抽到') or c.get('type') == '战术':
+            continue  # 战术牌：对局簿开局自动放在先手方近战排最左边
         flush_scores(t)
         who = 'me' if side == '我方' else 'op'
         if kind == '小局结束':
@@ -105,7 +134,11 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             push({'who': 'op', 'a': 'play', 'c': name, 'side': 'op', 'hud': '只看到展示'}, t)
             pending_step = True
             first_side = first_side or who
-        elif kind == '进场' and who == 'me' and c.get('set') != 'token' and c.get('type') == '单位':
+        elif kind == '进场' and (via := summoner(t, who, name, row)):
+            # 由刚打出的牌带出来（同名复制、从牌组召唤）：记成召唤，带 via，对局簿对应到引擎自动生成的单位
+            push({'who': who, 'a': 'summon', 'c': name, 'row': ROW.get(row, 'm'), 'side': who, 'via': via,
+                  'hud': '推测由这张牌带出'}, t)
+        elif kind == '进场' and (who == 'me' or not has_show) and c.get('set') != 'token' and c.get('type') == '单位':
             # 我方可收集的单位落到场上：多半是从手牌打出（从牌组召唤的也会落在这里，标出来核对）
             push({'who': who, 'a': 'play', 'c': name, 'row': ROW.get(row, 'm'), 'side': who,
                   'hud': '没看到手牌少一张'}, t)
@@ -140,14 +173,18 @@ def to_v2(game_path):
 def main():
     d = sys.argv[1]
     date = next((a for a in sys.argv[2:] if a.isdigit()), time.strftime('%Y%m%d'))
+    jobs = next((int(a[7:]) for a in sys.argv if a.startswith('--jobs=')), 1)
     m = Matcher()
-    states = timeline.scan_dir(m, d)
+    states = timeline.scan_dir(m, d, jobs)
     tr = timeline.Tracker()
     for t, ent in states:
         tr.update(t, ent)
     events = tr.finish()
     scores = stable_scores(states)
-    game = build_game(events, scores, date, {c['name']: c for c in m.cards})
+    has_show = any(ent.get('show') for _t, ent in states) or not any(ent.get('smin') == 200 for _t, ent in states)
+    spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
+    my_deck = deck.load(spec, m.cards)
+    game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)

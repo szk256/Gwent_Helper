@@ -16,7 +16,8 @@ def crop(frame, box):
 
 def paper_ratio(frame):
     """说明框羊皮纸颜色占比；展示区出现时约 0.8，没有时接近 0。"""
-    return paper_ratio_rel(frame, SHOW_PAPER)
+    import layout
+    return paper_ratio_rel(frame, layout.get(frame)['show_paper'])
 
 
 def paper_ratio_rel(img, box):
@@ -31,7 +32,8 @@ def showcase(frame, thresh=0.5):
     """有展示卡时返回卡图区域（BGR），否则 None。"""
     if paper_ratio(frame) < thresh:
         return None
-    return crop(frame, SHOW_CARD)
+    import layout
+    return crop(frame, layout.get(frame)['show_card'])
 
 
 _sift_board = cv2.SIFT_create()

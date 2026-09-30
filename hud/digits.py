@@ -164,7 +164,9 @@ class Reader:
 
     def scores(self, frame):
         """(对方总分, 我方总分)，读不出为 None。"""
-        return (self.number(mask_score(crop(frame, SCORE_OP))), self.number(mask_score(crop(frame, SCORE_ME))))
+        import layout
+        L = layout.get(frame)
+        return (self.number(mask_score(crop(frame, L['score_op']))), self.number(mask_score(crop(frame, L['score_me']))))
 
     def power(self, frame, cx, cy, h):
         """场上一张牌的战力：cx, cy, h 为画面比例（board.scan(detail=True) 给的中心和高度）。特殊牌 / 神器没有数字，返回 None。"""
