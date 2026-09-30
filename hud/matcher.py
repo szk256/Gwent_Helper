@@ -45,16 +45,20 @@ def removal_kind(card):
 
 
 class Matcher:
+    load_cards_static = staticmethod(load_cards)
+
     def __init__(self):
         db = np.load(os.path.join(CACHE, 'db.npz'))
         self.desc = db['desc']
         self.owner = db['owner']
         self.arts = [str(a) for a in db['arts']]
+        self.geo = db['geo'] if 'geo' in db.files else None  # 旧特征库没有：重跑 build_db.py
         self.cards = load_cards()
         self.by_art = {}
         for c in self.cards:
             self.by_art.setdefault(c['art'], []).append(c)
         self.sift = cv2.SIFT_create(nfeatures=800)
+        self.sift_all = cv2.SIFT_create()
         self.flann = cv2.FlannBasedMatcher({'algorithm': 1, 'trees': 4}, {'checks': 64})
         self.flann.add([self.desc])
         self.flann.train()
@@ -65,6 +69,35 @@ class Matcher:
         g = cv2.resize(g, (max(1, round(g.shape[1] * scale)), QUERY_H),
                        interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
         return self.sift.detectAndCompute(g, None)[1]
+
+    def match_points(self, gray, ratio=0.75):
+        """整块图里每个通过比值检验的特征点：[(卡图序号, (x, y))]。用于一张图里有多张牌的情况。"""
+        return [(o, (cx, cy)) for o, cx, cy, _h, _a in self.match_cards(gray, ratio, centers=False)]
+
+    def match_cards(self, gray, ratio=0.75, centers=True):
+        """整块图里每个通过比值检验的特征点，按它在卡图上的相对位置和缩放反推卡牌：
+        [(卡图序号, 中心x, 中心y, 卡牌高度, 旋转角)]（图内像素）。centers=False 时给特征点自己的位置。"""
+        kp, d = self.sift_all.detectAndCompute(gray, None)
+        if d is None:
+            return []
+        out = []
+        for q, ms in zip(kp, self.flann.knnMatch(d.astype(np.float32), k=4)):
+            if not ms:
+                continue
+            o0 = self.owner[ms[0].trainIdx]
+            other = next((m for m in ms[1:] if self.owner[m.trainIdx] != o0), None)
+            if other is None or ms[0].distance < ratio * other.distance:
+                if not centers or self.geo is None:
+                    out.append((o0, q.pt[0], q.pt[1], 0.0, 0.0))
+                    continue
+                gx, gy, gs, ga = self.geo[ms[0].trainIdx]
+                h = q.size / gs                       # 卡牌高度（图内像素）
+                da = np.deg2rad(q.angle - ga)
+                c, s = np.cos(da), np.sin(da)
+                dx, dy = gx * h, gy * h
+                out.append((o0, q.pt[0] - (c * dx - s * dy), q.pt[1] - (s * dx + c * dy), h,
+                            (q.angle - ga + 180) % 360 - 180))
+        return out
 
     def match(self, bgr, facs=None, top=3):
         """识别一张卡牌图像（BGR，大致只含这张牌）。facs：只在这些阵营里找（如 {'SK','NE'}）。

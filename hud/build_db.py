@@ -65,7 +65,7 @@ def main():
     print(f'下载完成 {ok}/{len(arts)}')
 
     sift = cv2.SIFT_create(nfeatures=MAX_FEAT)
-    descs, owners, keep = [], [], []
+    descs, owners, keep, geo = [], [], [], []
     for art in arts:
         p = os.path.join(ART_DIR, f'{art}.jpg')
         if not os.path.exists(p):
@@ -75,15 +75,19 @@ def main():
             continue
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         g = cv2.resize(g, (round(g.shape[1] * DB_H / g.shape[0]), DB_H), interpolation=cv2.INTER_AREA)
-        _, d = sift.detectAndCompute(g, None)
+        kp, d = sift.detectAndCompute(g, None)
         if d is None or len(d) < 10:
             print(f'  特征太少，跳过 {art}')
             continue
+        h, w = g.shape
+        # 特征点相对卡图中心的位置（以卡图高度为单位）、大小、角度：识别时用来反推卡牌中心和大小
+        geo.append(np.array([((k.pt[0] - w / 2) / h, (k.pt[1] - h / 2) / h, k.size / h, k.angle) for k in kp],
+                            np.float32))
         owners.append(np.full(len(d), len(keep), np.int32))
         descs.append(d.astype(np.float32))
         keep.append(art)
     np.savez_compressed(os.path.join(CACHE, 'db.npz'), desc=np.vstack(descs), owner=np.concatenate(owners),
-                        arts=np.array(keep))
+                        arts=np.array(keep), geo=np.vstack(geo))
     print(f'特征库：{len(keep)} 张卡图，{sum(len(d) for d in descs)} 个特征点 → cache/db.npz')
 
 

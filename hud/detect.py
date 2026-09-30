@@ -16,7 +16,8 @@ def crop(frame, box):
 
 def paper_ratio(frame):
     """说明框羊皮纸颜色占比；展示区出现时约 0.8，没有时接近 0。"""
-    return paper_ratio_rel(frame, SHOW_PAPER)
+    import layout
+    return paper_ratio_rel(frame, layout.get(frame)['show_paper'])
 
 
 def paper_ratio_rel(img, box):
@@ -31,7 +32,52 @@ def showcase(frame, thresh=0.5):
     """有展示卡时返回卡图区域（BGR），否则 None。"""
     if paper_ratio(frame) < thresh:
         return None
-    return crop(frame, SHOW_CARD)
+    import layout
+    return crop(frame, layout.get(frame)['show_card'])
+
+
+_sift_board = cv2.SIFT_create()
+
+
+def board_opp(matcher, frame, card_h=160, min_votes=8):
+    """找对方半场上的牌（不用先切牌：整块找特征点、按卡图投票，再按位置聚成一张张牌）。
+    棋盘会随状态上下移动，所以不按固定的排位置。返回 [(票数, 卡图, x, y)]（x、y 为画面比例），从左到右。"""
+    H, W = frame.shape[:2]
+    # 对方半场；展示框出现时右边不看（展示卡和说明框会被当成场上的牌）
+    x1 = 0.64 if paper_ratio(frame) > 0.5 else 0.81
+    X0, Y0, X1, Y1 = int(.17 * W), int(.10 * H), int(x1 * W), int(.46 * H)
+    g = cv2.cvtColor(frame[Y0:Y1, X0:X1], cv2.COLOR_BGR2GRAY)
+    k = card_h / (0.155 * H)  # 场上牌高约 0.155H
+    g = cv2.resize(g, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
+    pts = {}
+    for owner, (x, y) in matcher.match_points(g):
+        pts.setdefault(owner, []).append((x / k + X0, y / k + Y0))
+    cw = 0.066 * W  # 场上牌宽
+    found = []
+    for o, ps in pts.items():
+        if len(ps) < min_votes:
+            continue
+        ps.sort()
+        groups, cur = [], [ps[0]]
+        for p in ps[1:]:
+            if p[0] - cur[-1][0] > cw * 0.5:
+                groups.append(cur)
+                cur = [p]
+            else:
+                cur.append(p)
+        groups.append(cur)
+        for gp in groups:
+            xs, ys = np.array(gp).T
+            # 相邻的同名牌：特征点横跨几张牌宽就拆成几张
+            n = max(1, round((np.percentile(xs, 95) - np.percentile(xs, 5)) / cw + 0.15))
+            edges = np.linspace(xs.min(), xs.max() + 1e-6, n + 1)
+            for i in range(n):
+                sel = (xs >= edges[i]) & (xs < edges[i + 1])
+                if sel.sum() >= min_votes:
+                    found.append((int(sel.sum()), matcher.arts[o], float(np.median(xs[sel])) / W,
+                                  float(np.median(ys[sel])) / H))
+    found.sort(key=lambda f: f[2])
+    return found
 
 
 def find_cards(frame, min_h=0.08):
