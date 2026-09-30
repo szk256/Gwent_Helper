@@ -12,7 +12,7 @@ let simCache={key:"",res:null};
 const SIM_RULES={};
 function sim(g,r,excl){
   if(!ENG)return null;
-  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r===r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
+  const key=g.id+"|"+r+"|"+(excl||"")+"|"+JSON.stringify(g.log.filter(x=>x.r<=r))+"|"+g.leader+"|"+JSON.stringify(SIM_RULES);
   if(simCache.key===key)return simCache.res;
   const log=g.log.filter(x=>x.r===r&&x.id!==excl);
   const E=new ENG.Game({manualRounds:true,rules:SIM_RULES,first:(log.find(x=>["play","leader","tactic","order","pass"].includes(x.a))||{who:g.coin==="后"?"op":"me"}).who});
@@ -21,12 +21,15 @@ function sim(g,r,excl){
   const key2u={},u2key=new Map(),warns=[],unmod={};
   const bind=(k,u)=>{key2u[k]=u;u2key.set(u,k);};
   const unitByKey=k=>{const u=key2u[k];return u&&E.find(u.uid)?u:null;};
-  let tq=[],dq=[],effQ={};
+  let tq=[],dq=[],effQ={},hzQ={};
+  const HZ=ENG.HAZARDS||{};
   // 目标来源：先用这一步自己的 tgts，再用“触发效果”记录里对应来源的目标（例如法利波的随机伤害）
   const takeFrom=(q,req,n,out)=>{while(q.length&&out.length<n){const u=unitByKey(q[0]);if(!u||!req.from.includes(u))break;out.push(u);q.shift();}};
   E.chooser=(req)=>{
     if(req.kind==="deck"){return dq.length?dq.shift():null;}
     const n=req.n||1,out=[];
+    // 整排效果的随机结果只从“效果”记录（来源 = 效果名）里取
+    if(HZ[req.source]){if(hzQ[req.source])takeFrom(hzQ[req.source],req,n,out);return out.length?out:null;}
     takeFrom(tq,req,n,out);
     if(out.length<n&&req.source&&effQ[req.source])takeFrom(effQ[req.source],req,n,out);
     return out.length?out:null;};
@@ -37,8 +40,14 @@ function sim(g,r,excl){
   // 只在回合结束时触发的来源：记录到它的效果 = 该方回合已经结束
   const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
+  // 上一局的坚韧单位留场（老兵在小局开始时 +1）
+  if(r>0&&g.log.some(x=>x.r===r-1)){const P=sim(g,r-1);
+    if(P)for(const sd of["me","op"])for(const w of["m","r"])for(const u of P.E.s.sides[sd].rows[w])if(u.status.resilience){const v=E.carryIn(u,sd,w);const k=P.u2key.get(u);if(k)bind(k,v);}}
+  E.s.round=r;
   E.startRound();
   const consumed=new Set();let acted=false;
+  const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
+  const pushHz=y=>{(hzQ[y.c]=hzQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);};
   for(let i=0;i<log.length;i++){const x=log[i];if(consumed.has(x.id))continue;
     let side=x.who;
     // 领袖记错方（记录时停在“对方”）：目标是另一方单位且另一方领袖同名时，按另一方推算
@@ -46,6 +55,8 @@ function sim(g,r,excl){
       if(tu&&tu.side===other&&x.c&&x.c===otherLeader){warns.push({id:x.id,m:"目标是"+sideN(other)+"单位，已按"+sideN(other)+"领袖推算（建议改记录的方）"});side=other;}}
     // 换人行动 = 回合切换（触发效果、整排效果不算，它们可能在任一方回合里发生）
     const turnAct=isTurnAct(x);
+    // 整排效果的命中记录可能记在回合行动前后：换回合结算整排效果前先备好
+    if(turnAct)for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];if(y.a==="effect"&&HZ[y.c]&&!consumed.has(y.id))pushHz(y);}
     if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
     else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
     if(turnAct){effQ={};
@@ -61,7 +72,8 @@ function sim(g,r,excl){
     try{
     switch(x.a){
       case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
-        if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});}
+        if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});
+          if(def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」没记放在哪排（用“整排效果”补上）",fix:true});}}
         else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场"});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
       case "summon":{if(x.row){const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
@@ -72,12 +84,21 @@ function sim(g,r,excl){
       case "leader":case "tactic":{const nm=x.c||(side==="me"?g.leader:g.opLeader);if(nm)E.useAbility(side,nm,{force:true});else warns.push({id:x.id,m:"领袖未指定"});break;}
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
       case "kill":{const u=unitByKey(x.uid);if(u)E.destroy(u);break;}
-      case "adj":{const u=unitByKey(x.uid);if(u){const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));
-        if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else if(!isNaN(n)){E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}
+      case "adj":{const u=unitByKey(x.uid);if(u){
+        // 可以多项，逗号分隔：+2 / -3 / 7（战力），+盾 -盾 +锁 -锁 +坚 -坚 +遮 -遮（状态），甲3（护甲），活2 伤2（回合数，0 = 去掉）
+        for(const v of String(x.v).split(/[,，\s]+/).filter(Boolean)){let m;
+          if((m=v.match(/^([+-])(盾|锁|坚|遮)$/))){const k={盾:"shield",锁:"lock",坚:"resilience",遮:"veil"}[m[2]];u.status[k]=m[1]==="+";E.log("手动状态",{name:u.name,key:k,val:u.status[k]});}
+          else if((m=v.match(/^甲(\d+)$/)))u.armor=+m[1];
+          else if((m=v.match(/^(活|伤)(\d+)$/))){u.status[m[1]==="活"?"vitality":"bleed"]=+m[2];}
+          else{const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的修正「"+v+"」"});continue;}
+            if(/^\+/.test(v))E.boost(u,n,{name:"手动"});else if(/^-/.test(v))E.damage(u,-n,{name:"手动"});else{E.log("手动设定",{name:u.name,from:u.power,to:n});u.power=n;if(u.power<=0)E.destroy(u);}}}
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "pass":{E.s.sides[side].passed=true;E.log("停牌",{side});E.endTurn();break;}
-      case "fx":warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});break;
-      case "effect":{if(!modeled(x.c)){warns.push({id:x.id,m:"效果「"+(x.c||"")+"」未建模，请用改战力修正"});break;}
+      case "fx":{if(!HZ[x.c])warns.push({id:x.id,m:"整排效果「"+x.c+"」未建模"});
+        if(!x.dur&&HZ[x.c])warns.push({id:x.id,m:"「"+x.c+"」没记持续回合，按 "+HZ[x.c].turns+" 回合算"});
+        E.addHazard(x.side,x.row,x.c,x.dur||undefined);break;}
+      case "effect":{if(HZ[x.c]){pushHz(x);break;}
+        if(!modeled(x.c)){warns.push({id:x.id,m:"效果「"+(x.c||"")+"」未建模，请用改战力修正"});break;}
         (effQ[x.c]=effQ[x.c]||[]).push(...tq);tq=[];
         // 回合结束效果：记录到它时，该方回合已结束
         const src=E.allUnits().find(u=>u.name===x.c);
@@ -118,7 +139,7 @@ const BASE=["落难的少女","水路突袭","法利波","安赛斯王子","赤�
 const toMap=a=>a.reduce((m,n)=>(m[n]=(m[n]||0)+1,m),{});
 function seed(){return{v:3,owned:{},decks:[],games:[],live:null,nextId:1,edits:{},custom:[],tactics:[]};}
 let db=seed();
-let ui={tab:"match",deckSel:2,collF:"NR",collQ:"",collOwned:false,deckQ:"",who:"me",act:"play",q:"",statA:1,statB:2};
+let ui={cfilOpen:typeof matchMedia!=="undefined"&&matchMedia("(min-width:1100px)").matches,tab:"match",deckSel:2,collF:"NR",collQ:"",collOwned:false,deckQ:"",who:"me",act:"play",q:"",statA:1,statB:2};
 let setup={deck:2,fac:null,coin:null};
 
 // ---------- storage ----------
@@ -184,7 +205,9 @@ const segs=(c,kind)=>{if(!c)return[];const s=c.tx.split(" / ");if(kind==="order"
 const TGT=/1 ?(?:个|名)(?:敌军|友军)?单位|敌军单位|友军单位|伤害|锁定|中毒|重伤|摧毁 ?1|重置|交锋|对决/;
 const PULL=/从(?:己方)?(?:牌组|墓场)[^。/]{0,10}(?:打出|召唤)(?!自身)|生成并打出|创造并打出/;
 const SPAWN=/生成|召唤(?!自身)/;
-const spawns=(c,kind)=>segs(c,kind).some(s=>SPAWN.test(s)&&!PULL.test(s));
+// 生成整排效果（霜、雨……）不是生成单位，走“整排效果”记录
+const HZTXT=/(生成)+\s*(霜|雨|雾|风暴|龙之梦|血月|灾厄)|(霜|雨|雾|风暴|龙之梦|血月|灾厄)至/g;
+const spawns=(c,kind)=>segs(c,kind).some(s=>{s=s.replace(HZTXT,"");return SPAWN.test(s)&&!PULL.test(s);});
 function spawnPicks(c){if(!c)return[];const s=new Set();(c.tx.match(/“([^”]+)”/g)||[]).forEach(q=>{const n=q.slice(1,-1);if(BY[n]&&!isLeader(BY[n]))s.add(n);});if(/自身的基础同名牌|同名牌/.test(c.tx))s.add(c.n);return[...s];}
 function spawnStep(c,kind,who,parent){return c&&spawns(c,kind)?[{t:"spawn",who,parent:parent||c.n,picks:spawnPicks(c)}]:[];}
 const needsTarget=(c,kind)=>kind==="leader"||segs(c,kind).some(s=>TGT.test(s));
@@ -204,7 +227,7 @@ function logText(x){const w=x.who==="me"?"我":"对";
     case "move":return `${w}：${x.fix?"修正位置":"移位"} ${sideN(x.side)}的 ${x.c} → ${ROWN[x.row]}${x.pos!=null?"·第"+(x.pos+1)+"位":""}`;
     case "kill":return `${w}：摧毁 ${sideN(x.side)}的 ${x.c}`;
     case "note":return `${w}：备注 ${x.c}`;
-    case "adj":return `${w}：修正 ${sideN(x.side)}的 ${x.c} ${/^[+-]/.test(x.v)?x.v:"= "+x.v}`;
+    case "adj":return `${w}：修正 ${sideN(x.side)}的 ${x.c} ${/^\d+$/.test(x.v)?"= "+x.v:x.v}`;
     default:return `${w}：${ACT[x.a]||x.a}${x.c?" "+x.c:""}${tg}`;}}
 // give every entry a stable id; convert old index-based references
 function ensureIds(g){if(!g||g.log.every(x=>x.id))return;const idOf=i=>g.log[i]&&g.log[i].id;g.nextE=g.nextE||1;
@@ -245,6 +268,9 @@ function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
   if(who==="me"&&(a==="play"||a==="summon"))returners(g,name).forEach(n=>st.push({t:"ret",card:n}));
   ui.flow=[...st,...((ui.flow||[]).slice(1))];if(!ui.flow.length){ui.flow=null;doSwitch();}ui.q="";ui.sel=[];
+  // 整排效果牌：直接进入整排效果，预填效果和回合数，只需点哪一排
+  const hz=a==="play"&&ENG&&GwentCards.behaviors[name]&&GwentCards.behaviors[name].hazardCard;
+  if(hz&&!ui.flow){ui.act="fx";ui.fx={k:hz.kind,side:who==="me"?"op":"me",row:"m",dur:hz.turns,who};}
   toast(logText(g.log[idx]));rMatch();}
 function doSwitch(){const g=db.live;const w=ui.pendingSwitch;ui.pendingSwitch=null;if(!g||!w)return;const other=w==="me"?"op":"me";
   if(!g.log.some(x=>x.r===VR()&&x.a==="pass"&&x.who===other)){ui.who=other;ui.act="play";ui.q="";}}
@@ -275,7 +301,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){const eu=u.eu;const last=g.log.filter(x=>x.r===VR()).pop();
-      openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+"）。输入 +n / -n 或目标战力：",eu?String(eu.power):"","记录",v=>{v=(v||"").trim();if(!v)return;$("#dlg").close();
+      const st=eu?eu.status:{};const has=[st.shield?"盾":"",st.lock?"锁":"",st.resilience?"坚":"",st.veil?"遮":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:""].filter(Boolean).join(" ");
+      openDlg("修正 "+u.n,"当前 "+(eu?eu.power:"?")+"（基础 "+(eu?eu.base:"?")+"，护甲 "+(eu?eu.armor:0)+(has?"，"+has:"")+"）。战力：+n / -n / 目标值；状态：-盾 +盾 -锁 +坚，甲3 设护甲，活2 伤2 设回合（0 去掉）。多项用逗号隔开。",st.shield?"-盾":(eu?String(eu.power):""),"记录",v=>{v=(v||"").trim().replace(/[，\s]+/g,",");if(!v)return;$("#dlg").close();
         if(last&&last.id===u.uid&&last.a==="play"&&/^\d+$/.test(v)){last.pw=+v;persist();toast("落地战力 "+v);}
         else{const i=pushLog({who:ui.who,a:"adj",c:u.n,uid:u.uid,side:u.side,v});toast(logText(g.log[i]));}rMatch();});return true;}
     if(ui.act==="kill"){const i=pushLog({who:ui.who,a:"kill",c:u.n,uid:u.uid,side:u.side});toast(logText(g.log[i]));rMatch();return true;}
@@ -285,7 +312,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=[{t:"edit",id:D.edit}];rMatch();window.scrollTo(0,0);return true;}
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
-  if(D.fxk){ui.fx.k=D.fxk;rMatch();return true;}
+  if(D.hzfx){const [sd,w,k]=D.hzfx.split("|");const i=pushLog({who:sd,a:"effect",c:k,row:w});queue({t:"target",id:g.log[i].id});toast(logText(g.log[i]));rMatch();return true;}
+  if(D.fxk){ui.fx.k=D.fxk;const H=ENG&&ENG.HAZARDS[D.fxk];if(H)ui.fx.dur=H.turns;rMatch();return true;}
   if(D.fxside){ui.fx.side=D.fxside;rMatch();return true;}
   if(D.fxrow){ui.fx.row=D.fxrow;rMatch();return true;}
   if(D.fxdur){ui.fx.dur=Math.max(0,Math.min(9,ui.fx.dur+ +D.fxdur));rMatch();return true;}
@@ -301,7 +329,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     tactic(){const nm=deckById(g.deck)?.tactic||"战术";const i=pushLog({who:"me",a:"tactic",c:nm});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[nm],"leader","me"));rMatch();},
     tacticOp(){const i=pushLog({who:"op",a:"tactic",c:"战术"});ui.act="play";queue({t:"target",id:g.log[i].id});rMatch();},
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},
-    fxRec(){const f=ui.fx;const i=pushLog({who:ui.who,a:"fx",c:f.k,side:f.side,row:f.row,dur:f.dur||null});ui.fx=null;ui.act="play";toast(logText(g.log[i]));rMatch();},
+    fxRec(){const f=ui.fx;const i=pushLog({who:f.who||ui.who,a:"fx",c:f.k,side:f.side,row:f.row,dur:f.dur||null});ui.fx=null;ui.act="play";toast(logText(g.log[i]));rMatch();},
     noteRec(){const v=($("#noteIn").value||"").trim();if(!v)return toast("写点内容");pushLog({who:ui.who,a:"note",c:v});ui.act="play";rMatch();},
     undo(){const r=VR();const idx=g.log.map((x,i)=>[x,i]).filter(([x])=>x.r===r).pop();if(!idx)return;const x=g.log.splice(idx[1],1)[0];ui.flow=null;persist();rMatch();toast("已撤销："+logText(x));},
     handStart(){const i=pushLog({who:"me",a:"draw",cards:[]});ui.flow=[{t:"hand",id:g.log[i].id}];rMatch();},
@@ -309,6 +337,11 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
     eUp(){sw(-1);},eDown(){sw(1);},
     eDel(){const e=entry(step.id);g.log.splice(g.log.indexOf(e),1);persist();nextStep();},
     eRename(){ui.flow=[{t:"rename",id:step.id}];ui.q="";rMatch();},
+    eFlip(){const e=entry(step.id);const i=g.log.indexOf(e);const from=e.who,to=from==="me"?"op":"me";
+      // 连同这张牌带出的后续记录一起改方；落在自己一侧的，位置也跟着换边
+      const fl=x=>{if(!x.side||x.side===from)x.side=to;x.who=to;};fl(e);
+      for(let j=i+1;j<g.log.length;j++){const y=g.log[j];if(y.via&&y.via===e.c&&y.who===from)fl(y);else if(!y.via)break;}
+      persist();toast("已改为"+sideN(to));rMatch();},
     ePlace(){const e=entry(step.id);ui.flow=[{t:"place",editId:e.id,card:e.c,side:e.side||e.who,who:e.who,move:e.a==="move"}];rMatch();},
     eTgt(){const e=entry(step.id);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();},
     eInsert(){ui.insertBefore=step.id;ui.flow=null;rMatch();toast("插入模式：新记录会放在这一步之前");},
@@ -382,13 +415,16 @@ function rMatch(){const g=db.live;let h="";{const st=document.documentElement.st
    ${editing?`<p class="note">正在查看/修改第${vr+1}局的记录，新记录会加到这一局。</p>`:""}</div>`;
   if(!o||editing){
     const {R,all,F,S}=board(g,vr);const step=ui.flow&&ui.flow[0];
+    // 电脑宽屏：左边比分 + 场面常驻，右边记录；手机上 .duo 不分栏，场面仍在记录面板里折叠
+    h+=`<div class="duo"><div class="colL">`;
     if(S){const rr=g.rounds[vr];const me=S.score.me.total,op=S.score.op.total;
       const cal=rr&&rr.me!==""&&rr.me!=null?`<span class="note">　真实 ${rr.me}:${rr.op}${(+rr.me!==me||+rr.op!==op)?`，差 ${me-rr.me>=0?"+":""}${me-rr.me} : ${op-rr.op>=0?"+":""}${op-rr.op}`:"，一致"}</span>`:"";
       const um=Object.entries(S.unmod);
       h+=`<div class="sheet eng"><div class="score"><b class="sm">${me}</b><span>:</span><b class="so">${op}</b>${cal}</div>
         ${S.warns.length?`<details><summary class="note">引擎提示 ${S.warns.length} 条</summary>${S.warns.map(w=>`<div class="warn">${w.fix?`<button class="ghost" data-fixtgt="${w.id}">补目标</button>`:""}${esc(logText(entry(w.id)||{}).slice(0,24))}：${esc(w.m)}</div>`).join("")}</details>`:""}
         ${um.length?`<p class="note">未建模：${um.map(([n,k])=>esc(n)+(k>1?"×"+k:"")).join("、")}</p>`:""}</div>`;}
-    const fxTags=(s,r)=>F.filter(x=>x.side===s&&(x.row===r||x.row==="all")).map(x=>`<span class="fxtag">${esc(x.c)}${x.dur?" "+x.dur:""}</span>`).join("");
+    const hz=S&&S.E&&S.E.s.hazards;
+    const fxTags=(s,r)=>hz?["m","r"].filter(w=>w===r&&hz[s][w]).map(w=>`<span class="fxtag">${esc(hz[s][w].kind)} ${hz[s][w].turns===Infinity?"":hz[s][w].turns}</span>`).join(""):F.filter(x=>x.side===s&&(x.row===r||x.row==="all")).map(x=>`<span class="fxtag">${esc(x.c)}${x.dur?" "+x.dur:""}</span>`).join("");
     const unitFace=n=>{const c=BY[n];return `${c&&c.art?`<img src="${ART(c.art)}" alt="" loading="lazy" onerror="this.remove()">`:""}${c&&c.t==="单位"&&c.pw!=="-"?`<span class="upw">${c.pw}</span>`:""}<span class="un">${esc(n)}</span>`;};
 const unitFaceU=u=>{const e=u.eu;if(!e)return unitFace(u.n);const c=BY[u.n];const st=e.status||{};
       const cls=e.power>e.base?"up":e.power<e.base?"dn":"";
@@ -411,6 +447,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       if(g.hand&&!opts.forHand&&hand.length&&!opts.deckOnly){html+=`<div class="lab gl">手牌 ${hand.length} 张</div><div class="grid">${hand.map(n=>tile(n,"手牌","",`data-nm="${esc(n)}"`)).join("")}</div><div class="lab gl">牌组中其他牌</div>`;}
       html+=`<div class="grid">${names.map(n=>{const left=d.cards[n]-(used[n]||0)-(opts.forHand?0:(handSet[n]||0));return tile(n,`剩${Math.max(0,left)}`,left<=0?"gone":"",`data-nm="${esc(n)}"`);}).join("")}</div>`;return html;};
     const searchBox=(ph)=>`<div class="row"><input id="q" placeholder="${ph}" value="${esc(ui.q)}" autocomplete="off"></div>`;
+    h+=`<div class="sheet pcOnly"><div class="lab">场面（根据记录推算）</div>${lanes("none")}</div></div><div class="colR">`;
     if(ui.insertBefore){const e=entry(ui.insertBefore);h+=`<div class="sheet flow"><div class="btns" style="justify-content:space-between;align-items:center"><span>插入模式：记录会放在「${esc(e?logText(e).slice(2):"")}」之前</span><button class="ghost" data-do="insertOff">退出插入</button></div></div>`;}
     if(step){
       h+=`<div class="sheet flow">`;
@@ -435,6 +472,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="edit"){const e=entry(step.id);if(!e){ui.flow=null;}else{const placeable=e.row||e.a==="move";
         h+=`<h2>修改这一步</h2><p>${esc(logText(e))}</p><div class="ebtns">
           ${e.c&&!["note","fx","pass","draw"].includes(e.a)?`<button class="ghost" data-do="eRename">换牌名</button>`:""}
+          ${["play","order","leader","tactic","summon","spawn","effect","adj"].includes(e.a)?`<button class="ghost" data-do="eFlip">改成${e.who==="me"?"对方":"我方"}</button>`:""}
           ${placeable?`<button class="ghost" data-do="ePlace">改位置</button>`:""}
           ${["play","order","leader","summon"].includes(e.a)?`<button class="ghost" data-do="eTgt">改目标</button>`:""}
           <button class="ghost" data-do="eUp">↑ 上移</button><button class="ghost" data-do="eDown">↓ 下移</button>
@@ -451,7 +489,8 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       if(["play","mull","summon","draw","spawn"].includes(ui.act)){
         h+=searchBox(ui.who==="me"?"搜牌名，或点下面的牌":"搜对手打出的牌")+`<div id="resBox">${ui.who==="me"&&!ui.q?(ui.act==="mull"&&g.hand?`<div class="grid">${hand.map(n=>tile(n,"手牌","",`data-nm="${esc(n)}"`)).join("")}</div>`:deckGrid({deckOnly:ui.act==="draw"})):matchRes()}</div>`;
       }else if(ui.act==="order"){h+=`<p class="note" style="margin:10px 0 4px">点使用指令的单位（记为该单位那一方）：</p>${lanes("pick")}`;}
-      else if(ui.act==="effect"){h+=`<p class="note" style="margin:10px 0 4px">点触发效果的单位（例如法利波的随机伤害、回合结束效果），下一步选它影响了谁：</p>${lanes("pick")}`;}
+      else if(ui.act==="effect"){const hzs=hz?["me","op"].flatMap(s=>["m","r"].filter(w=>hz[s][w]&&ENG.HAZARDS[hz[s][w].kind]&&/雨|血月|灾厄|霜|雾/.test(hz[s][w].kind)).map(w=>`<button class="ghost" data-hzfx="${s}|${w}|${esc(hz[s][w].kind)}">${esc(hz[s][w].kind)}（${sideN(s)}${ROWN[w]}）命中</button>`)).join(""):"";
+        h+=`${hzs?`<p class="note" style="margin:10px 0 4px">整排效果的随机结果：</p><div class="btns">${hzs}</div>`:""}<p class="note" style="margin:10px 0 4px">点触发效果的单位（例如法利波的随机伤害、回合结束效果），下一步选它影响了谁：</p>${lanes("pick")}`;}
       else if(ui.act==="tactic"){const bm=`<button class="${ui.who==="me"?"primary":"ghost"}" data-do="tactic">我用战术 ${esc(deckById(g.deck)?.tactic||"")}</button>`,bo=`<button class="${ui.who==="op"?"primary":"ghost"}" data-do="tacticOp">对方用战术</button>`;
         h+=`<div class="btns" style="margin-top:8px">${ui.who==="op"?bo+bm:bm+bo}</div>`;}
       else if(ui.act==="leader"){const ls=C.filter(c=>isLeader(c)&&c.f===g.fac).sort((a,b)=>(b.n===g.opLeader)-(a.n===g.opLeader));
@@ -463,14 +502,14 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         h+=`<div class="row"><div class="lab">效果</div><div class="chips">${FX.map(k=>`<button class="chip ${f.k===k?"on":""}" data-fxk="${k}">${k}</button>`).join("")}</div></div>
          <div class="row"><div class="lab">作用在</div><div class="seg">${[["op","对方半场"],["me","我方半场"]].map(([v,l])=>`<button class="${f.side===v?"on":""}" data-fxside="${v}">${l}</button>`).join("")}</div>
          <div class="seg" style="margin-top:6px">${["m","r","all"].map(v=>`<button class="${f.row===v?"on":""}" data-fxrow="${v}">${ROWN[v]}</button>`).join("")}</div></div>
-         <div class="row"><div class="lab">持续回合（0 表示不记）</div><div class="step"><button data-fxdur="-1">−</button><output>${f.dur}</output><button data-fxdur="1">+</button></div></div>
-         <button class="primary" data-do="fxRec">记录：${ui.who==="me"?"我":"对方"}施加 ${f.k} → ${sideN(f.side)}${ROWN[f.row]}</button>`;}
+         <div class="row"><div class="lab">持续回合（卡面写的回合数）</div><div class="step"><button data-fxdur="-1">−</button><output>${f.dur}</output><button data-fxdur="1">+</button></div></div>
+         <button class="primary" data-do="fxRec">记录：${(f.who||ui.who)==="me"?"我":"对方"}施加 ${f.k} → ${sideN(f.side)}${ROWN[f.row]}</button>`;}
       else if(ui.act==="move"){h+=`<p class="note" style="margin:10px 0 4px">点要移动的单位（同排换位或换排都行）：</p>${lanes("pick")}`;}
-      else if(ui.act==="adj"){h+=`<p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
+      else if(ui.act==="adj"){h+=`<p class="note" style="margin:10px 0 4px">点要修正的单位。输入 +2 / -3 按增益或伤害结算（会过护盾、护甲），输入 7 直接设成 7；-盾 去掉护盾，+盾 加上，甲3 设护甲。对面刚落地的单位会记成它的落地战力。</p>${lanes("pick")}`;}
       else if(ui.act==="kill"){h+=`<p class="note" style="margin:10px 0 4px">点被摧毁的单位：</p>${lanes("pick")}`;}
       else if(ui.act==="note"){h+=`<div class="row"><input id="noteIn" placeholder="例如：对方洗回 2 张牌 / 我方被锁定" autocomplete="off"></div><button class="primary" data-do="noteRec">记录备注</button>`;}
       else h+=`<div class="row"><button class="primary" data-do="${ui.act}">${ui.who==="me"?"记录：我停牌":"记录：对方停牌"}</button></div>`;
-      if(!["order","move","kill"].includes(ui.act))h+=`<details class="row" ${ui.showBoard?"open":""} id="bdet"><summary class="note">场面（根据记录推算）</summary>${lanes("none")}</details>`;
+      if(!["order","move","kill"].includes(ui.act))h+=`<details class="row mbOnly" ${ui.showBoard?"open":""} id="bdet"><summary class="note">场面（根据记录推算）</summary>${lanes("none")}</details>`;
       h+=`</div>`;
     }
     const lg=g.log.map((x,i)=>[x,i]).filter(([x])=>x.r===vr);
@@ -481,6 +520,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
      <div class="row"><div class="lab">本局结束时的手牌数${hmAuto!=null?`（按记录我方是 ${hmAuto} 张，不填就用这个）`:""}</div><div class="seg"><input id="hMe" inputmode="numeric" placeholder="我方手牌" value="${p.hm??""}"><input id="hOp" inputmode="numeric" placeholder="对方手牌" value="${p.ho??""}"></div></div>
      <div class="row"><div class="lab">比分（可不填）</div><div class="seg"><input id="sMe" inputmode="numeric" placeholder="我方" value="${p.me??""}"><input id="sOp" inputmode="numeric" placeholder="对方" value="${p.op??""}"></div></div>
      <button class="primary" data-do="endRound">结束第${cur+1}局</button></div>`;}
+    h+=`</div></div>`;
   }
   if(o){
     const uniq=d?Object.keys(d.cards):[];const playedMe=new Set(g.log.filter(x=>x.who==="me"&&x.a==="play").map(x=>x.c));
@@ -559,22 +599,39 @@ function rDeck(){let d=deckById(ui.deckSel);let h=`<div class="btns" style="marg
   $("#dT").onchange=e=>{let v=e.target.value;if(v==="__new"){v=(prompt("战术名称")||"").trim();if(!v){rDeck();return;}db.tactics=[...new Set([...(db.tactics||[]),v])];}d.tactic=v;persist();rDeck();toast("战术已改为 "+(v||"未选"));};
   bindSearch("#dQ",v=>ui.deckQ=v,()=>{$("#deckRes").innerHTML=deckRes(d);});}
 
-function collList(){const f=ui.collF;let list=C.filter(c=>c.f===f&&!isTactic(c)&&!isLeader(c)&&!c.token);const q=ui.collQ.trim().toLowerCase();
+// 牌库筛选：同一组内“或”，组之间“且”；不存盘
+const PVB=[["4","≤4",c=>c.pv<=4],["5","5",c=>c.pv===5],["6","6",c=>c.pv===6],["7","7",c=>c.pv===7],["8","8",c=>c.pv===8],["9","9",c=>c.pv===9],["10","10",c=>c.pv===10],["11","11–13",c=>c.pv>=11&&c.pv<=13],["14","14+",c=>c.pv>=14]];
+const RARS=["普通","稀有","史诗","传奇"],COLS=["金","铜"];
+const SERS=[...new Set(C.filter(c=>!c.token&&c.ser&&c.ser!=="basic").map(c=>c.ser))];
+ui.cfil={pv:[],rar:[],col:[],ser:[]};
+const collBase=()=>C.filter(c=>(ui.collF==="ALL"||c.f===ui.collF)&&!isTactic(c)&&!isLeader(c)&&!c.token);
+function collFilter(list){const F=ui.cfil;
+  if(F.pv.length)list=list.filter(c=>PVB.some(([k,,t])=>F.pv.includes(k)&&t(c)));
+  if(F.rar.length)list=list.filter(c=>F.rar.includes(c.rar));
+  if(F.col.length)list=list.filter(c=>F.col.includes(c.col));
+  if(F.ser.length)list=list.filter(c=>F.ser.includes(c.ser));
+  return list;}
+function collList(){let list=collFilter(collBase());const q=ui.collQ.trim().toLowerCase();
   if(q)list=list.filter(c=>c.n.toLowerCase().includes(q)||c.en.toLowerCase().includes(q)||(c.alias||"").toLowerCase().includes(q));if(ui.collOwned)list=list.filter(c=>db.owned[c.n]>0);
   list=list.slice().sort((a,b)=>((b.col==="金")-(a.col==="金"))||(b.pv-a.pv));
   const info=ui.collMode==="info";
   return (list.length?`<div class="grid">${list.map(c=>{const k=db.owned[c.n]||0;return tile(c.n,k?"×"+k:"",(k?"":"gone")+(db.edits[c.n]?" edited":""),info?`data-cardb="${c.i}"`:`data-own="${c.i}"`);}).join("")}</div>`:`<p class="note">没有符合的牌。</p>`);}
-function rColl(){const f=ui.collF;const all=C.filter(c=>c.f===f&&!isTactic(c)&&!isLeader(c)&&!c.token);const own=all.filter(c=>db.owned[c.n]>0).length;
+function rColl(){const f=ui.collF;const all=collBase();const own=all.filter(c=>db.owned[c.n]>0).length;
   const cp=all.filter(c=>c.ser!=="unmillable");const copies=cp.reduce((s,c)=>s+Math.min(db.owned[c.n]||0,maxCopy(c)),0),copTot=cp.reduce((s,c)=>s+maxCopy(c),0);
-  let h=`<div class="chips" style="margin-bottom:10px">${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
-   <div class="sheet"><div class="sum"><span>${FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
+  const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length;
+  const grp=(lab,key,items)=>`<div class="row"><div class="lab">${lab}</div><div class="chips">${items.map(([v,t])=>`<button class="chip ${F[key].includes(v)?"on":""}" data-cfil="${key}|${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
+  let h=`<div class="chips" style="margin-bottom:10px"><button class="chip ${f==="ALL"?"on":""}" data-cf="ALL">全部</button>${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
+   <div class="duo coll"><div class="colL"><details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(all).length}</b> 张）`:""}</summary>
+    ${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,x]))}
+    ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details></div><div class="colR">
+   <div class="sheet"><div class="sum"><span>${f==="ALL"?"全部阵营":FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
    <p class="note">「按游戏算法」：铜卡算 2 份，不算初始卡、领袖和战术。数据库总数会比游戏多约 9，拥有数应该和游戏一致。</p>
    <div class="btns" style="align-items:center"><input id="cQ" placeholder="搜牌名" value="${esc(ui.collQ)}" style="flex:1" autocomplete="off"><button class="chip ${ui.collOwned?"on":""}" data-do="collOwned">只看已拥有</button></div>
    <div class="seg" style="margin:8px 0"><button class="${ui.collMode!=="info"?"on":""}" data-do="collCount">点牌：登记张数</button><button class="${ui.collMode==="info"?"on":""}" data-do="collInfo">点牌：看详情/改数值</button></div>
    <p class="note">铜卡最多 2 张，金卡最多 1 张，没有的牌显示为灰色。领袖默认全部解锁，不用登记。</p>
    <div class="btns"><button class="ghost" data-do="exColl">导出牌库代码</button><button class="ghost" data-do="impColl">批量导入</button><button class="ghost" data-do="addCard">新增卡牌</button></div></div>
-   <div id="collList">${collList()}</div>`;
-  $("#tab-coll").innerHTML=h;bindSearch("#cQ",v=>ui.collQ=v,()=>{$("#collList").innerHTML=collList();});}
+   <div id="collList">${collList()}</div></div></div>`;
+  $("#tab-coll").innerHTML=h;const fb=$("#cfilBox");if(fb)fb.ontoggle=()=>{ui.cfilOpen=fb.open;};bindSearch("#cQ",v=>ui.collQ=v,()=>{$("#collList").innerHTML=collList();});}
 
 // ---------- actions ----------
 let suppressClick=false;
@@ -592,6 +649,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
   if(D.delg){if(!confirm("删除这局记录？"))return;db.games=db.games.filter(x=>x.id!=D.delg);persist();render();return;}
   if(D.own){const c=C[+D.own];const k=((db.owned[c.n]||0)+1)%(maxCopy(c)+1);if(k)db.owned[c.n]=k;else delete db.owned[c.n];persist();rColl();return;}
   if(D.cf){ui.collF=D.cf;ui.collQ="";rColl();return;}
+  if(D.cfil){const [k,v]=D.cfil.split("|");const a=ui.cfil[k];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);rColl();return;}
   if(D.cardb){openCard(C[+D.cardb]);return;}
   if(D.dp||D.dm){const d=deckById(ui.deckSel),n=D.dp||D.dm,c=BY[n];let k=d.cards[n]||0;
     if(D.dp){if(c&&k>=maxCopy(c))return toast(c.col==="铜"?"铜卡最多 2 张":"金卡最多 1 张");k++;}else k--;
@@ -629,9 +687,10 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
+    cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[]};rColl();},
     collCount(){ui.collMode="count";rColl();},collInfo(){ui.collMode="info";rColl();},
     exColl(){copyOut("牌库代码",collCode());},
-    addCard(){openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{
+    addCard(){if(ui.collF==="ALL")return toast("先选一个阵营");openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{
       let ok=0;const bad=[];txt.split("\n").map(s=>s.trim()).filter(Boolean).forEach(l=>{const p=l.split(/\s*[|｜]\s*/);const [n,col,tp,pv,pw,...tx]=p;
         if(!n||!["金","铜"].includes(col)||!["单位","特殊","神器"].includes(tp)||isNaN(+pv)){bad.push(l);return;}if(BY[n]){bad.push(n+"（已存在）");return;}
         (db.custom=db.custom||[]).push({n,f:ui.collF,col,t:tp,pv:+pv,pw:pw||"-",tx:tx.join(" | ")});ok++;});

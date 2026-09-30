@@ -35,6 +35,67 @@ g.pass('op'); g.pass('me');
 ok(g.s.results[0].res==='W','第一局结束，我方胜');
 ok(g.find(v.uid)&&v.base===4&&!v.status.resilience,'坚韧留场、坚韧消失、老兵基础+1=4');
 ok(g.score('me').total===0,'非坚韧单位清场');
+
+// ---------- 词条一致性 ----------
+{
+  const cs = {
+    甲: {name:'甲', base:5}, 乙: {name:'乙', base:3},
+    盾兵: {name:'盾兵', base:4, status:{shield:true}},
+    免疫兵: {name:'免疫兵', base:4, status:{immune:true}},
+    卫士: {name:'卫士', base:4, status:{defender:true}},
+    佚亡遗愿: {name:'佚亡遗愿', base:2, status:{doomed:true}, deathwish:c=>c.g.log('遗愿触发',{})},
+    遗愿兵: {name:'遗愿兵', base:2, deathwish:c=>c.g.log('遗愿触发',{})},
+    计时兵: {name:'计时兵', base:2, timer:{n:2, run:c=>c.boost(c.self,5)}},
+    灌注兵: {name:'灌注兵', base:3},
+  };
+  const q = new Game({cards:cs, first:'me'}); q.startRound();
+  const a = q.play('op','甲','m'), im = q.play('op','免疫兵','m'), df = q.play('op','卫士','m');
+  const t = q.targetable(q.units('op'), 'me');
+  ok(t.length===1&&t[0]===df, '卫士：同排其他单位不能被对方指定；免疫不能被指定');
+  ok(q.targetable(q.units('op'),'op').length===2, '己方指定己方不受卫士限制（免疫仍排除）');
+  const sh = q.play('me','盾兵','m'); sh.infused.push({on:'x',run:()=>{}}); q.addStatus(sh,'vitality',2);
+  q.purify(sh); ok(!sh.status.shield&&!sh.status.vitality&&sh.infused.length===0, '净化：移除护盾、活力、灌注');
+  const pd = q.play('me','佚亡遗愿','m'); q.purify(pd); q.destroy(pd); ok(q.s.sides.me.grave.includes('佚亡遗愿'), '净化去掉佚亡：离场进墓场，触发遗愿');
+  const dw = q.play('me','佚亡遗愿','m'); const n0=q.trace.filter(x=>x.type==='遗愿触发').length;
+  q.destroy(dw); ok(q.trace.filter(x=>x.type==='遗愿触发').length===n0 && q.s.sides.me.banished.includes('佚亡遗愿'), '佚亡：放逐，不触发遗愿');
+  const dw2 = q.play('me','遗愿兵','m'); q.destroy(dw2); ok(q.trace.filter(x=>x.type==='遗愿触发').length===n0+1, '遗愿：被摧毁进墓场时触发');
+  const hl = q.play('me','甲','r'); q.damage(hl,3); q.heal(hl); ok(hl.power===5, '治愈：回到基础战力');
+  q.boost(hl,2); q.heal(hl); ok(hl.power===7, '治愈：不去掉增益');
+  const c1 = q.play('me','乙','r'), c2 = q.play('op','乙','r'); q.boost(c1,3); q.clash(c1,c2);
+  ok(!q.find(c2.uid)&&c1.power===3, '交锋：同时互伤 6 对 3');
+  const cm = q.play('me','乙','r'); const vic = q.play('op','乙','r'); q.consume(cm,vic); ok(cm.power===6&&!q.find(vic.uid), '吞噬：摧毁目标并获得其战力');
+  const tm = q.play('me','计时兵','r'); q.endTurn(); q.endTurn(); ok(tm.power===2, '计时 2：第一个己方回合结束 -1');
+  q.endTurn(); q.endTurn(); ok(tm.power===7, '计时归零触发');
+  q.lock(sh); sh.infused.push({on:'boosted', when:(c,d)=>d.unit===c.self&&d.src!=='inf', run:c=>c.g.boost(c.self,1,'inf')});
+  q.boost(sh,1); ok(sh.power===5, '锁定：灌注效果不生效');
+  const rp = q.play('me','甲','m'); q.addStatus(rp,'rupture'); q.boost(rp,3);
+  while(q.s.active!=='me') q.endTurn(); q.endTurn(); ok(rp.power===3, '破裂：回合结束受到基础战力的伤害');
+}
+// ---------- 整排效果 ----------
+{
+  const cs = { 甲:{name:'甲',base:5}, 乙:{name:'乙',base:3}, 丙:{name:'丙',base:8} };
+  const picks = [];
+  const q = new Game({cards:cs, first:'me', chooser:req => picks.length ? picks.shift() : null}); q.startRound();
+  const x1=q.play('op','甲','m'), x2=q.play('op','乙','m'), x3=q.play('op','丙','m');
+  q.addHazard('op','m','霜',3); q.endTurn();
+  ok(x3.power===6, '霜：拥有者回合开始，最高单位 -2');
+  ok(q.s.hazards.op.m.turns===2, '霜：持续回合 -1');
+  q.endTurn(); q.addHazard('op','m','雾',1); q.endTurn();
+  ok(x2.power===1 && !q.s.hazards.op.m, '雾：最低单位 -2；回合用完移除，并替换原来的霜');
+  q.endTurn(); picks.push([x1,x3]); q.addHazard('op','m','雨',2); q.endTurn();
+  ok(x1.power===4&&x3.power===5, '雨：2 个随机单位（按记录）各 -1');
+  q.endTurn(); q.addHazard('op','m','血月',2); picks.push([x1]); q.endTurn();
+  ok(x1.status.bleed===2, '血月：未重伤的获得重伤 2');
+  q.endTurn(); picks.push([x1]); const p1=x1.power; q.endTurn();
+  ok(x1.power===p1-2, '血月：已重伤的改为 2 点伤害');
+  const r2 = new Game({cards:cs, first:'me'}); r2.startRound();
+  const y1=r2.play('op','丙','r'); r2.addHazard('op','r','龙之梦',2); r2.endTurn();
+  ok(y1.power===8, '龙之梦：倒计时未完不爆炸'); r2.endTurn(); r2.endTurn();
+  ok(y1.power===5, '龙之梦：最后一回合对全排 3 点');
+  const r3 = new Game({cards:cs, first:'me'}); r3.startRound();
+  const z=r3.play('op','丙','m'); r3.addHazard('op','m','灾厄',1); r3.endTurn();
+  ok(z.power===5, '灾厄：只有 1 个单位时 3 点都打它');
+}
 console.log('\n快照:', JSON.stringify(g.snapshot().op.rows));
 console.log('校准:', calibrate(g,[{me:g.s.results[0].me, op:g.s.results[0].op}]));
 console.log(fails? `\n${fails} 项失败`:'\n全部通过');

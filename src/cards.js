@@ -4,11 +4,11 @@
  */
 (function (root) {
 'use strict';
-const manual = us => us.filter(u => !u.status.immune);            // 免疫：不能被手动指定
 const isKnight = u => (u.tags || []).includes('骑士');
 const isElf = u => (u.tags || []).includes('精灵');
 const own = (c, d) => d.unit.side === c.side;
-const T = (c, prompt, from) => c.pick({ prompt, from: manual(from) });
+// 手动指定目标：免疫的不能选，对方有卫士时只能选卫士（引擎 targetable）
+const T = (c, prompt, from) => c.pick({ prompt, from: c.targets(from) });
 
 const B = {};
 
@@ -181,7 +181,8 @@ B['骑士册封'] = {
     const name = c.pick({ prompt: '骑士册封：从牌组打出的骑士', kind: 'deck', from: ['?'] });
     const row = (o && o.row) || 'm';
     const u = c.playFromDeck(name, row, o && o.pos);
-    if (u) c.boost(u, c.allies().filter(isKnight).length);
+    // “己方每控制 1 名骑士”：是否算被拉出的骑士自己，见 rules.knightSummonSelf（未确认）
+    if (u) c.boost(u, c.allies().filter(v => isKnight(v) && (c.g.rules.knightSummonSelf || v !== u)).length);
   },
 };
 
@@ -257,19 +258,19 @@ B['古雷特的赛尔奇克'] = { order: c => { if (c.self.row !== 'm') return; 
 B['活力回春'] = { charges: 3, order: c => c.g.log('手牌增益（隐藏）', { side: c.side }) };
 B['伊斯琳妮'] = { deploy: c => c.g.log('手牌增益（隐藏）', { side: c.side }) };
 B['维里赫德旅先锋'] = {
-  // 近战：按手牌精灵数（隐藏），靠录入战力；远程：同排友军精灵数
+  // 近战：按手牌精灵数（隐藏），靠录入战力；远程：同排友军精灵数（ASSUME：不算自己）
   deployRow: { r: c => c.boost(c.self, c.g.rowOf(c.self).filter(u => u !== c.self && isElf(u)).length) },
 };
 B['麦莉'] = {
   deployRow: {
     m: c => { const t = T(c, '麦莉：4 伤害', c.enemies()); if (t) c.damage(t, 4); },
-    r: c => c.g.choose({ prompt: '麦莉：4 个敌军各 1', from: manual(c.enemies()), n: 4, upTo: true }).forEach(u => c.damage(u, 1)),
+    r: c => c.g.choose({ prompt: '麦莉：4 个敌军各 1', from: c.targets(c.enemies()), n: 4, upTo: true }).forEach(u => c.damage(u, 1)),
   },
 };
 B['多尔·布雷坦纳弓箭手'] = {
   deployRow: {
     m: c => { const t = T(c, '弓箭手：3 伤害', c.enemies()); if (t) c.damage(t, 3); },
-    r: c => c.g.choose({ prompt: '弓箭手：2 个单位各 1', from: manual(c.g.units()), n: 2 }).forEach(u => c.damage(u, 1)),
+    r: c => c.g.choose({ prompt: '弓箭手：2 个单位各 1', from: c.targets(c.g.units()), n: 2 }).forEach(u => c.damage(u, 1)),
   },
   deathblow: c => c.spawn('精灵暗箭手', c.side, c.self.row),
 };
@@ -281,7 +282,7 @@ B['精灵剑术大师'] = {
 };
 B['爱黎瑞恩'] = {};   // 回合结束从牌组召唤自身：由记录的“召唤”步骤触发
 B['弗妮希尔的突击队'] = {
-  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.allies().every(isElf), run: c => c.boost(c.self, 1) }],
+  abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && (c.allies().every(isElf) || c.allies().some(u => u.name === '弗妮希尔')), run: c => c.boost(c.self, 1) }],
 };
 B['维里赫德旅骑兵'] = {
   deploy: c => {
@@ -300,6 +301,16 @@ B['艾达·艾敏'] = {
 B['席朗·依斯尼兰'] = {
   deploy: c => { const t = T(c, '席朗：锁定并移排', c.g.units()); if (t) { c.lock(t); c.move(t, t.row === 'm' ? 'r' : 'm'); } },
 };
+
+// ================= 中立 · 整排效果牌 =================
+// 放在哪排由对局簿的“整排效果”记录决定（打出这些牌后界面会直接进入整排效果）
+const HZ = (kind, turns) => ({ hazardCard: { kind, turns }, onPlay: () => {} });
+B['刺骨冰霜'] = HZ('霜', 3);
+B['倾盆大雨'] = HZ('雨', 3);
+B['蔽日浓雾'] = HZ('雾', 3);
+B['史凯利格风暴'] = HZ('风暴', 2);
+B['龙之梦'] = HZ('龙之梦', 3);
+B['晴空'] = { onPlay: (c, o) => { const row = (o && o.row) || 'm'; c.g.units(c.side).filter(u => u.row === row).forEach(u => c.boost(u, 1)); } };
 
 const API = { behaviors: B };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
