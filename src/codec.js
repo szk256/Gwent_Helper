@@ -3,7 +3,9 @@
 // 对局：#GWLOG v2 … ；卡组：#GWDECK v2 … ；牌库：#GWCOLL v2 …
 (function () {
   'use strict';
-  const IDS = (typeof GwentCardIds !== 'undefined' && GwentCardIds) || {};
+  const IDS = Object.assign({}, (typeof GwentCardIds !== 'undefined' && GwentCardIds) || {});
+  // 补丁里新增的牌带官方编号（cardids.js 还没重新生成时也能用）
+  if (typeof GwentPatches !== 'undefined') for (const p of GwentPatches.PATCHES) for (const c of p.cards) if (c.id && c.n && IDS[c.n] == null) IDS[c.n] = c.id;
   const NAME = {}; for (const [n, id] of Object.entries(IDS)) NAME[id] = n;
   // 整排效果名、固定词 → 代码
   const WORD = { '霜': 'hz:frost', '雨': 'hz:rain', '雾': 'hz:fog', '风暴': 'hz:storm', '龙之梦': 'hz:dream', '血月': 'hz:moon', '灾厄': 'hz:ruin', '墓场': 'G' };

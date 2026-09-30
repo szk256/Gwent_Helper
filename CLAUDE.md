@@ -21,7 +21,7 @@
 - `gwent_numbers_check.js`：代码里的数字（2~30）卡面上必须也有，防止补丁改了数值代码没跟上；已知正常情况记在 `numbers_baseline.json`（`--update` 重写）。补丁里改了效果文字的牌必须写 `code: '已同步'|'无需改'`。已加进 `npm test`。
 - 版本号：`build.js` 用内嵌内容的哈希生成 7 位构建号（`window.GWENT_BUILD`，内容不变就不变；调试页面显示“开发版”），加上卡牌数据版本（`patches.js` 最新一条的 `ver`，没有则 `BASE`）。左边栏底部 / 手机“数据”页底部显示；新对局记 `g.ver={build,data}`，对局导出和迁移导出都带上；打开旧版本开的对局时标题旁显示“构建 xxx 开局”。
 - 数据版本：data.js 是 **v14.9.0（2026-09-01）**，已和 gwent.one 核对（`patches.js` 的 `BASE`）。gwent.one 每月 1 日发布平衡委员会补丁（版本号 14.10.0、14.11.0…）。
-- 月度更新流程：`npm run sync -- 14.10.0` 预览（`tools/sync_gwentone.js` 用 curl 读 `gwent.one/{en,cn}/cards/changelog/<版本>`，按卡图编号 RAW[12] 对应我们的牌，列出每张改动、我们的数据是否已是新值），确认后加 `--write` 写进 `patches.js` → 效果文字改了的牌检查 `cards.js`、条目写 `code`（只改领袖人口上限的自动标“无需改”）→ `node build.js && npm test && npm run smoke` → PR。环境网络需要允许 `gwent.one`、`api.gwent.one`。注意 `api.gwent.one` 的新版本数据可能滞后（14.9.0 返回的还是 14.8.0），以改动页为准。
+- 月度更新流程：`npm run sync -- 14.10.0` 预览（`tools/sync_gwentone.js` 用 curl 读 `gwent.one/{en,cn}/cards/changelog/<版本>`，按卡图编号 RAW[12] 对应我们的牌，列出每张改动、我们的数据是否已是新值），确认后加 `--write` 写进 `patches.js`（新牌——改动页上 `data-change="new"` 只有一份——按页面上的中英文数据生成一行，作为条目的 `add` 加进数据，带官方编号 `id`，扩展包从 API 查；`rawAt` 对补丁之前的对局去掉它；`--pretend-missing=牌名` 可把已有的牌当新牌核对生成的行）→ 新牌按卡面写 `cards.js` 行为（写不了的保持未建模）→ 效果文字改了的牌检查 `cards.js`、条目写 `code`（只改领袖人口上限的自动标“无需改”）→ `node build.js && npm test && npm run smoke` → PR。环境网络需要允许 `gwent.one`、`api.gwent.one`。注意 `api.gwent.one` 的新版本数据可能滞后（14.9.0 返回的还是 14.8.0），以改动页为准。
 - `src/cardids.js`：牌名 → gwent 官方卡牌编号（`tools/gen_cardids.js [版本]` 从 api.gwent.one 生成，1359/1359 对上；加了新牌后重跑）。`src/codec.js`：纯代码导出 / 导入 v2（`GwentCodec.encodeGame/decodeGame/encodeDeck/decodeDeck/encodeColl/decodeColl`），和 app.js 共用全局，在它之前载入。
 - `src/cardflags.js`：`node build.js` 时从 `cards.js` 注释自动生成（ASSUME → 推测，用改战力/推算不了/按记录 → 需手动），偏差报告用，不要手改。
 - 对局簿数据存 localStorage 键 `gwent-tracker-v3`，**修改时必须保证旧数据能继续用**。
@@ -77,6 +77,7 @@
 - 已结束的一局最后一方没记停牌时，补一次停牌。
 - 逐步记录 `S.steps[记录id] = {who, n（第几手，每方各自计数，换人行动算新的一手）, me, op（这一步结算后的比分）, cards（这一步涉及的牌）, wn}`。记录列表每条显示“我第3手 · 12:4 · 时间”。
 - 偏差报告 `devReport(g,r,S)`：核对点 = `real` 记录（导出码 C，`我:对`，“录入真实比分”按钮，录屏复盘时按手录入，可用“在这之前插入”）+ R 行局末比分。找到第一个不一致的核对点，列出和上一个一致点之间的步骤：比分变化、涉及的推测/需手动/未建模的牌、提示；附备注和逐步比分。文本导出（gameCode）带每步“[我第3手 12:4]”和偏差报告。
+- 落地战力一步：打出“需手动”（cardflags）或未建模的单位时，流程最后多一步“落地战力”（推算值是主按钮，回车即确认；±3 快捷、可输入；写进记录的 `pw`）。
 - 快捷备注：备注面板有常用按钮（`NOTE_PRESETS`，可“编辑常用”，存 `db.notePresets`），记录头部“＋备注”直达。
 - 未确认规则的覆盖值放 `SIM_RULES`（校准用）。
 - 整排效果：`fx` 记录交给引擎（`addHazard`，没记回合数按卡面默认）。打出刺骨冰霜等整排效果牌后界面直接进入整排效果，只需点排；雨、血月、灾厄等随机命中在“效果”面板里点“××命中”再选单位（记为 `effect`，`c` = 效果名，进 `hzQ`）。整排效果牌后面没记 `fx` 时提示。

@@ -211,12 +211,17 @@ function startCard(name,a,who,via){const c=BY[name];
   // 不忠：放到出牌方的对面半场
   const side=c&&/^不忠/.test(c.tx||"")?(who==="me"?"op":"me"):who;
   queue({t:"place",a,who,side,card:name,via});rMatch();}
+let DEFENG=null;
+function needsPw(name){const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};if(F[name]==="需手动")return true;
+  if(!ENG)return false;if(!DEFENG){DEFENG=new ENG.Game();DEFENG.loadData(RAW);DEFENG.loadBehaviors(GwentCards.behaviors);}const d=DEFENG.def(name);return !!(d&&d.unmodeled);}
 function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];const id=g.log[idx].id;
   if(c&&a==="play"&&needsTarget(c,"play"))st.push({t:"target",id});
   {const m=c&&a==="play"&&(c.tx||"").match(/献金\s*(\d+)/);if(m)st.push({t:"tribute",id,n:+m[1]});}
   if(c&&a==="play"&&name==="拉尔维克的埃兰"&&(who==="op"||!deckById(g.deck)))st.push({t:"deckCount",id});
   if(c&&a==="play"&&pulls(c,"play"))st.push({t:"pull",who,parent:name});
   if(a==="play")st.push(...spawnStep(c,"play",who,name));
+  // 引擎算不准战力的单位（卡牌标“需手动”或未建模）：最后问一步落地战力，一次记完
+  if(c&&a==="play"&&c.t==="单位"&&needsPw(name))st.push({t:"pw",id});
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
   if(who==="me"&&(a==="play"||a==="summon"))returners(g,name).forEach(n=>st.push({t:"ret",card:n}));
   ui.flow=[...st,...((ui.flow||[]).slice(1))];if(!ui.flow.length){ui.flow=null;doSwitch();}ui.q="";ui.sel=[];
@@ -267,6 +272,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;const step=ui.flow&&u
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=[{t:"edit",id:D.edit}];rMatch();window.scrollTo(0,0);return true;}
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
+  if(D.pwset!==undefined&&step&&step.t==="pw"){const e=entry(step.id);const v=D.pwset==="?"?parseInt($("#pwIn")?.value):+D.pwset;if(e&&!isNaN(v)&&v>=0){e.pw=v;persist();}nextStep();return true;}
   if(D.fz!==undefined&&step&&step.t==="frenzy"){const e=entry(step.id);if(e){e.fz=D.fz==="1";persist();}nextStep();return true;}
   if(D.dn!==undefined&&step&&step.t==="deckCount"){const e=entry(step.id);const v=D.dn==="?"?parseInt($("#dnIn")?.value):+D.dn;if(e&&!isNaN(v)){e.dn=v;persist();}nextStep();return true;}
   if(D.trib!==undefined&&step&&step.t==="tribute"){const e=entry(step.id);if(e){e.pay=D.trib==="1";persist();}nextStep();return true;}
@@ -417,6 +423,11 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="tribute"){const e=entry(step.id);const S0=S&&S.E?S.E.s.sides[e?e.who:"me"].coins:null;
         h+=`<h2>「${esc(e?e.c:"")}」献金 ${step.n}：付了吗？</h2>${S0!=null?`<p class="note">推算${sideN(e?e.who:"me")}现有金币 ${S0}</p>`:""}
         <div class="btns" style="margin-top:8px"><button class="primary" data-trib="1" style="flex:1">付了</button><button class="ghost" data-trib="0" style="flex:1">没付</button></div>`;}
+      else if(step.t==="pw"){const e=entry(step.id);const S0=sim(g,VR());const u=S0&&S0.key2u[step.id];const n=u?u.power:(BY[e.c]&&+BY[e.c].pw)||0;const F=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
+        const vals=[];for(let v=Math.max(0,n-3);v<=n+3;v++)vals.push(v);
+        h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。</p>
+        <div class="btns" style="margin-top:8px;flex-wrap:wrap">${vals.map(v=>`<button class="${v===n?"primary":"ghost"}" data-pwset="${v}">${v}</button>`).join("")}</div>
+        <div class="btns" style="margin-top:8px"><input id="pwIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="ghost" data-pwset="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="frenzy"){const e=entry(step.id);
         h+=`<h2>「${esc(e?e.c:"")}」亢奋 ${step.n}：成立吗？</h2><p class="note">打出后手牌不多于 ${step.n} 张即成立（游戏里效果会高亮）。</p>
         <div class="btns" style="margin-top:8px"><button class="primary" data-fz="1" style="flex:1">成立</button><button class="ghost" data-fz="0" style="flex:1">不成立</button><button class="ghost" data-do="flowSkip">不清楚</button></div>`;}

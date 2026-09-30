@@ -129,6 +129,15 @@ setTimeout(() => {
       ok(w.document.documentElement.getAttribute('data-theme') === 'navy' && w.document.documentElement.style.zoom === '1.3' && !('theme' in w.eval('db')), '外观：切换主题和字号，存本机');
       sel.value = 'classic'; sel.dispatchEvent(new w.Event('change', { bubbles: true })); zs.value = '1'; zs.dispatchEvent(new w.Event('change', { bubbles: true }));
       ok(!w.document.documentElement.hasAttribute('data-theme') && !w.document.documentElement.style.zoom, '外观：切回经典'); }
+    // 需手动 / 未建模的单位：打出后多一步“落地战力”，推算值是主按钮
+    live([]); w.eval('startCard("寇格林姆","play","me")');
+    w.document.querySelector('[data-slot^="me|m|"]').click();
+    let guard = 0; while (w.eval('ui.flow&&ui.flow[0]&&ui.flow[0].t') && w.eval('ui.flow[0].t') !== 'pw' && guard++ < 5) w.document.querySelector('[data-do="flowSkip"]').click();
+    ok(w.eval('ui.flow&&ui.flow[0].t') === 'pw' && /落地战力/.test(w.document.querySelector('.sheet.flow').textContent), '落地战力：需手动的单位打出后多一步');
+    w.document.querySelector('[data-pwset="4"]').click();
+    ok(w.eval('db.live.log[db.live.log.length-1].pw') === 4 && w.eval('sim(db.live,0).score.me.total') === 4, '落地战力：选的数值写进记录并用于推算');
+    live([]); w.eval('startCard("科德温骑士","play","me")'); w.document.querySelector('[data-slot^="me|m|"]').click();
+    ok(!(w.eval('ui.flow') || []).some(x => x.t === 'pw'), '落地战力：已建模的牌不多问');
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }
