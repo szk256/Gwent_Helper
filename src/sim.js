@@ -91,7 +91,7 @@ function sim(g,r,excl){
       if((rec==null||rec==="")&&P&&R0){const lost=R0.res==="D"||(R0.res==="L")===(sd==="me");const A=P.E.s.sides[sd];
         if(lost&&(A.grave.includes("希里")||P.E.allUnits(sd).some(u=>u.name==="希里")))prev=Math.min(E.rules.handLimit,prev+1);}
       const S=E.s.sides[sd];S.handCount=r===0?E.rules.draws[0]:Math.min(E.rules.handLimit,(prev==null?Math.max(0,E.rules.draws[0]-4*r):prev)+E.rules.draws[r]);S.handKnown=true;}}
-  const consumed=new Set();let acted=false,justEnded=false,lastHand=null;
+  const consumed=new Set();let acted=false,justEnded=false,lastHand=null,lastAbil=null;
   // 逐步记录：第几手（每方各自计数，换人行动算新的一手）和这一步结算后的比分，偏差报告用
   const steps={},turnCnt={me:0,op:0};let lastTurn=null;
   const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
@@ -151,7 +151,7 @@ function sim(g,r,excl){
         if(x.armor!=null)u.armor=x.armor;}break;}
       case "coin":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的金币修正「"+v+"」"});break;}
         const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
-      case "pass":{E.pass(side);break;}
+      case "pass":{if(lastAbil&&lastAbil.side===side&&lastAbil.turn===E.s.turn)warns.push({id:x.id,m:"这一回合用过领袖/指令/战术就不能停牌（游戏规则），可能漏记了打出的牌"});E.pass(side);break;}
       // 结束回合：在这里结算回合结束效果（之后记的改战力就是回合结束之后看到的值）
       case "end":{if(E.s.sides[side].passed)break;if(E.s.active!==side)E.s.active=side;E.endTurn();acted=false;justEnded=true;break;}
       case "draw":{if(x.set&&x.who==="me"&&x.cards&&x.cards.length)E.s.sides.me.handCount=x.cards.length;break;}
@@ -172,6 +172,7 @@ function sim(g,r,excl){
     if(x.a==="play"&&def&&def.hazardCard){let ok=false;for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++)if(log[j].a==="fx")ok=true;if(!ok)warns.push({id:x.id,m:"「"+x.c+"」生成的整排效果没记在哪排（用“整排效果”补上）",fix:true});}
     if(turnAct){acted=true;justEnded=false;}
     if(handPlay)lastHand={side,turn:E.s.turn};
+    if(["order","leader","tactic"].includes(x.a)||(x.a==="play"&&def0&&(def0.type==="tactic"||def0.type==="leader")))lastAbil={side,turn:E.s.turn};
     if(turnAct&&side!==lastTurn){turnCnt[side]++;lastTurn=side;}
     {const who=lastTurn||side;const cards=new Set(),boosted=new Set();let wn=0;
       for(const t of E.trace.slice(t0)){const d=t.data||{};if(d.by&&d.by!=="手动")cards.add(d.by);if(t.type==="打出"||t.type==="生成"||t.type==="召唤")cards.add(d.name);if(t.type==="增益"&&d.uid)boosted.add(d.uid);if(t.warn)wn++;}
@@ -192,6 +193,8 @@ function sim(g,r,excl){
     for(const t of E.trace.slice(t0)){
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
+      if(t.type==="排满")warns.push({id:x.id,m:t.data.name+" 放不上：这一排已满 9 张（单位、神器、战术牌都算），检查记录的排"});
+      if(t.type==="癫狂没造成伤害，费用能力不触发")warns.push({id:x.id,m:t.data.name+" 有护盾，癫狂没造成伤害，费用能力不触发"});
       if(t.type==="计时触发"&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 计时归零，效果未建模（用改战力修正）"});
       if((t.type==="献金"||t.type==="费用")&&t.data.unmodeled)warns.push({id:x.id,m:t.data.name+" 的"+t.type+"效果未建模（用改战力修正）"});
       if(t.type==="亢奋未知"&&t.data.name===x.c&&x.a==="play")warns.push({id:x.id,m:t.data.name+" 亢奋 "+t.data.n+" 是否成立没记，按"+(E.rules.frenzyDefault?"成立":"不成立")+"算",step:{t:"frenzy",id:x.id,n:t.data.n}});

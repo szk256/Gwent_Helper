@@ -300,7 +300,11 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     return true;}
   if(D.rowpick){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.row===D.rowpick);const lab=(D.rowpick.startsWith("me")?"我方":"对方")+ROWN[D.rowpick.slice(-1)]+"排";
     if(k>=0)s.splice(k,1);else s.push({row:D.rowpick,label:lab});rMatch();return true;}
+  if(D.adjbump&&step&&step.t==="adj"){const [id,d]=D.adjbump.split("|");const el=$("#"+id);if(el)el.value=Math.max(0,(parseInt(el.value)||0)+ +d);return true;}
   if(D.adjv!==undefined&&step&&step.t==="adj"){let v=D.adjv;if(v==="?"){v=($("#adjIn")?.value||"").trim().replace(/[，\s]+/g,",");if(!v)return toast("写点内容");}
+    // 可编辑数字：?#输入框id:前缀（设为 ""、增益 "+"、伤害 "-"、护甲 "甲"、活力 "活"、重伤 "伤"）
+    else if(v.startsWith("?#")){const [id,pre]=v.slice(2).split(":");const n=parseInt($("#"+id)?.value);
+      if(isNaN(n)||n<0)return toast("填一个不小于 0 的数"),true;if(n===0&&(pre==="+"||pre==="-"))return toast("增益 / 伤害要大于 0"),true;v=pre+n;}
     const last=g.log.filter(x=>x.r===VR()).pop();ui.flow=null;
     if(last&&last.id===step.uid&&last.a==="play"&&/^\d+$/.test(v)){last.pw=+v;persist();toast("落地战力 "+v);}
     else{const i=pushLog({who:ui.who,a:"adj",c:step.card,uid:step.uid,side:step.side,v});toast(logText(g.log[i]));}
@@ -485,13 +489,20 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
       else if(step.t==="adj"){const u=(board(g,vr).all||{})[step.uid];const eu=u&&u.eu;const P=eu?eu.power:+(BY[step.card]?.pw)||0;const st=eu?eu.status:{};
         const has=[st.shield?"盾":"",st.lock?"锁":"",st.resilience?"坚":"",st.veil?"遮":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:""].filter(Boolean).join(" ");
         const pe=pendingEnd(g);const b=(v,l,cls)=>`<button class="${cls||"ghost"}" data-adjv="${esc(v)}">${esc(l||v)}</button>`;
-        const set=[];for(let v=Math.max(0,P-5);v<=P+8;v++)set.push(b(String(v),String(v),v===P?"ghost cur":"ghost"));
+        // 可编辑数字（战力、护甲可以很高）：输入框里回车 = 右边的按钮；±1 只改框里的数
+        const numIn=(id,val,pre)=>`<input id="${id}" class="adjnum" type="number" min="0" inputmode="numeric" value="${val}"${pre!=null?` data-enter='[data-adjv="?#${id}:${pre}"]'`:""}>`;
+        const bump=(id,d)=>`<button class="ghost" data-adjbump="${id}|${d}">${d>0?"+"+d:"−"+(-d)}</button>`;
+        const numRow=(id,val,pre,label)=>`${bump(id,-1)}${numIn(id,val,pre)}${bump(id,1)}${b("?#"+id+":"+pre,label)}`;
         h+=`<h2>修正 ${esc(sideN(step.side))}的 ${esc(step.card)}</h2><p class="note">推算 <b>${P}</b>（基础 ${eu?eu.base:"?"}，护甲 ${eu?eu.armor:0}${has?"，"+has:""}）。点游戏里看到的数值；增益/伤害会过护盾、护甲并触发效果。</p>
         ${pe?`<div class="btns" style="margin-top:6px"><button class="ghost" data-do="adjEnd">${sideN(pe)}回合已结束？先结算回合结束效果</button></div>`:""}
-        <div class="lab gl">设为</div><div class="btns" style="flex-wrap:wrap">${set.join("")}</div>
+        <div class="lab gl">设为</div><div class="btns adjrow">${numRow("adjSet",P,"","设为")}</div>
         <div class="lab gl">增益 / 伤害</div><div class="btns" style="flex-wrap:wrap">${[1,2,3,4,5,6].map(n=>b("+"+n)).join("")}${[1,2,3,4,5,6].map(n=>b("-"+n)).join("")}</div>
-        <div class="lab gl">状态</div><div class="btns" style="flex-wrap:wrap">${b(st.shield?"-盾":"+盾",st.shield?"去掉护盾":"加护盾")}${b(st.lock?"-锁":"+锁",st.lock?"解锁":"锁定")}${b(st.resilience?"-坚":"+坚",st.resilience?"去掉坚韧":"坚韧")}${b(st.veil?"-遮":"+遮",st.veil?"去掉遮蔽":"遮蔽")}
-          ${[0,1,2,3,4].map(n=>b("甲"+n,"护甲 "+n)).join("")}${[0,1,2,3].map(n=>b("活"+n,"活力 "+n)).join("")}${[0,1,2,3].map(n=>b("伤"+n,"重伤 "+n)).join("")}</div>
+        <div class="btns adjrow">${bump("adjN",-1)}${numIn("adjN",7)}${bump("adjN",1)}${b("?#adjN:+","增益")}${b("?#adjN:-","伤害")}</div>
+        <div class="lab gl">状态</div><div class="btns" style="flex-wrap:wrap">${b(st.shield?"-盾":"+盾",st.shield?"去掉护盾":"加护盾")}${b(st.lock?"-锁":"+锁",st.lock?"解锁":"锁定")}${b(st.resilience?"-坚":"+坚",st.resilience?"去掉坚韧":"坚韧")}${b(st.veil?"-遮":"+遮",st.veil?"去掉遮蔽":"遮蔽")}</div>
+        <div class="lab gl">护甲 / 活力 / 重伤（设为 0 = 去掉）</div>
+        <div class="btns adjrow">${numRow("adjAr",eu?eu.armor:0,"甲","设护甲")}</div>
+        <div class="btns adjrow">${numRow("adjVi",st.vitality||0,"活","设活力")}</div>
+        <div class="btns adjrow">${numRow("adjBl",st.bleed||0,"伤","设重伤")}</div>
         <details class="row"><summary class="note">其他写法（多项逗号隔开）</summary><div class="btns"><input id="adjIn" placeholder="例如 +2,-盾" autocomplete="off" style="flex:1"><button class="ghost" data-adjv="?">记录</button></div></details>
         <div class="btns" style="margin-top:8px"><button class="ghost" data-do="flowCancel">取消</button></div>`;}
       else if(step.t==="same"){const n=step.def;

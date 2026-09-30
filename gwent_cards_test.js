@@ -319,5 +319,46 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   P.applyAll(R); ok(R.filter(r => r[0] === '测试新牌').length === 1, '补丁新牌：重复套用不会加两次');
   P.PATCHES.pop();
 }
+// ---- 词条多语言核对后的修正（2026-10）----
+{ // 汲食无视护甲：雷吉斯：重生 汲食瑞达尼亚骑士（护甲 2）3 点
+  const g = game(); const k = P(g, 'op', '瑞达尼亚骑士', 'm'); g.chooser = () => [k]; const r = P(g, 'me', '雷吉斯：重生', 'm');
+  ok(k.armor === 2 && k.power === 0 || !g.find(k.uid), '汲食：无视护甲，护甲不掉'); ok(r.power === r.base + 2, '汲食：自身增益 = 实际扣掉的战力');
+}
+{ // 翻开：打在神器旁边的陷阱自动翻开（玛哈坎号角翻开：相邻 +3）
+  const g = game(); const a = P(g, 'me', '科德温骑士', 'm'); P(g, 'me', '欺骗', 'm'); const h = P(g, 'me', '玛哈坎号角', 'm');
+  ok(!h.status.ambush, '陷阱靠神器：自动翻开'); ok(a.power === 5, '陷阱靠神器：只加相邻（科德温不相邻，不变）');
+  const g2 = game(); const b = P(g2, 'me', '科德温骑士', 'm'); const h2 = P(g2, 'me', '玛哈坎号角', 'm');
+  ok(h2.status.ambush && b.power === 5, '陷阱不靠神器：背面朝上');
+}
+{ // 癫狂：有护盾挡住伤害时费用能力不触发
+  const g = game(); const u = P(g, 'me', '变异兄弟', 'm'); g.endTurn(); g.endTurn(); u.status.shield = true;
+  ok(!g.canFee(u), '癫狂：有护盾时不能用'); g.order(u.uid, { force: true });
+  ok(u.armor === 5 && !u.status.shield && g.trace.some(t => t.type === '癫狂没造成伤害，费用能力不触发'), '癫狂：强行记录时护盾挡掉，不加护甲');
+}
+{ // 每排最多 9 张
+  const g = game(); for (let i = 0; i < 10; i++) P(g, 'me', '科德温骑士', 'm');
+  ok(g.s.sides.me.rows.m.length === 9 && g.trace.some(t => t.type === '排满'), '每排最多 9 张');
+}
+{ // 佚亡的单位洗回牌组 → 放逐
+  const g = game(); const u = P(g, 'me', '科德温骑士', 'm'); u.status.doomed = true; g.shuffleBack(u);
+  ok(!g.s.sides.me.deck.includes('科德温骑士') && g.s.sides.me.banished.includes('科德温骑士'), '佚亡：洗回牌组时改为放逐');
+}
+{ // 停牌后停牌方回合照常推进：活力照样 +1、整排效果照样结算（NamuWiki）
+  const g = game(); const v = P(g, 'op', '科德温骑士', 'm'); g.addStatus(v, 'vitality', 3); g.addHazard('op', 'm', '风暴', 5);
+  g.endTurn(); g.pass('op');                                   // 我方回合结束 → 对方停牌（停牌那一下不结算回合结束）
+  const p0 = v.power; g.endTurn();                              // 我方再出一回合 → 对方跳过行动的回合：风暴 -1，活力 +1
+  ok(v.power === p0 && g.s.active === 'me', '停牌方回合：风暴 -1、活力 +1 都结算，随后回到我方');
+  const g2 = game({}); g2.rules.passedTurnsTick = false; const w2 = P(g2, 'op', '科德温骑士', 'm'); g2.addStatus(w2, 'vitality', 3);
+  g2.endTurn(); g2.pass('op'); const q0 = w2.power; g2.endTurn(); ok(w2.power === q0, 'passedTurnsTick=false：停牌方不再结算');
+}
+{ // 整排效果在单位的回合开始效果之后结算，几排按放置先后
+  const g = game(); const seen = []; g.on('turnStart', e => e.side === 'me' && seen.push('单位')); g.on('damaged', d => seen.push('整排:' + d.unit.row));
+  P(g, 'me', '科德温骑士', 'r'); P(g, 'me', '科德温骑士', 'm'); g.addHazard('me', 'r', '风暴', 3); g.addHazard('me', 'm', '风暴', 3);
+  g.endTurn(); g.endTurn(); ok(seen.join(',') === '单位,整排:r,整排:m', '整排效果：先单位回合开始，再按放置先后（远程先放）');
+}
+{ // 锁定不影响状态：被锁定的卫士照样挡
+  const g = game(); const d = P(g, 'op', '科德温骑士', 'm'); d.status.defender = true; g.lock(d); const o = P(g, 'op', '科德温骑士', 'm');
+  ok(g.targetable([d, o], 'me').length === 1 && g.targetable([d, o], 'me')[0] === d, '锁定的卫士：仍然只能选卫士');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
