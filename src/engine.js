@@ -34,6 +34,7 @@ const DEFAULT_RULES = {
   stickyUsesBase: false,      // 棘手困境“战力不高于 4”看落地战力（true = 看卡面基础战力；未确认）
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
   passedTurnsTick: true,      // 停牌之后停牌方的回合开始/结束效果照常结算（NamuWiki；用户确认对方停牌后数值还会涨）。另一方出完最后一张牌强制停牌时没有这个回合（对局簿 deferPassedTick）
+  veteranOffBoard: true,      // 老兵在手牌/牌组里也加（用户实测手牌；牌组 ASSUME）
   passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
 };
 
@@ -446,7 +447,7 @@ class Game {
     const ech = this.s.sides[player].echoed;
     if (opts.fromDeck && ech && ech.includes(name)) { ech.splice(ech.indexOf(name), 1); u.status.doomed = true; }
     if (!this._place(u, side, row, pos)) return null;
-    if (!opts.spawned) this._deckBuff(u, player);
+    if (!opts.spawned) { this._deckBuff(u, player); this._veteranOffBoard(u); }
     this.log('打出', { side, name, uid: u.uid, row, power: u.power, unmodeled: u.unmodeled, player });
     this._enter(u, true, Object.assign({}, opts, { player }));
     if (opts.power != null && this.find(u.uid) && opts.power !== u.power) {
@@ -463,7 +464,7 @@ class Game {
   summon(name, side, row, pos, src) {
     const u = this.makeUnit(name, side); u.origin = 'summon';
     if (!this._place(u, side, row, pos)) return null;
-    this._deckBuff(u, side);
+    this._deckBuff(u, side); this._veteranOffBoard(u);
     this.log('召唤', { side, name, uid: u.uid, row, by: src && src.name });
     this._enter(u, false, {});
     return u;
@@ -479,6 +480,12 @@ class Game {
     return u;
   }
 
+  // 老兵（用户实测：第二局开局手牌里的图尔赛克家族入侵者 5 → 6）：手牌、牌组里的也加，第二局 +1、第三局 +2（ASSUME：牌组里的同样算）
+  _veteranOffBoard(u) {
+    if (!u.def.veteran || !this.rules.veteranOffBoard || !(this.s.round > 0)) return;
+    const n = u.def.veteran * this.s.round; u.base += n; u.power += n;
+    this.log('老兵（手牌/牌组）', { uid: u.uid, name: u.name, n });
+  }
   // 牌组里的单位受到的增益（拉尔维克的埃兰）：这张牌之后上场时带上（按同名牌里增益最高的一张算）
   _deckBuff(u, side) {
     const L = this.s.sides[side].deckBuff[u.name];

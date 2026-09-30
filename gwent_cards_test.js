@@ -376,5 +376,10 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g5 = game(); const w5 = P(g5, 'me', '亚特里的温德哈姆', 'm'); g5.boost(w5, 2); g5.chooser = () => [w5]; P(g5, 'me', '被诅咒的骑士', 'm');
   ok(w5.name === '被诅咒的骑士' && w5.power === 6 && w5.base === 4 && g5.isBoosted(w5), '被诅咒的骑士：温德哈姆变成 6 战力、基础 4（显示为增益）');
 }
+{ // 老兵（用户实测）：第二局从手牌打出的图尔赛克家族入侵者基础战力 6，第三局 7；场上留场的只加小局开始那一次
+  const g = game(); g.s.round = 1; const a = P(g, 'me', '图尔赛克家族入侵者', 'm'); ok(a.base === 6 && a.power === 6, '老兵：第二局从手牌打出 5 → 6');
+  const g2 = game(); g2.s.round = 2; const b = P(g2, 'me', '图尔赛克家族入侵者', 'm'); ok(b.base === 7, '老兵：第三局从手牌打出 → 7');
+  const g3 = game(); const c1 = P(g3, 'me', '图尔赛克家族入侵者', 'm'); g3.s.round = 1; g3.startRound(); ok(c1.base === 6, '老兵：场上的单位第二局开始 +1（不重复加）');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
