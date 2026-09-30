@@ -360,7 +360,7 @@ B['埃格蒙德'] = {
   order: c => { if (c.self.row !== 'm') return; const t = T(c, '埃格蒙德：3 伤害', c.enemies()); if (t) c.damage(t, 3); },
   abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.orderUsed === 0, run: c => { const r = rightOf(c); if (r) c.boost(r, 1); } }],
 };
-B['塔勒'] = { order: noop };
+B['塔勒'] = { order: c => { if (c.passed(c.side) || c.passed(c.foe) || c.handFull(c.foe)) return; c.draw(1, c.side); c.draw(1, c.foe); } };
 B['夏妮'] = { order: c => { const n = fromDeck(c, '夏妮：从墓场召唤的铜色人类'); if (!n) return; const u = c.summon(n, c.side, c.self.row, posRight(c)); if (u) c.status(u, 'doomed', true); } };
 B['大狮鹫'] = {};
 B['巨魔魔'] = {
@@ -1009,7 +1009,10 @@ B['海军上将隆帕力'] = {
 B['亚凡·希尔格兰'] = { order: c => c.allies().filter(u => has(u, '士兵') && u.armor > 0).forEach(u => c.boost(u, 1)) };
 B['亚伯力奇'] = {};
 B['安娜·亨利叶塔'] = { deployRow: { r: noop } };
-B['阿达尔·爱普·达西'] = { deployRow: { r: c => { const t = T(c, '阿达尔：送回对方手牌', c.enemies().filter(u => u.power <= 2 && !c.g.isDoomed(u))); if (t) { const row = c.g.rowOf(t); row.splice(row.indexOf(t), 1); c.g.log('回到手牌', { name: t.name }); } } } };
+B['阿达尔·爱普·达西'] = { deployRow: { r: c => {
+  if (c.passed(c.side) || c.passed(c.foe) || c.handFull(c.foe)) return;
+  const t = T(c, '阿达尔：送回对方手牌', c.enemies().filter(u => u.power <= 2 && !c.g.isDoomed(u))); if (t) c.returnToHand(t); c.draw(1);
+} } };
 B['阿尔托·特拉诺瓦'] = { deploy: noop };
 B['亚托列司·薇歌'] = { deploy: c => { const n = fromDeck(c, '亚托列司：创造并打出的 1 战力铜色单位'); if (!n) return; const u = c.spawnPlay(n, c.self.row, posRight(c)); if (u) c.setPower(u, 1); } };
 B['艾希蕾·阿纳兴'] = { deploy: noop };
@@ -1048,9 +1051,9 @@ B['重弩海尔格'] = {
   order: c => { const t = T(c, '海尔格：2 伤害', c.g.units()); if (t) c.damage(t, 2); },
   abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('谋略'), run: c => { c.self.bonusCharges++; } }],
 };
-B['亨利·凡·亚特里'] = { deploy: noop };
+B['亨利·凡·亚特里'] = { deploy: c => { if (c.passed(c.foe) || c.handFull(c.foe)) return; c.draw(1, c.foe); c.draw(1, c.side); } };   // 创造的传奇牌各加入一方手牌
 B['帝国魔像'] = { deploy: noop };   // 按对方牌组顶端单位战力自伤：靠落地战力
-B['哈吉的伊斯贝尔'] = { order: noop };
+B['哈吉的伊斯贝尔'] = { order: c => { if (c.self.row !== 'r' || c.handFull(c.foe)) return; c.draw(1, c.side); c.draw(1, c.foe); } };   // 保留的 1 张进己方手牌（ASSUME），另 1 张进对手手牌
 B['伊瓦‧邪眼'] = { deploy: c => { const t = T(c, '伊瓦：交换战力', c.enemies()); if (!t) return; const a = c.self.power, b = t.power; c.setPower(c.self, b); c.setPower(t, a); } };
 B['约翰·卡尔维特'] = { deploy: noop };
 B['约阿希姆·德·维特'] = { deploy: c => { const n = fromDeck(c, '约阿希姆：打出的己方牌组顶端单位'); if (!n) return; const pl = c.self.owner || c.foe; const u = c.g.play(pl, n, 'm', null, { fromDeck: true, player: pl, keepSide: true }); if (u) c.g.boost(u, 8, c.self); } };
@@ -1102,7 +1105,10 @@ B['卡特利欧纳号'] = {
   order: c => { const t = T(c, '卡特利欧纳号：中毒', c.g.units().filter(u => hasStatus(u) && !u.status.poison)); if (t) c.status(t, 'poison'); },
   abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => { c.self.bonusCharges++; } }],
 };
-B['蒂博尔·艾格布拉杰'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
+B['蒂博尔·艾格布拉杰'] = { abilities: [{ on: 'unitEnter', when: (c, d) => d.unit === c.self, run: c => {
+  // 进入战场：对方抽 1 张；对方手牌已满或已停牌则改为对自身造成 12 点伤害
+  if (c.handFull(c.foe) || c.passed(c.foe)) c.damage(c.self, 12); else c.draw(1, c.foe);
+} }, { on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => {
   const t = R(c, '蒂博尔：随机灌注', c.enemies()); if (t) c.infuse(t, { name: '蒂博尔', on: 'statusGained', when: (cc, e) => e.unit === cc.self, run: cc => cc.g.damage(cc.self, 1, { name: '蒂博尔' }) });
 } }] };
 B['托雷斯·恩瑞斯：奠基者'] = { deploy: noop, order: noop };
@@ -1411,7 +1417,7 @@ B['“黑手”霍格'] = {
 B['希姆'] = { deploy: c => { const t = T(c, '希姆：交换战力的受伤单位', c.g.units().filter(u => u !== c.self && isDamaged(u))); if (!t) return; const a = c.self.power, b = t.power; c.setPower(c.self, b); c.setPower(t, a); } };
 B['贝哈文的朱诺德'] = { deploy: c => { const t = T(c, '朱诺德：摧毁受伤敌军', c.enemies().filter(isDamaged)); if (t) c.destroy(t); } };
 B['茱塔·迪门'] = { deploy: c => { if (c.g.units().every(u => u === c.self || u.power < c.self.power)) c.damage(c.self, 6); } };
-B['坎比'] = { deploy: noop };
+B['坎比'] = { deploy: c => { c.discard(1, c.side); c.discard(1, c.foe); } };
 B['凯尔派'] = HZ2('雨', 0, { abilities: [{ on: 'damaged', when: (c, d) => d.unit.side === c.foe && d.src && (d.src.name === '雨' || d.src.name === '风暴'), run: c => { const t = R(c, '凯尔派：随机野兽 +1', c.allies().filter(u => has(u, '野兽') && !c.g.isBoosted(u))); if (t) c.boost(t, 1); } }] });
 B['布兰王'] = { deploy: noop };   // 溢出伤害加成：用改战力
 B['“无情者”克努特'] = {
@@ -1719,7 +1725,7 @@ B['安古兰'] = { deploy: noop };   // 创造对方神器或 +6：按记录/改
 B['巨魔脚夫'] = { deployRow: { m: noop } };
 B['布拉维坎的音乐家'] = {};
 B['希里'] = { deploy: c => c.g.choose({ prompt: '希里：3 个敌军各 1', from: c.targets(c.enemies()), n: 3, upTo: true, source: c.self.name }).forEach(u => c.damage(u, 1)) };
-B['希里：冲刺'] = { timer: { n: 4, run: noop } };
+B['希里：冲刺'] = { timer: { n: 4, run: c => c.draw(1) } };
 B['希里：新星'] = { deploy: noop };   // 条件取决于起始牌组：用改战力/状态
 B['席安娜'] = { order: c => { c.g.s.sides[c.side].vars.syanna = c.g.s.turn; },
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && c.g.s.sides[c.side].vars.syanna === c.g.s.turn, run: (c, d) => { c.g.s.sides[c.side].vars.syanna = null; if (d.unit.def.deploy) d.unit.def.deploy(c.g.ctx(d.unit), {}); } }] };
@@ -1732,7 +1738,7 @@ B['德鲁伊控天者'] = { deployRow: {
   r: c => { const k = c.g.allUnits(c.side).some(u => u.name === '风暴权杖') ? 3 : 1; for (const sd of ['me', 'op']) for (const r of ['m', 'r']) { const h = c.g.s.hazards[sd][r]; if (h) { h.turns -= k; if (h.turns <= 0) c.g.s.hazards[sd][r] = null; } } },
 } };
 B['操作者'] = { deploy: c => { const n = fromDeck(c, '操作者：手牌里的铜色单位'); if (!n) return; c.g.spawn(n, c.side, c.self.row, posRight(c), c.self); c.g.spawn(n, c.foe, c.self.row, null, c.self); } };
-B['斯崔葛布'] = { timer: { n: 2, run: noop } };
+B['斯崔葛布'] = { timer: { n: 2, run: c => { if (c.self.row !== 'r') return; c.draw(1, c.side); c.draw(1, c.foe); } } };   // 抽到的牌战力设为 1：只影响手牌
 B['杜度'] = { deploy: c => { const t = T(c, '杜度：变成的敌军', c.enemies()); if (t) c.transform(c.self, t.name); } };
 B['杜拉·卡亚玛尼'] = { deploy: c => { if (c.allies().some(u => u.name === '符文匠')) c.g.spawn('沙漠宝藏', c.side, c.self.row, posRight(c), c.self); } };
 B['符文匠'] = { deploy: c => { if (c.allies().some(u => u.name === '杜拉·卡亚玛尼')) c.g.spawn('沙漠宝藏', c.side, c.self.row, posRight(c), c.self); } };
@@ -1772,7 +1778,7 @@ B['狂躁的杜奥'] = { deploy: c => { const k = 1 + constructs(c); let played 
 B['狐妖'] = { deployRow: { m: c => { const t = T(c, '狐妖：锁定', allUnitsExcept(c)); if (t) c.lock(t); }, r: c => { const t = T(c, '狐妖：解除锁定', c.g.units().filter(u => u.status.lock)); if (t) t.status.lock = false; } } };
 B['狐妖：真身'] = { deployRow: { r: c => { const n = fromDeck(c, '狐妖：创造并打出的特殊牌'); if (n) c.spawnPlay(n); } } };
 B['独眼贝蒂'] = { deploy: noop, order: c => { const t = T(c, '贝蒂：重新打出的会师单位', c.allies().filter(u => u !== c.self)); if (!t) return; const n = t.name, row = t.row; c.shuffleBack(t); c.g.play(c.side, n, row, null, { fromDeck: true }); } };
-B['玛塔·乌莉'] = { deployRow: { r: noop } };
+B['玛塔·乌莉'] = { deployRow: { r: c => { if (c.passed(c.side) || c.passed(c.foe) || c.handFull(c.foe)) return; c.draw(1, c.foe); c.draw(1, c.side); } } };
 B['玛多克'] = HZ2('灾厄', 1, { order: c => c.destroy(c.self) });
 B['玛琳·卓斯塔玛拉'] = { order: c => { if (!c.self.status.doomed) c.status(c.self, 'resilience', true); } };
 B['看门人'] = { order: c => { const t = T(c, '看门人：净化', c.g.units()); if (t) c.purify(t); } };

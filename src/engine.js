@@ -355,7 +355,8 @@ class Game {
       adjacent: t => g.adjacent(t || u), vars: g.s.sides[u.side].vars,
       targets: us => g.targetable(us, u.side),
       dominance: () => g.dominance(u.side), might: () => g.might(u.side), feast: () => g.feast(u.side),
-      frenzy: n => g.frenzy(u.side, n, u), deckUnits: () => g.deckUnits(u.side),
+      frenzy: n => g.frenzy(u.side, n, u), draw: (n, side) => g.draw(side || u.side, n, u), discard: (n, side) => g.discard(side || u.side, n, u),
+      handFull: side => g.handFull(side || u.side), returnToHand: t => g.returnToHand(t, u), passed: side => g.s.sides[side || u.side].passed, deckUnits: () => g.deckUnits(u.side),
       bloodthirst: n => g.bloodthirst(u.side, n), initiative: () => g.initiative(u.side), devotion: () => g.devotion(u.side), heal: t => g.heal(t, u), banish: t => g.banish(t, u),
       clash: t => g.clash(u, t), consume: t => g.consume(u, t), hazard: (side, row, kind, turns) => g.addHazard(side, row, kind, turns, u),
       coins: () => g.s.sides[u.side].coins, gainCoins: n => g.gainCoins(u.side, n, u), spendCoins: n => g.spendCoins(u.side, n, u),
@@ -589,6 +590,27 @@ class Game {
     u.power = o.keepPower ? p : u.base;
     this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
     this.checkBless(u);
+  }
+  // 手牌张数（对局簿推算亢奋、“手牌不满”用）：抽牌 +n（超过上限的丢弃），弃牌 -n
+  draw(side, n, src) {
+    const S = this.s.sides[side], before = S.handCount;
+    S.handCount = Math.min(this.rules.handLimit, before + n);
+    this.log('抽牌', { side, n, hand: S.handCount, by: src && src.name });
+    this.emit('drew', { side, n: S.handCount - before, src });
+  }
+  discard(side, n, src) {
+    const S = this.s.sides[side]; S.handCount = Math.max(0, S.handCount - n);
+    this.log('丢弃', { side, n, hand: S.handCount, by: src && src.name });
+  }
+  handFull(side) { return this.s.sides[side].handCount >= this.rules.handLimit; }
+  // 返回手牌：离场，不算摧毁；拥有者手牌 +1
+  returnToHand(u, src) {
+    if (!u || !this.find(u.uid)) return;
+    const row = this.rowOf(u); row.splice(row.indexOf(u), 1);
+    const side = u.owner || u.side;
+    if (!this.isDoomed(u)) this.s.sides[side].handCount = Math.min(this.rules.handLimit, this.s.sides[side].handCount + 1);
+    this.log('返回手牌', { uid: u.uid, name: u.name, by: src && src.name });
+    this.emit('returned', { unit: u, src, toHand: true });
   }
   // 洗回牌组：离场，不算摧毁
   shuffleBack(u, src) {

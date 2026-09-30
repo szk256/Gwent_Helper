@@ -69,7 +69,10 @@ function sim(g,r,excl){
   E.startRound();
   // 手牌数推算：第一局起手 10 张；之后 = 上一局结束时的手牌（R 行记了就用记录，否则用推算）+ 3，上限 10。打出（不含牌组/墓场/生成）-1，“手牌”记录修正
   {const P=Pprev;const R0=g.rounds&&g.rounds[r-1];
-    for(const sd of["me","op"]){const rec=R0&&R0[sd==="me"?"hm":"ho"];const prev=rec!=null&&rec!==""?+rec:P?P.E.s.sides[sd].handCount:null;
+    for(const sd of["me","op"]){const rec=R0&&R0[sd==="me"?"hm":"ho"];let prev=rec!=null&&rec!==""?+rec:P?P.E.s.sides[sd].handCount:null;
+      // 希里：己方输掉小局时回到手牌（在场上或墓场里）；R 行记了手牌就以记录为准
+      if((rec==null||rec==="")&&P&&R0){const lost=R0.res==="D"||(R0.res==="L")===(sd==="me");const A=P.E.s.sides[sd];
+        if(lost&&(A.grave.includes("希里")||P.E.allUnits(sd).some(u=>u.name==="希里")))prev=Math.min(E.rules.handLimit,prev+1);}
       const S=E.s.sides[sd];S.handCount=r===0?E.rules.draws[0]:Math.min(E.rules.handLimit,(prev==null?Math.max(0,E.rules.draws[0]-4*r):prev)+E.rules.draws[r]);S.handKnown=true;}}
   const consumed=new Set();let acted=false;
   const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};

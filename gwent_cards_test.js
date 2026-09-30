@@ -269,5 +269,24 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const er2 = P(g2, 'op', '拉尔维克的埃兰', 'm'); g2.order(er2.uid, { force: true });
   ok(!er2.status.immune && er2.power === er2.base + 5, '埃兰（对方）：按记录的牌组单位数转移；亢奋不成立不免疫');
 }
+
+// ---------- 手牌张数 ----------
+{ // 塔勒：双方各抽 1；对方手牌满则不抽。坎比：双方各丢 1。玛塔·乌莉（远程）
+  const g = game(); g.s.sides.me.handCount = 5; g.s.sides.op.handCount = 6;
+  const t = P(g, 'me', '塔勒', 'm'); g.order(t.uid, { force: true });
+  ok(g.s.sides.me.handCount === 4 + 1 && g.s.sides.op.handCount === 7, '塔勒：双方各抽 1 张（打出塔勒本身 -1）');
+  g.s.sides.op.handCount = 10; t.orderUsed = 0; g.order(t.uid, { force: true }); ok(g.s.sides.op.handCount === 10 && g.s.sides.me.handCount === 5, '塔勒：对方手牌满 → 不抽');
+  g.s.sides.op.handCount = 3; P(g, 'me', '坎比', 'm'); ok(g.s.sides.me.handCount === 3 && g.s.sides.op.handCount === 2, '坎比：双方各丢 1 张');
+  P(g, 'me', '玛塔·乌莉', 'r'); ok(g.s.sides.me.handCount === 3 && g.s.sides.op.handCount === 3, '玛塔·乌莉（远程）：双方各抽 1 张');
+}
+{ // 阿达尔：把 ≤2 战力敌军送回对方手牌，己方抽 1
+  const g = game(); g.s.sides.me.handCount = 5; g.s.sides.op.handCount = 5; const e = P(g, 'op', '班阿德的学生', 'm'); g.damage(e, 2);
+  g.chooser = () => [e]; P(g, 'me', '阿达尔·爱普·达西', 'r');
+  ok(!g.find(e.uid) && g.s.sides.op.handCount === 5 && g.s.sides.me.handCount === 5, '阿达尔：敌军回手（对方 +1），己方抽 1（打出 -1）');
+}
+{ // 蒂博尔：进场时对方抽 1；对方已停牌 → 自伤 12
+  const g = game(); g.s.sides.op.handCount = 4; P(g, 'me', '蒂博尔·艾格布拉杰', 'm'); ok(g.s.sides.op.handCount === 5, '蒂博尔：进场对方抽 1 张');
+  const g2 = game(); g2.s.sides.op.passed = true; const b = P(g2, 'me', '蒂博尔·艾格布拉杰', 'm'); ok(b.power === Math.max(0, b.base - 12) || !g2.find(b.uid), '蒂博尔：对方已停牌 → 自伤 12');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);
