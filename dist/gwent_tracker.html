@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="96ac3f4";</script>
+<script>window.GWENT_BUILD="3be69ca";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -4722,7 +4722,8 @@ function sim(g,r,excl,ov){
         else if(x.row){if(claimAuto(x))break;const u=E.spawn(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
-      case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
+      case "leader":case "tactic":{if(x.a==="tactic"&&r>0)warns.push({id:x.id,m:"战术牌只在第一局有，第"+(r+1)+"局记了战术（记错局或其实是领袖）"});
+        else if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
         const nm=x.a==="tactic"?(x.c&&x.c!=="战术"?x.c:tacOf(side)):(x.c||(side==="me"?g.leader:g.opLeader));if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
         if(x.a==="tactic")E.removeTactic(side);break;}   // 战术牌用掉即离场
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
@@ -5429,6 +5430,8 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
           <button class="ghost" data-do="eInsert">在这之前插入</button><button class="ghost" data-do="eVt">录屏时间${entry(step.id)?.vt?" "+esc(entry(step.id).vt):""}</button><button class="ghost bad" data-do="eDel">删除</button><button class="ghost" data-do="flowCancel">关闭</button></div></div>`;})():"";
     if(!step||step.t==="edit"){
       const acts=ui.who==="me"?["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","mull",...(g.hand?["draw"]:[]),"pass","note"]:["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","pass","note"];
+      // 战术牌只在第一局（先手方）：第二、三局不列“战术”
+      if(vr>0)acts.splice(acts.indexOf("tactic"),1);
       if(!acts.includes(ui.act))ui.act="play";
       const roundHasHand=g.log.some(x=>x.r===vr&&x.who==="me"&&x.a==="draw");
       const pe=pendingEnd(g);

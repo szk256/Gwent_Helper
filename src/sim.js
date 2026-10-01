@@ -148,7 +148,8 @@ function sim(g,r,excl,ov){
         else if(x.row){if(claimAuto(x))break;const u=E.spawn(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
-      case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
+      case "leader":case "tactic":{if(x.a==="tactic"&&r>0)warns.push({id:x.id,m:"战术牌只在第一局有，第"+(r+1)+"局记了战术（记错局或其实是领袖）"});
+        else if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
         const nm=x.a==="tactic"?(x.c&&x.c!=="战术"?x.c:tacOf(side)):(x.c||(side==="me"?g.leader:g.opLeader));if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
         if(x.a==="tactic")E.removeTactic(side);break;}   // 战术牌用掉即离场
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}

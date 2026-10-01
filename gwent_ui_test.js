@@ -51,6 +51,7 @@ setTimeout(() => {
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'f1', r: 1, who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }],
       { tacCard: true, cur: 1, rounds: [{ res: 'W', me: '5', op: '0' }] });
     S = w.eval('sim(db.live,1)'); ok(!S.E.s.sides.me.rows.m.some(u => u.isTactic) && !S.E.s.sides.me.grave.includes('战术'), '战术牌：第二局没有，也不进墓场');
+    ok(!w.document.querySelector('[data-act="tactic"]'), '战术牌：第二局起不列“战术”按钮');
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
     ok(!w.eval('sim(db.live,0)').E.s.sides.me.rows.m.some(u => u.isTactic), '战术牌：旧对局（没有 tacCard）不放');
     // 对方先手：开局选对方战术牌，放到对方近战排最左边；旧记录只写“战术”的按它结算

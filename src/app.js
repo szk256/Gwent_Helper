@@ -562,6 +562,8 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
           <button class="ghost" data-do="eInsert">在这之前插入</button><button class="ghost" data-do="eVt">录屏时间${entry(step.id)?.vt?" "+esc(entry(step.id).vt):""}</button><button class="ghost bad" data-do="eDel">删除</button><button class="ghost" data-do="flowCancel">关闭</button></div></div>`;})():"";
     if(!step||step.t==="edit"){
       const acts=ui.who==="me"?["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","mull",...(g.hand?["draw"]:[]),"pass","note"]:["play","order","leader","tactic","effect","adj","spawn","summon","fx","move","kill","pass","note"];
+      // 战术牌只在第一局（先手方）：第二、三局不列“战术”
+      if(vr>0)acts.splice(acts.indexOf("tactic"),1);
       if(!acts.includes(ui.act))ui.act="play";
       const roundHasHand=g.log.some(x=>x.r===vr&&x.who==="me"&&x.a==="draw");
       const pe=pendingEnd(g);
