@@ -79,12 +79,19 @@ WEAK_V, WEAK_R = 6, 0.15
 
 def classify(L, x, y, h, votes):
     """一张认出的牌（中心 x、y，高度 h，画面比例；票数）→ 排名，None = 丢掉。
-    有 board_h（电脑）时按这个位置的场上牌高判断是不是手牌，否则按固定的 hand_h。"""
+    有 board_h（电脑）时我方半场按这个位置的场上牌高判断是不是手牌（只用我方半场的数据量的，对方半场透视不同），
+    否则按固定的 hand_h。"""
     if h > L.get('max_h', 9):
         return None
     if y >= L['hand_y']:
         return '手牌'
-    if 'board_h' in L:
+    if 'board_h' in L and y < dict(L['row_cy'])['对方近战']:
+        # 对方半场：透视和我方不一样（远程 y 0.22 → 牌高 0.15，近战 y 0.38 → 0.14），也不会有手牌，只挡住特别大 / 特别小的
+        if h >= L['hand_h']:
+            return '手牌'   # 拖过对方半场的牌
+        if h < L['board_min'] * 0.14:
+            return None
+    elif 'board_h' in L:
         y0, h0, k = L['board_h']
         hb = h0 + k * (y - y0)
         if h >= L['board_ratio'] * hb:

@@ -116,40 +116,48 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
-def shields_from_det(im, ent):
-    """{排: [护盾 True/False/None]}，顺序和 ent['rows'] 一样（从左到右）。"""
+CLS_VER = 2   # 分排规则（board.classify）、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+
+
+def derive(im, ent):
+    """从原始检测（ent['det']）按当前 board.classify 分排，读每张场上牌的战力（和总分一起纠错）、护盾。"""
     import layout
     L = layout.get(im)
-    rows = {}
+    rows = {r: [] for r in board.ROW_KEYS}
     for n, v, x, y, h in ent.get('det') or []:
         r = board.classify(L, x, y, h, v)
-        if r and r != '手牌':
-            rows.setdefault(r, []).append((x, y, h))
-    return {r: [detect.shield(im, x, y, h) for x, y, h in sorted(cs)] for r, cs in rows.items()}
+        if r:
+            rows[r].append((x, n, y, h))
+    for cs in rows.values():
+        cs.sort()
+    cands, sh = {}, {}
+    for r, cs in rows.items():
+        if r == '手牌':
+            continue
+        out = []
+        for x, n, y, h in cs:
+            c = CARDS.get(n, {})
+            base = int(c['power']) if str(c.get('power')).isdigit() else None
+            out.append(reader().power_cands(im, x, y, h, base) if c.get('type') == '单位' else [(0, 0.0)])
+        cands[r] = out
+        sh[r] = [detect.shield(im, x, y, h) for x, _n, y, h in cs]
+    ent['rows'] = {r: [n for _x, n, _y, _h in cs] for r, cs in rows.items()}
+    ent['pw'], ent['pw_ok'] = joint_powers(cands, ent.get('score'))
+    ent['sh'] = sh
+    ent['cls'] = CLS_VER
+    return ent
 
 
 def scan_frame(m, im):
     import layout
     raw = []
-    det = board.scan(m, im, detail=True, mine=mine_matcher(m), raw=raw)
-    rows = board.names(m, {r: [c[:3] for c in cs] for r, cs in det.items()})
-    score = reader().scores(im)
-    cands = {}
-    sh = {r: [detect.shield(im, x, y, h) for x, _a, _v, y, h in cs] for r, cs in det.items() if r != '手牌'}
-    for r, cs in det.items():
-        if r == '手牌':
-            continue
-        out = []
-        for x, art, _v, y, h in cs:
-            c = m.by_art[art][0]
-            base = int(c['power']) if str(c['power']).isdigit() else None
-            out.append(reader().power_cands(im, x, y, h, base) if c['type'] == '单位' else [(0, 0.0)])
-        cands[r] = out
-    pws, ok = joint_powers(cands, score)
-    ent = {'rows': rows, 'pw': pws, 'pw_ok': ok, 'sharp': sharpness(im), 'show': None,
-           'score': score, 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im), 'lead': reader().leader(im),
-           'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw, 'sh': sh, 'lglow': detect.leader_glow(im),
-           'v3': 1}  # v3：我方半场用卡组子库 + 游戏内卡图模板、按透视分排；det 是分排前的原始检测
+    board.scan(m, im, detail=True, mine=mine_matcher(m), raw=raw)
+    ent = {'sharp': sharpness(im), 'show': None,
+           'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im),
+           'lead': reader().leader(im), 'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw,
+           'lglow': detect.leader_glow(im),
+           'v3': 1}  # v3：我方半场用卡组子库 + 游戏内卡图模板；det 是分排前的原始检测
+    derive(im, ent)
     sc = detect.showcase(im)
     if sc is not None:
         res = m.match(sc)
@@ -203,10 +211,10 @@ def scan_dir(m, d, jobs=1):
             # 阈值按当前 layout（旧缓存没存画面比例：iPad 的旧阈值是 200）
             ent.setdefault('prof', '4:3' if ent.get('smin') == 200 else '16:9')
             ent['smin'] = layout.PROFILES[ent['prof']]['sharp_min']
-            if 'sh' not in ent or 'lglow' not in ent:
-                # 旧缓存：按原始检测重新分排（和扫描时同一规则、同一顺序），补算每张场上牌的护盾、领袖图标的光
+            if ent.get('cls') != CLS_VER or 'lglow' not in ent:
+                # 分排规则改过：按原始检测重新分排、读战力和护盾；补领袖图标的光
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
-                ent['sh'] = shields_from_det(im, ent)
+                derive(im, ent)
                 ent['lglow'] = detect.leader_glow(im)
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
@@ -235,6 +243,7 @@ def scan_dir(m, d, jobs=1):
 
 
 BOARD_ROWS = [r for r in board.ROW_KEYS if r != '手牌']
+CARDS = {c['name']: c for c in Matcher.load_cards_static()}
 CARD_TYPE = {c['name']: c['type'] for c in Matcher.load_cards_static()}
 
 
@@ -325,7 +334,7 @@ class Tracker:
         # 这一帧没看到的牌，之前攒的“多看到”作废（否则隔几十秒的两次零星误认会凑成“连续两次”）
         for k in [k for k in self.more if k not in obs]:
             self.more.pop(k)
-        for k in set(obs) | set(self.count):
+        for k in sorted(set(obs) | set(self.count)):   # 固定顺序：集合的顺序每次运行不同，同一时刻的事件先后会变
             o, c = obs.get(k, 0), self.count.get(k, 0)
             if o > c:
                 self.less.pop(k, None)
