@@ -313,6 +313,7 @@ class Tracker:
     超过 ROUND_S 秒没有过场画面 = 真的离场，照常按迟滞记。
     展示框里认出的牌（对方刚打出）用来把对方的进场分成“打出”和“召唤/生成”。"""
     IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S, MOVE_S = 2, 3, 2.5, 8.0, 10.0, 40.0, 4.0
+    REENTER_TOKEN_S = 300.0
 
     def __init__(self):
         self.count = {}      # (排, 名) -> 张数
@@ -470,9 +471,11 @@ class Tracker:
         # 同一排的同名牌离场后不久又出现：多半是识别闪烁（画面糊、被挡），撤销那次离场
         # ——除非展示框刚看到对方打出这张牌（真的又打了一张）
         shown = side == '对方' and any(s[1] == name and -3 <= t - s[0] <= self.SHOW_S for s in self.shows)
+        # 衍生牌（乌鸦）没有展示、卡图常是动态的，时有时无能隔好几分钟：本小局内都算闪烁
+        lim = self.REENTER_TOKEN_S if CARDS.get(name, {}).get('set') == 'token' else self.REENTER_S
         for i in range(len(self.events) - 1 if not shown else -1, -1, -1):
             e = self.events[i]
-            if t - e[0] > self.REENTER_S:
+            if t - e[0] > lim or e[1] == '小局结束':
                 break
             if e[1] in ('离场', '离手') and e[2] == side and e[3] == name and e[4] == row:
                 del self.events[i]
