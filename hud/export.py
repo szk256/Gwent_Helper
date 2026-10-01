@@ -205,7 +205,7 @@ def depart_reason(states, t, side):
     return None
 
 
-def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
+def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, has_show=True, my_deck=None,
                runs=None, extra=None, sync_states=None, states=None, deck_filter=True, t0=None, review=None,
                op_leader=None):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
@@ -214,6 +214,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     （对局簿棋盘就是每个单位的实际战力；偏差报告会因此几乎总是一致，核查规则时别开）。
     t0：录屏开始的时刻（秒），记录的“录屏”时间从它算（用户自己的录屏），默认从第一个事件算。
     review：传一个列表进来，HUD 拿不准、需要人看录屏补的地方追加进去（write_review 写成 review.html）。"""
+    leader = leader or LEADER_ME
     log, rounds = [], []
     r, n = 0, 0
     t_start = t0 if t0 is not None else (min([e[0] for e in events] + [s[0] for s in scores]) if events or scores else 0)
@@ -467,6 +468,78 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         order_used[srcs[0][0]] = ts0
         push({'who': 'me', 'a': 'order', 'c': srcs[0][1], 'uid': srcs[0][0], 'tgts': [{'uid': tu[0]}],
               'hud': f'我方回合对方总分 -{d}、没有单位离场：推测是这张的指令（{tu[1]} 战力 -{drop[2]:g}）'}, tc - 0.3)
+
+    def resolve_leader_chain():
+        """我方领袖“触发友军神赐就刷新”（皇家激励）连用时按机制补目标：
+        - 用完之后次数还在（没有连着两帧读到 0）= 刷新了 = 目标触发了神赐：
+          前 4 秒到后 6 秒内有单位神赐生成了牌（少女的盾牌 → 布朗温；按画面第一次出现算）→ 目标就是它；
+          否则场上只有一个还有没触发的神赐门槛、能被指定的单位 → 它（少女的盾牌神赐 8 之后还有神赐 14）；
+        - 没刷新（最后一次）而目标没推出：同一回合上一次用在谁就是谁（连用都是为了推同一张的神赐；2026-10-01 用户确认三次都给少女的盾牌）。"""
+        text = text_of(leader) if leader else ''
+        if not (re.search(r'增益', text) and re.search(r'神赐', text) and re.search(r'刷新', text)):
+            return
+        uses = [x for x in log if x['who'] == 'me' and x['a'] == 'leader' and 'ts' in x]
+        spawns = [y for y in log if y['who'] == 'me' and y.get('via') and '神赐' in (y.get('hud') or '') and 'ts' in y]
+        used_spawn, fired = set(), {}
+        gone = {d[3][0]: d[0] for d in departed}
+        for i, x in enumerate(uses):
+            nxt = next((u['ts'] for u in uses[i + 1:] if u.get('r') == x.get('r')), x['ts'] + 10)
+            # 次数变化可能比领袖事件（按次数确认，有迟滞）还早一点：从前 1.5 秒看起
+            reads = [(ent.get('lead') or [None, None])[1] for tt, ent in (states or []) if x['ts'] - 1.5 <= tt <= nxt]
+            zeros = [v == 0 for v in reads if v is not None]   # 读不到的帧不算（图标变暗、被挡）
+            refreshed = not any(a_ and b_ for a_, b_ in zip(zeros, zeros[1:]))
+            if refreshed:
+                y = next((y for y in spawns if id(y) not in used_spawn and -4 <= y['ts'] - x['ts'] <= 6), None)
+                if y:
+                    used_spawn.add(id(y))
+                    src = next((z for z in reversed(log) if z['who'] == 'me' and z.get('c') == y['via'] and z.get('row')
+                                and z.get('ts', 1e9) <= y['ts'] and z.get('r') == x.get('r')), None)
+                    if src:
+                        th = re.search(r'神赐\s*(\d+)', y.get('hud') or '')
+                        fired.setdefault(src['id'], set()).add(int(th.group(1)) if th else 0)
+                        if not x.get('tgts'):
+                            x['tgts'] = [{'uid': src['id']}]
+                            x['hud'] = f"目标：{y['via']} 随后神赐生成了 {y.get('c')}（领袖刷新了）"
+                        continue
+                def cur_pw(z):   # 这一刻之前最后读到的战力（改战力记录），没有就用落地战力
+                    v = next((y.get('v') for y in reversed(log) if y['a'] == 'adj' and y.get('uid') == z['id']
+                              and y.get('ts', 1e9) <= x['ts'] and str(y.get('v', '')).isdigit()), None)
+                    return int(v) if v is not None else (z.get('pw') or 0)
+
+                def unfired(z):
+                    return [int(v) for v in re.findall(r'神赐\s*(\d+)', text_of(z.get('c')))
+                            if int(v) not in fired.get(z['id'], set()) and cur_pw(z) < int(v)]
+                if x.get('tgts'):
+                    tz = next((z for z in log if z.get('id') == x['tgts'][0].get('uid')), None)
+                    if tz is None or unfired(tz):
+                        continue
+                    # 刷新了说明目标触发了神赐，按战力变化猜的那张没有神赐可触发：不对，改按神赐推
+                    x.pop('tgts')
+                    x['hud'] = ''
+                cands = []
+                for z in log:
+                    if z['who'] != 'me' or not z.get('row') or z.get('r') != x.get('r') or z.get('ts', 1e9) > x['ts'] or \
+                            gone.get(z.get('id'), 1e9) <= x['ts'] or z['a'] not in ('play', 'summon', 'spawn'):
+                        continue
+                    zt = text_of(z.get('c'))
+                    if re.search(r'(^|/)\s*免疫', zt):
+                        continue
+                    if unfired(z) or (fired.get(z['id']) and [v for v in re.findall(r'神赐\s*(\d+)', zt)
+                                                               if int(v) not in fired[z['id']]]):
+                        cands.append(z)   # 已经触发过神赐的那张，战力读数常被护盾金光弄错，只看还剩没剩门槛
+                # 连用多半是推同一张的下一个神赐：已经触发过神赐、还有更高门槛的那张优先（少女的盾牌 8 → 14）
+                cont = [z for z in cands if fired.get(z['id'])]
+                cands = cont if len(cont) == 1 else cands
+                if len(cands) == 1:
+                    x['tgts'] = [{'uid': cands[0]['id']}]
+                    x['hud'] = f"目标：领袖刷新了，场上只有 {cands[0]['c']} 还有没触发的神赐"
+                    fired.setdefault(cands[0]['id'], set()).add(min(int(v) for v in re.findall(r'神赐\s*(\d+)', text_of(cands[0]['c']))
+                                                                    if int(v) not in fired.get(cands[0]['id'], set())))
+            elif not x.get('tgts'):
+                prev = next((u for u in reversed(uses[:i]) if u.get('r') == x.get('r') and x['ts'] - u['ts'] <= 30 and u.get('tgts')), None)
+                if prev:
+                    x['tgts'] = [dict(t_) for t_ in prev['tgts']]
+                    x['hud'] = '目标：连用的最后一次，和上一次同一个目标'
 
     def flush_scores(upto):
         """把 upto 之前的稳定总分里、最后一个写成核对点（每一手之后一个）。"""
@@ -1062,13 +1135,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             if len(locked) == 1:
                 x['tgts'] = [{'uid': locked[0]['id']}]
                 x['hud'] = (x.get('hud', '') + '；目标：场上唯一被锁定的单位（卡面会解除锁定）').strip('；')
-        elif x['a'] == 'leader' and x['who'] == 'me' and re.search(r'增益', text_of(x.get('c'))):
-            # 增益后紧接着有单位神赐生成：增益的就是那个单位
-            y = next((y for y in log[i + 1:] if 0 <= y.get('ts', -99) - x['ts'] <= 3 and y.get('via') and '神赐' in (y.get('hud') or '')), None)
-            src = y and next((z for z in reversed(log[:i]) if z['who'] == 'me' and z.get('c') == y['via'] and z.get('row')), None)
-            if src:
-                x['tgts'] = [{'uid': src['id']}]
-                x['hud'] = f"目标：{y['via']} 随后神赐生成了 {y.get('c')}"
+    resolve_leader_chain()
     if review is not None:
         for i, x in enumerate(log):
             c, side = x.get('c') or '', '我方' if x['who'] == 'me' else '对方'
@@ -1120,7 +1187,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     }
 
 
-def leader_from_glow(events, states, eps, cards_by_name=None):
+LEADER_ME = '皇家激励'   # 用户的领袖（卡组固定）
+
+
+def leader_from_glow(events, states, eps, cards_by_name=None, boost_max=None):
     """我方领袖：图标黄光（已点选、正在找目标）的每一段 [t0, t1]，看前后的证据——
     总分：黄光前稳定的我方总分 vs 黄光后（t1 + 1 ~ 4 秒）稳定的总分，涨了 = 真的用了（取消不会涨分）；
     目标：前后我方各单位战力（整排牌名对得上的帧取中位数），涨得最多（≥ 2）的那张。
@@ -1169,7 +1239,8 @@ def leader_from_glow(events, states, eps, cards_by_name=None):
         gains += [(p1[k] - int(base), k) for k in p1 if k not in p0 and k in present
                   and str(base := ((cards_by_name or {}).get(k[1]) or {}).get('power')).isdigit()]
         # 免疫的（布朗温）不能被指定；涨得最多的要比第二名多 2 以上才算（同时还有神赐、灌注、护盾金光读错，拿不准就问）
-        gains = sorted((g for g in gains if '免疫' not in ((cards_by_name or {}).get(g[1][1]) or {}).get('text', '')), reverse=True)
+        gains = sorted((g for g in gains if '免疫' not in ((cards_by_name or {}).get(g[1][1]) or {}).get('text', '')
+                        and (boost_max is None or g[0] <= boost_max)), reverse=True)   # 比卡面增益还多的是读错（护盾金光下的两位数）
         best = gains[0] if gains else (0, None)
         sure = best[0] >= 2 and (len(gains) < 2 or best[0] - gains[1][0] >= 2)
         info.append({'t0': t0, 't1': t1, 'used': s0 is not None and s1 is not None and s1 > s0,
@@ -1299,7 +1370,9 @@ def main():
     tr = timeline.Tracker()
     for t, ent in states:
         tr.update(t, ent)
-    events = leader_from_glow(tr.finish(), states, tr.__dict__.get('glow_eps', []), {c['name']: c for c in m.cards})
+    by_name = {c['name']: c for c in m.cards}
+    lb = re.search(r'获得\s*(\d+)\s*点增益', (by_name.get(LEADER_ME) or {}).get('text') or '')
+    events = leader_from_glow(tr.finish(), states, tr.__dict__.get('glow_eps', []), by_name, int(lb.group(1)) + 1 if lb else None)
     spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
     events = synth_specials(events, states, deck.load(spec, m.cards), {c['name']: c for c in m.cards}, turn_runs(states))
     scores = stable_scores(states)
