@@ -1,4 +1,6 @@
 """从整屏画面里找卡牌：右侧展示区（对方刚打出的牌）、墓场网格。坐标都按画面宽高的比例，和分辨率无关。"""
+import os
+
 import cv2
 import numpy as np
 
@@ -28,12 +30,120 @@ def paper_ratio_rel(img, box):
     return float(m.mean())
 
 
+def panel_ratio(frame):
+    """画面中间羊皮纸颜色占比：右键 / 长按看牌的大说明面板（带衍生牌小图，会被认成场上的牌）约 0.35–0.6；
+    普通画面、悬停小说明框、右侧展示框 < 0.12（2026-10-01 北方营地棋盘量的）。"""
+    H, W = frame.shape[:2]
+    hsv = cv2.cvtColor(frame[int(0.15 * H):int(0.85 * H):4, int(0.25 * W):int(0.75 * W):4], cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    return float(((h >= 8) & (h <= 28) & (s >= 25) & (s <= 110) & (v >= 140)).mean())
+
+
 def showcase(frame, thresh=0.5):
     """有展示卡时返回卡图区域（BGR），否则 None。"""
     if paper_ratio(frame) < thresh:
         return None
     import layout
     return crop(frame, layout.get(frame)['show_card'])
+
+
+def shield(frame, x, y, h):
+    """场上这张牌（中心 x、y，高 h，画面比例）有没有护盾：左下图标列里带深色圈的橙色圆点
+    （有护盾时整张牌还会泛金光，但神赐、增益动画、金色卡框也会发金光，只看圆点）。
+    2026-10-01 真人局 2500 张场上牌人工核对，单帧错 5–6 张（孤立的一帧，导出时要求连续两帧一致）。"""
+    H, W = frame.shape[:2]
+    ch = h * H * 1.08
+    cw = ch * 0.67
+    x0, y0 = int(x * W - cw / 2), int(y * H - ch / 2)
+    if x0 < 0 or y0 < 0 or x0 + cw > W or y0 + ch > H:
+        return None
+    c = frame[y0:int(y0 + ch), x0:int(x0 + cw)]
+    ch, cw = c.shape[:2]
+    reg = c[int(.55 * ch):, :int(.42 * cw)]
+    hsv = cv2.cvtColor(reg, cv2.COLOR_BGR2HSV)
+    m = ((hsv[..., 0] >= 5) & (hsv[..., 0] <= 25) & (hsv[..., 1] >= 140) & (hsv[..., 2] >= 140)).astype(np.uint8)
+    m[:, :int(0.06 * cw)] = 0      # 卡框左边、底边的金光会和圆点连成一片
+    m[-int(0.04 * ch):, :] = 0
+    n, _lab, st, _cen = cv2.connectedComponentsWithStats(m, 8)
+    d0 = 0.15 * cw                 # 圆点直径约卡宽 15%
+    for i in range(1, n):
+        _x, _y, w, hh, a = st[i]
+        if 0.5 * d0 <= w <= 1.5 * d0 and 0.5 * d0 <= hh <= 1.5 * d0 and 0.7 <= w / max(hh, 1) <= 1.4                 and a >= 0.3 * w * hh:   # 圆点中间有时偏暗，填充率 0.37–0.8
+            return True
+    return False
+
+
+def leader_glow(frame):
+    """我方领袖图标外圈的光：'Y' 黄光（已点选领袖、正在找目标）、'G' 绿光（能用）、None 无光 / 没标定。
+    用户确认：绿 = 随时能用；无光 = 正在拖牌等用不了但有次数；黄 = 已点选正在找目标；变暗、没有数字框 = 用完。"""
+    import layout
+    box = layout.get(frame).get('lead_badge_me')
+    if not box:
+        return None
+    c = crop(frame, box)
+    hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(int) for i in range(3))
+    ring = np.ones(h.shape, bool)
+    ch, cw = h.shape
+    ring[int(ch * .13):int(ch * .82), int(cw * .23):int(cw * .77)] = False   # 图标本身（金色王冠、数字）不算
+    if ((h >= 5) & (h <= 25) & (s >= 150) & (v >= 180) & ring).mean() > 0.08:
+        return 'Y'
+    if ((h >= 40) & (h <= 95) & (s >= 70) & (v >= 140) & ring).mean() > 0.05:
+        return 'G'
+    return None
+
+
+ABILITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache', 'ability')
+_ICONS = {}
+
+
+def _gold(bgr):
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    return ((h >= 8) & (h <= 32) & (s >= 60) & (v >= 90)).astype(np.float32)
+
+
+def _icon(card_id):
+    """gwent.one 领袖技能图标（cache/ability/<编号>.png，build_db.py 下载）的金色纹章（裁到纹章外框）。"""
+    if card_id not in _ICONS:
+        p = os.path.join(ABILITY_DIR, f'{card_id}.png')
+        im = cv2.imread(p, cv2.IMREAD_UNCHANGED) if os.path.exists(p) else None
+        g = None
+        if im is not None and im.shape[2] == 4:
+            a = im[..., 3:] / 255.0
+            g = _gold((im[..., :3] * a).astype(np.uint8))
+            ys, xs = np.nonzero(g)
+            g = g[ys.min():ys.max() + 1, xs.min():xs.max() + 1] if len(xs) >= 50 else None
+        _ICONS[card_id] = g
+    return _ICONS[card_id]
+
+
+def leader_icon_scores(frame, side, card_ids):
+    """左上（对方）/ 左下（我方）领袖徽章顶部的纹章和各领袖技能图标比：{编号: 相似度 -1~1}。
+    游戏里徽章只露出金色纹章（图标的彩色盾牌底看不到），所以只比金色部分的形状，按几个缩放找最像的。
+    2026-10-01 真人局对方游击战术约 0.7–0.8，别的都在 0.35 以下；用完之后徽章变暗，认不准。"""
+    import layout
+    box = layout.get(frame).get(f'lead_icon_{side}')
+    if not box:
+        return {}
+    reg = _gold(crop(frame, box))
+    if reg.sum() < 30:
+        return {}
+    out = {}
+    for cid in card_ids:
+        t0 = _icon(cid)
+        if t0 is None:
+            continue
+        best = -1.0
+        for wf in np.arange(0.45, 0.95, 0.05):
+            w = int(reg.shape[1] * wf)
+            h = int(t0.shape[0] * w / t0.shape[1])
+            if h >= reg.shape[0] or w < 8:
+                continue
+            r = cv2.matchTemplate(reg, cv2.resize(t0, (w, h), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED)
+            best = max(best, float(r.max()))
+        out[cid] = best
+    return out
 
 
 _sift_board = cv2.SIFT_create()

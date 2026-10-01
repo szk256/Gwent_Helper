@@ -64,6 +64,21 @@ def main():
                 print(f'  {i + 1}/{len(arts)}')
     print(f'下载完成 {ok}/{len(arts)}')
 
+    # 领袖技能图标（游戏里左上 / 左下的徽章纹章，detect.leader_icon_scores 用）
+    ab_dir = os.path.join(CACHE, 'ability')
+    os.makedirs(ab_dir, exist_ok=True)
+    for c in cards:
+        if c.get('type') == '领袖能力' and c.get('id'):
+            dst = os.path.join(ab_dir, f"{c['id']}.png")
+            if not (os.path.exists(dst) and os.path.getsize(dst) > 500):
+                try:
+                    req = urllib.request.Request(f"https://gwent.one/image/gwent/assets/ability/{c['id']}.png",
+                                                 headers={'User-Agent': 'gwent-hud/0.1'})
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        open(dst, 'wb').write(r.read())
+                except Exception as e:  # noqa: BLE001
+                    print(f"  领袖图标下载失败 {c['name']}: {e}")
+
     sift = cv2.SIFT_create(nfeatures=MAX_FEAT)
     descs, owners, keep, geo = [], [], [], []
     for art in arts:

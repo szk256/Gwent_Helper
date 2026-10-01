@@ -58,10 +58,11 @@ def _cluster(a, min_votes):
         idx = np.flatnonzero(left)
         p = a[idx]
         r = 0.22 * np.median(p[:, 2])
-        d2 = (p[:, None, 0] - p[None, :, 0]) ** 2 + (p[:, None, 1] - p[None, :, 1]) ** 2
-        nb = d2 < r * r
-        best = nb.sum(1).argmax()
-        mem = idx[nb[best]]
+        # 两两距离是 n²：点特别多时（大图、选牌界面）只在抽样的点里找最密的中心，再按它收全部的点
+        q = p if len(p) <= 1500 else p[np.random.default_rng(0).choice(len(p), 1500, replace=False)]
+        d2 = (q[:, None, 0] - q[None, :, 0]) ** 2 + (q[:, None, 1] - q[None, :, 1]) ** 2
+        best = q[(d2 < r * r).sum(1).argmax()]
+        mem = idx[(p[:, 0] - best[0]) ** 2 + (p[:, 1] - best[1]) ** 2 < r * r]
         if len(mem) < min_votes:
             break
         c = np.median(a[mem], 0)
@@ -69,40 +70,112 @@ def _cluster(a, min_votes):
         # 这张牌范围内的点都去掉（同一张牌里偶尔有偏得较远的估计）
         dd = (a[:, 0] - c[0]) ** 2 + (a[:, 1] - c[1]) ** 2
         left &= ~(dd < (0.3 * c[2]) ** 2)
+        left[mem] = False   # 簇里的点估出的牌高接近 0 时上面一个都去不掉，会死循环
     return out
 
 
-def scan(matcher, frame, card_h=220, min_votes=4, detail=False):
+WEAK_V, WEAK_R = 6, 0.15
+
+
+def expected_h(L, y):
+    """这个位置（中心 y）场上牌的预期高度（透视；没有模型返回 None）。"""
+    if 'board_h' not in L:
+        return None
+    y0, h0, k = L['opp_h'] if y < dict(L['row_cy'])['对方近战'] and 'opp_h' in L else L['board_h']
+    return h0 + k * (y - y0)
+
+
+def row_heights(L, cs):
+    """同一排的牌一样大：[(x, ...), y, h] 列表 → 每张牌用的高度。
+    单张估出的高度跟卡图构图有关（游戏内卡图和 gwent.one 不同的，系统性偏 10–16%），读战力 / 护盾的截取框会错位；
+    一排有 3 张以上时用同排中位数，否则用透视模型的预期高度（没有模型就用自己的）。"""
+    import statistics
+    hs = [c[-1] for c in cs]
+    if len(hs) >= 3:
+        ref = statistics.median(hs)
+        return [ref] * len(hs)
+    return [expected_h(L, c[-2]) or c[-1] for c in cs]
+
+
+def classify(L, x, y, h, votes):
+    """一张认出的牌（中心 x、y，高度 h，画面比例；票数）→ 排名，None = 丢掉。
+    有 board_h（电脑）时我方半场按这个位置的场上牌高判断是不是手牌（只用我方半场的数据量的，对方半场透视不同），
+    否则按固定的 hand_h。"""
+    if h > L.get('max_h', 9):
+        return None
+    if y >= L['hand_y']:
+        return '手牌'
+    if 'board_h' in L and y < dict(L['row_cy'])['对方近战']:
+        # 对方半场：透视和我方不一样（远程 y 0.22 → 牌高 0.15，近战 y 0.38 → 0.14），也不会有手牌，只挡住特别大 / 特别小的
+        if h >= L['hand_h']:
+            return '手牌'   # 拖过对方半场的牌
+        if h < L['board_min'] * 0.14:
+            return None
+    elif 'board_h' in L:
+        y0, h0, k = L['board_h']
+        hb = h0 + k * (y - y0)
+        if h >= L['board_ratio'] * hb:
+            return '手牌'
+        if h < L['board_min'] * hb:
+            return None   # 比场上的牌还小得多：几个零散特征点凑出来的
+    elif h >= L['hand_h']:
+        return '手牌'
+    return next(r for r, lim in L['row_cy'] if y < lim)
+
+
+def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=None, pre=None):
     """返回 {排名: [(x, 卡图, 票数)]}，x 为画面宽度比例，从左到右。
     每个特征点反推卡牌中心和高度，按中心聚成一张张牌；高度大的是手牌，其余按中心高度分排。
     同一个中心、同一个大小上的几票互相印证，随机误匹配很难凑到一起，所以 4 票就够；高亮（金光）的牌票数少，
     card_h（扫描时把场上牌缩放到的高度）从 160 提到 220 能多认出来，代价是每帧约 1.1 → 1.8 秒。
-    位置参数按画面比例取 layout（电脑 16:9 / iPad 4:3）。detail=True 时每项为 (x, 卡图, 票数, y, 高度)。"""
+    mine：我方半场（两排 + 手牌）改用这个匹配器（matcher.subset(卡组 + 衍生牌)）：候选少，高亮的牌也认得出来。
+    位置参数按画面比例取 layout（电脑 16:9 / iPad 4:3）。detail=True 时每项为 (x, 卡图, 票数, y, 高度)。
+    raw：传一个列表进来，分排之前的每个检测 [牌名, 票数, x, y, 高度] 追加进去（存进缓存，改分排规则不用重扫）。"""
     L = layout.get(frame)
     H, W = frame.shape[:2]
     showing = detect.paper_ratio(frame) > 0.5
     sx0, sy0, sx1 = L['scan']
-    X0, Y0, X1, Y1 = int(sx0 * W), int(sy0 * H), int(sx1 * W), H
-    g = cv2.cvtColor(frame[Y0:Y1, X0:X1], cv2.COLOR_BGR2GRAY)
-    k = card_h / (L['card_h'] * H)
-    g = cv2.resize(g, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
-    pts = {}
-    for owner, cx, cy, h, _ang in matcher.match_cards(g):
-        pts.setdefault(owner, []).append((cx / k + X0, cy / k + Y0, h / k))
+    split = dict(L['row_cy'])['对方近战']          # 对方 / 我方的分界（牌中心）
+    margin = L['card_h'] * 0.6                     # 两半各多扫半张牌高，边界上的牌完整
+    parts = [(matcher, sy0, split + margin, lambda y: y < split)] if mine is not None else [(matcher, sy0, 1.0, None)]
+    if mine is not None:
+        parts.append((mine, split - margin, 1.0, lambda y: y >= split))
     rows = {r: [] for r in ROW_KEYS}
     bx, by = L['show_block']
-    for o, ps in pts.items():
-        if len(ps) < min_votes:
-            continue
-        for v, cx, cy, h in _cluster(np.array(ps), min_votes):
-            x, y, hh = cx / W, cy / H, h / H
-            if showing and x > bx and y < by:  # 展示框（右上）里的牌不算场上的
+    for mm, py0, py1, keep in parts:
+        X0, Y0, X1, Y1 = int(sx0 * W), int(py0 * H), int(sx1 * W), int(min(1.0, py1) * H)
+        g = cv2.cvtColor(frame[Y0:Y1, X0:X1], cv2.COLOR_BGR2GRAY)
+        if pre is not None:
+            g = pre(g, mm is mine)   # 实验用：认牌前处理灰度图
+        k = card_h / (L['card_h'] * H)
+        g = cv2.resize(g, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
+        pts = {}
+        for owner, cx, cy, h, _ang in mm.match_cards(g):
+            pts.setdefault(owner, []).append((cx / k + X0, cy / k + Y0, h / k))
+        for o, ps in pts.items():
+            if len(ps) < min_votes:
                 continue
-            if hh >= L['hand_h'] or y >= L['hand_y']:
-                row = '手牌'
-            else:
-                row = next(r for r, lim in L['row_cy'] if y < lim)
-            rows[row].append((x, matcher.arts[o], v, y, hh) if detail else (x, matcher.arts[o], v))
+            cl = sorted(_cluster(np.array(ps), min_votes), reverse=True)
+            vmax = cl[0][0] if cl else 0
+            kept = []
+            for v, cx, cy, h in cl:
+                if v <= WEAK_V and v < WEAK_R * vmax:
+                    continue  # 同一张卡图另有强得多的一簇：这是那张牌的零散特征点凑出来的影子
+                if any(abs(cx - c2[1]) < 0.45 * 0.7 * max(h, c2[3]) and abs(cy - c2[2]) < 0.6 * max(h, c2[3])
+                       for c2 in kept):
+                    continue  # 和更强的一簇是同一张牌（游戏内卡图模板和 gwent.one 卡图构图不同，反推的中心差半张牌）
+                kept.append((v, cx, cy, h))
+                x, y, hh = cx / W, cy / H, h / H
+                if keep and not keep(y):
+                    continue
+                if showing and x > bx and y < by:  # 展示框（右上）里的牌不算场上的
+                    continue
+                if raw is not None:
+                    raw.append([matcher.by_art[matcher.arts[o]][0]['name'], int(v), round(x, 4), round(y, 4), round(hh, 4)])
+                row = classify(L, x, y, hh, v)
+                if row is None:
+                    continue
+                rows[row].append((x, matcher.arts[o], v, y, hh) if detail else (x, matcher.arts[o], v))
     for r in rows.values():
         r.sort()
     return rows

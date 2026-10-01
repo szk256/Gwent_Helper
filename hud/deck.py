@@ -41,5 +41,10 @@ def load(spec=None, cards=()):
         return from_code(spec, cards)
     path = spec.split('|')[0].strip()
     if os.path.exists(path):
+        with open(path, encoding='utf-8') as f:
+            head = f.read(16).lstrip('﻿').strip()
+        if head.startswith('#GWDECK'):  # 放着卡组代码的文本文件
+            with open(path, encoding='utf-8') as f:
+                return from_code(f.read(), cards)
         return from_backup(path, spec.split('|')[1].strip() if '|' in spec else None)
     return {}
