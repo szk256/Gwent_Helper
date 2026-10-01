@@ -469,6 +469,32 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
         push({'who': 'me', 'a': 'order', 'c': srcs[0][1], 'uid': srcs[0][0], 'tgts': [{'uid': tu[0]}],
               'hud': f'我方回合对方总分 -{d}、没有单位离场：推测是这张的指令（{tu[1]} 战力 -{drop[2]:g}）'}, tc - 0.3)
 
+    def add_same_name_copies():
+        """卡面“召唤所有同名牌”的牌（信鸦：从墓场 / 牌组召唤同名牌至同排）落地后，同排的同名牌常常只认出一张
+        （并排的第二张特征点少、时有时无）。落地后到这一排下一次记这张牌之前（最多 60 秒），
+        同时认出 2 张以上的帧有 3 帧以上 → 补记召唤出来的那几张（2026-10-01 对方第二张信鸦，2 分钟里认出 9 帧）。"""
+        rk_of = {'m': '近战', 'r': '远程'}
+        for i, x in enumerate(list(log)):
+            if x['a'] not in ('play', 'summon', 'spawn') or not x.get('row') or 'ts' not in x:
+                continue
+            if not re.search(r'召唤[^。/]*同名牌', text_of(x.get('c'))):
+                continue
+            rk = ('我方' if x['who'] == 'me' else '对方') + rk_of[x['row']]
+            later = [y['ts'] for y in log if y is not x and y.get('c') == x['c'] and y.get('row') == x['row']
+                     and y['who'] == x['who'] and y.get('ts', 0) > x['ts']]
+            end = min(later + [x['ts'] + 60] + [te for te in round_ends if te > x['ts']])
+            have = 1 + sum(1 for y in log if y is not x and y.get('c') == x['c'] and y.get('row') == x['row'] and y['who'] == x['who']
+                           and y.get('r') == x.get('r') and abs(y.get('ts', -99) - x['ts']) <= 8)
+            cnt = sorted(((ent.get('rows') or {}).get(rk, []).count(x['c']) for tt, ent in (states or [])
+                          if x['ts'] + 1 <= tt <= end and ent.get('sharp', 0) >= ent.get('smin', 40)), reverse=True)
+            n = max((k for k in range(2, 5) if sum(1 for c_ in cnt if c_ >= k) >= 3), default=1)
+            j = log.index(x)
+            for _k in range(n - have):
+                j += 1
+                log.insert(j, {'who': x['who'], 'a': 'summon', 'c': x['c'], 'row': x['row'], 'side': x['who'], 'r': x.get('r'),
+                               'id': f"{x['id']}s{_k}", 'ts': x['ts'] + 0.1, 'vt': x.get('vt'),
+                               'hud': f"{x['c']} 卡面召唤同名牌：同排同时认出 {n} 张的帧不少（第二张特征点少、时有时无）"})
+
     def resolve_leader_chain():
         """我方领袖“触发友军神赐就刷新”（皇家激励）连用时按机制补目标：
         - 用完之后次数还在（没有连着两帧读到 0）= 刷新了 = 目标触发了神赐：
@@ -1136,6 +1162,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                 x['tgts'] = [{'uid': locked[0]['id']}]
                 x['hud'] = (x.get('hud', '') + '；目标：场上唯一被锁定的单位（卡面会解除锁定）').strip('；')
     resolve_leader_chain()
+    add_same_name_copies()
     if review is not None:
         for i, x in enumerate(log):
             c, side = x.get('c') or '', '我方' if x['who'] == 'me' else '对方'
