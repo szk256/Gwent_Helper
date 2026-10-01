@@ -236,10 +236,63 @@ def scan_dir(m, d, jobs=1):
             print(f'  扫描 {i + 1}/{len(frames)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
             save_json(cache, done)
     save_json(cache, done)
-    return [(frame_time(p), done[os.path.basename(p)]) for p in frames]
+    return fill_gaps([(frame_time(p), done[os.path.basename(p)]) for p in frames])
 
 
 BOARD_ROWS = [r for r in board.ROW_KEYS if r != '手牌']
+
+
+FILL_MIN = 2
+OTHER_ROW = {'对方远程': '对方近战', '对方近战': '对方远程', '我方近战': '我方远程', '我方远程': '我方近战'}
+
+
+def fill_gaps(states, gap=4.0):
+    """位置延续：前 gap 秒内和后 gap 秒内（正常对局画面）同一排都认出过某张牌、这一帧却少了，补上（战力、护盾留空）。
+    漏认几乎都是动画 / 遮挡的瞬间——神赐增益的白光、锤子、选目标的准星、悬停说明框、“己方回合”横幅、选目标时整排变暗，
+    牌面被盖住，认不出来（2026-10-01 真人局人工看过），常常连着好几帧。补上后逐帧的排、战力同步、目标推断能对齐。原数据（det）不动。"""
+    ok = [i for i, (_t, e) in enumerate(states)
+          if e.get('sharp', 0) >= e.get('smin', 40) and None not in (e.get('score') or [None]) and e.get('rows')]
+    orig = {i: {r: list(states[i][1]['rows'].get(r, [])) for r in BOARD_ROWS} for i in ok}
+    for j, i in enumerate(ok):
+        t, e = states[i]
+        before = [orig[ok[a]] for a in range(j - 1, -1, -1) if t - states[ok[a]][0] <= gap]
+        after = [orig[ok[a]] for a in range(j + 1, len(ok)) if states[ok[a]][0] - t <= gap]
+        if not before or not after:
+            continue
+        for r in BOARD_ROWS:
+            cur = list(e['rows'].get(r, []))
+            names = dict.fromkeys(n for fr in before for n in fr[r])
+            add = []
+            for nm in names:
+                # 前后各至少 FILL_MIN 帧看到这么多张（偶尔一帧的误认不延续）
+                kb = sorted((fr[r].count(nm) for fr in before), reverse=True)
+                ka = sorted((fr[r].count(nm) for fr in after), reverse=True)
+                if len(kb) < FILL_MIN or len(ka) < FILL_MIN:
+                    continue
+                other = OTHER_ROW[r]   # 前后窗口里同一方另一排也出现过这张牌：可能在换排（猫学派猎魔人），不补
+                if any(nm in fr[other] for fr in before + after) or nm in e['rows'].get(other, []):
+                    continue
+                k = min(kb[FILL_MIN - 1], ka[FILL_MIN - 1]) - cur.count(nm)
+                add += [nm] * max(0, k)
+            if not add:
+                continue
+            ref = next(fr[r] for fr in before if any(nm in fr[r] for nm in add))   # 最近一帧里的位置
+            pw = list((e.get('pw') or {}).get(r, []))
+            sh = list((e.get('sh') or {}).get(r, []))
+            pw += [None] * (len(cur) - len(pw))
+            sh += [None] * (len(cur) - len(sh))
+            for nm in add:   # 按前面帧里的位置插回去
+                pos = ref.index(nm) if nm in ref else len(ref)
+                prev_names = [x for x in ref[:pos] if x in cur]
+                at = (max(i2 for i2, x in enumerate(cur) if x == prev_names[-1]) + 1) if prev_names else 0
+                cur.insert(at, nm)
+                pw.insert(at, None)
+                sh.insert(at, None)
+            e['rows'] = dict(e['rows'], **{r: cur})
+            e['pw'] = dict(e.get('pw') or {}, **{r: pw})
+            e['sh'] = dict(e.get('sh') or {}, **{r: sh})
+            e['filled'] = True
+    return states
 CARDS = {c['name']: c for c in Matcher.load_cards_static()}
 CARD_TYPE = {c['name']: c['type'] for c in Matcher.load_cards_static()}
 

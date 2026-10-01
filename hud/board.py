@@ -123,7 +123,7 @@ def classify(L, x, y, h, votes):
     return next(r for r, lim in L['row_cy'] if y < lim)
 
 
-def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=None):
+def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=None, pre=None):
     """返回 {排名: [(x, 卡图, 票数)]}，x 为画面宽度比例，从左到右。
     每个特征点反推卡牌中心和高度，按中心聚成一张张牌；高度大的是手牌，其余按中心高度分排。
     同一个中心、同一个大小上的几票互相印证，随机误匹配很难凑到一起，所以 4 票就够；高亮（金光）的牌票数少，
@@ -145,6 +145,8 @@ def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=N
     for mm, py0, py1, keep in parts:
         X0, Y0, X1, Y1 = int(sx0 * W), int(py0 * H), int(sx1 * W), int(min(1.0, py1) * H)
         g = cv2.cvtColor(frame[Y0:Y1, X0:X1], cv2.COLOR_BGR2GRAY)
+        if pre is not None:
+            g = pre(g, mm is mine)   # 实验用：认牌前处理灰度图
         k = card_h / (L['card_h'] * H)
         g = cv2.resize(g, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
         pts = {}

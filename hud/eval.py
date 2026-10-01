@@ -178,6 +178,7 @@ def board_check(d, use_det=False):
                     rows[r].append((x, n))
             ent['rows'] = {r: [n for _x, n in sorted(cs)] for r, cs in rows.items()}
         states.append((timeline.frame_time(k), ent))
+    states = timeline.fill_gaps(states)   # 和导出一样补上动画 / 遮挡瞬间的漏认
     # 逐帧
     tp = fp = fn = to_hand = nfr = 0
     bad = collections.Counter()
