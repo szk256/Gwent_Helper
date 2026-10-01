@@ -36,7 +36,7 @@ def tokens(g, r, who):
         for t in x.get('tgts') or []:
             u = ids.get(str(t.get('uid', '')).split('/')[0])
             tg.append((u.get('c') if u else None) or '带出的单位')
-        out.append((tok, tg, x.get('vt', ''), x['a'] == 'summon'))
+        out.append((tok, tg, x.get('vt', ''), x['a'] in ('summon', 'spawn')))
     return out
 
 

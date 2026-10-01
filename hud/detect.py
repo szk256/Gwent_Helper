@@ -30,6 +30,15 @@ def paper_ratio_rel(img, box):
     return float(m.mean())
 
 
+def panel_ratio(frame):
+    """画面中间羊皮纸颜色占比：右键 / 长按看牌的大说明面板（带衍生牌小图，会被认成场上的牌）约 0.35–0.6；
+    普通画面、悬停小说明框、右侧展示框 < 0.12（2026-10-01 北方营地棋盘量的）。"""
+    H, W = frame.shape[:2]
+    hsv = cv2.cvtColor(frame[int(0.15 * H):int(0.85 * H):4, int(0.25 * W):int(0.75 * W):4], cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    return float(((h >= 8) & (h <= 28) & (s >= 25) & (s <= 110) & (v >= 140)).mean())
+
+
 def showcase(frame, thresh=0.5):
     """有展示卡时返回卡图区域（BGR），否则 None。"""
     if paper_ratio(frame) < thresh:

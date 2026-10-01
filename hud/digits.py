@@ -2,6 +2,7 @@
 
 模板从总分截图自动生成（python hud/digits.py build 帧目录，样本写在 SAMPLES 里），存 hud/digits.npz（很小，提交）。
 战力模板用人工标注的场上牌生成：python hud/digits.py train-power 标注.json（见 train_power）。
+总分另有专用模板：python hud/digits.py train-score hud/cache/rec/score_train_labels.json（见 train_score）。
 """
 import os
 import sys
@@ -133,7 +134,8 @@ def glyphs(mask, min_rel_h=0.55, min_h=6):
         for g in groups:
             ov = min(g[0] + g[2], x + w) - max(g[0], x)
             small = min(w * h, g[2] * g[3]) < 0.3 * max(w * h, g[2] * g[3])
-            if small and ov > 0.5 * min(g[2], w):
+            ovy = min(g[1] + g[3], y + h) - max(g[1], y)   # 竖向也要挨着（数字底下的火星不并进来）
+            if small and ov > 0.5 * min(g[2], w) and ovy >= 0:
                 x1, y1 = min(g[0], x), min(g[1], y)
                 g[2], g[3] = max(g[0] + g[2], x + w) - x1, max(g[1] + g[3], y + h) - y1
                 g[0], g[1] = x1, y1
@@ -141,7 +143,8 @@ def glyphs(mask, min_rel_h=0.55, min_h=6):
                 break
         else:
             groups.append([x, y, w, h, [i]])
-    comps = [g for g in groups if g[3] >= min_h]
+    # 贯穿整个截取框的是光带、边框，不是数字
+    comps = [g for g in groups if g[3] >= min_h and g[3] < 0.9 * mask.shape[0]]
     # 细斜线（菱形边框）在外框里的像素占比很低，数字不会这么低
     comps = [g for g in comps if np.isin(lab[g[1]:g[1] + g[3], g[0]:g[0] + g[2]], g[4]).mean() >= 0.3]
     if not comps:
@@ -237,10 +240,18 @@ class Reader:
             self.plab = np.concatenate([d['plab'], self.lab[extra]])
         else:
             self.ptpl = self.plab = None
+        # 总分专用模板（train-score：人工核对过的比分帧）；没有就用通用模板
+        self.stpl, self.slab = (d['stpl'], d['slab']) if 'stpl' in d.files else (self.tpl, self.lab)
+
+    def _set(self, power):
+        """power：False 通用、True 战力、'score' 总分。"""
+        if power == 'score':
+            return self.stpl, self.slab
+        return (self.ptpl, self.plab) if power and self.ptpl is not None else (self.tpl, self.lab)
 
     def ranked(self, g, power=False, k=4):
         """[(数字, 误差)]，按误差从小到大，每个数字只取最近的一个。"""
-        tpl, lab = (self.ptpl, self.plab) if power and self.ptpl is not None else (self.tpl, self.lab)
+        tpl, lab = self._set(power)
         diff = np.abs(tpl - g[None]).mean((1, 2))
         best = {}
         for i in np.argsort(diff):
@@ -252,8 +263,12 @@ class Reader:
         return sorted(best.items(), key=lambda x: x[1])
 
     def classify(self, g, power=False):
-        tpl, lab = (self.ptpl, self.plab) if power and self.ptpl is not None else (self.tpl, self.lab)
+        tpl, lab = self._set(power)
         diff = np.abs(tpl - g[None]).mean((1, 2))
+        if power == 'score':
+            # 总分：最近的模板（前 3 个投票时，模板少的数字会被票数压过，8 认成 0）
+            i = int(np.argmin(diff))
+            return int(lab[i]), float(diff[i])
         idx = np.argsort(diff)[:3]
         vals = lab[idx]
         best = int(np.bincount(vals).argmax())
@@ -286,7 +301,8 @@ class Reader:
         """(对方总分, 我方总分)，读不出为 None。"""
         import layout
         L = layout.get(frame)
-        return (self.number(mask_score(crop(frame, L['score_op']))), self.number(mask_score(crop(frame, L['score_me']))))
+        return (self.number(mask_score(crop(frame, L['score_op'])), power='score'),
+                self.number(mask_score(crop(frame, L['score_me'])), power='score'))
 
     def turn(self, frame):
         """轮到谁：我方总分后面出现蓝旗 = 'me'，否则 'op'。"""
@@ -482,6 +498,32 @@ def build(d):
     print(f'模板 {len(tpl)} 个，数字 {sorted(set(lab))} → {TPL_PATH}')
 
 
+def train_score(labels_path):
+    """用人工核对过的比分帧（JSON：[{dir, frame, op, me}]）生成总分模板 stpl / slab。
+    旧的总分模板（build）混了战力字形和切坏的碎片（“3”只剩下半截），3 常认成 7 / 2 / 5。
+    2026-10-01 从四局录像（森林、北方营地两种棋盘，火焰背景）挑了 17 帧，见 cache/rec/score_train_labels.json。"""
+    import json
+    with open(labels_path, encoding='utf-8') as f:
+        train = json.load(f)
+    tpl, lab = [], []
+    for t in train:
+        im = cv2.imdecode(np.fromfile(os.path.join(HERE, t['dir'], t['frame']), np.uint8), cv2.IMREAD_COLOR)   # dir 相对 hud/
+        import layout
+        L = layout.get(im)
+        for box, val in ((L['score_op'], t['op']), (L['score_me'], t['me'])):
+            gs = glyphs(mask_score(crop(im, box)))
+            if len(gs) != len(str(val)):
+                print(f'  {t["frame"]} {val}: 切出 {len(gs)} 个字形，跳过')
+                continue
+            for (_x, g, _b), ch in zip(gs, str(val)):
+                tpl.append(g)
+                lab.append(int(ch))
+    old = dict(np.load(TPL_PATH))
+    old.update(stpl=np.array(tpl), slab=np.array(lab))
+    np.savez_compressed(TPL_PATH, **old)
+    print(f'总分模板 {len(lab)} 个：' + str({k: lab.count(k) for k in range(10)}) + f' → {TPL_PATH}')
+
+
 def train_power(labels_path):
     """用人工标注的场上牌战力（JSON：[{dir, frame, x, y, h, power}]，h 用同排牌高）生成战力模板 ptpl / plab。
     标注方法：抽一批场上牌的战力菱形拼成图，看图写真实值（2026-10-01 两局录像标了 158 张，见 cache/rec/power_train_labels.json）。
@@ -509,5 +551,7 @@ if __name__ == '__main__':
         build(sys.argv[2])
     elif len(sys.argv) >= 3 and sys.argv[1] == 'train-power':
         train_power(sys.argv[2])
+    elif len(sys.argv) >= 3 and sys.argv[1] == 'train-score':
+        train_score(sys.argv[2])
     else:
         print(__doc__)

@@ -111,7 +111,7 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
-CLS_VER = 8   # 分排规则（board.classify）、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+CLS_VER = 10   # 分排规则（board.classify）、总分、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
 
 
 def derive(im, ent):
@@ -151,7 +151,7 @@ def scan_frame(m, im):
     ent = {'sharp': sharpness(im), 'show': None,
            'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im),
            'lead': reader().leader(im), 'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw,
-           'lglow': detect.leader_glow(im),
+           'lglow': detect.leader_glow(im), 'panel': detect.panel_ratio(im),
            'v3': 1}  # v3：我方半场用卡组子库 + 游戏内卡图模板；det 是分排前的原始检测
     derive(im, ent)
     sc = detect.showcase(im)
@@ -210,8 +210,10 @@ def scan_dir(m, d, jobs=1):
             if ent.get('cls') != CLS_VER or 'lglow' not in ent:
                 # 分排规则改过：按原始检测重新分排、读战力和护盾；补领袖图标的光
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+                ent['score'] = reader().scores(im)   # 总分模板改过（9：总分专用模板）；战力纠错要用总分，先读
                 derive(im, ent)
                 ent['lglow'] = detect.leader_glow(im)
+                ent['panel'] = detect.panel_ratio(im)
                 ent['cnt'] = reader().counts(im)   # 读数字的规则也可能改了（手牌数“10/10”）
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
@@ -236,10 +238,13 @@ def scan_dir(m, d, jobs=1):
             print(f'  扫描 {i + 1}/{len(frames)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
             save_json(cache, done)
     save_json(cache, done)
-    return fill_gaps([(frame_time(p), done[os.path.basename(p)]) for p in frames])
+    # 看牌的大说明面板挡住了场面（里面的衍生牌小图会被认成场上的牌）：这些帧当没录到
+    return fill_gaps([(frame_time(p), done[os.path.basename(p)]) for p in frames
+                      if done[os.path.basename(p)].get('panel', 0) <= PANEL_MAX])
 
 
 BOARD_ROWS = [r for r in board.ROW_KEYS if r != '手牌']
+PANEL_MAX = 0.25   # detect.panel_ratio 超过这个 = 看牌的大说明面板
 
 
 FILL_MIN = 2
