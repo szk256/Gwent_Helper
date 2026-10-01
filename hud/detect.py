@@ -1,4 +1,6 @@
 """从整屏画面里找卡牌：右侧展示区（对方刚打出的牌）、墓场网格。坐标都按画面宽高的比例，和分辨率无关。"""
+import os
+
 import cv2
 import numpy as np
 
@@ -80,6 +82,59 @@ def leader_glow(frame):
     if ((h >= 40) & (h <= 95) & (s >= 70) & (v >= 140) & ring).mean() > 0.05:
         return 'G'
     return None
+
+
+ABILITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache', 'ability')
+_ICONS = {}
+
+
+def _gold(bgr):
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(np.int16) for i in range(3))
+    return ((h >= 8) & (h <= 32) & (s >= 60) & (v >= 90)).astype(np.float32)
+
+
+def _icon(card_id):
+    """gwent.one 领袖技能图标（cache/ability/<编号>.png，build_db.py 下载）的金色纹章（裁到纹章外框）。"""
+    if card_id not in _ICONS:
+        p = os.path.join(ABILITY_DIR, f'{card_id}.png')
+        im = cv2.imread(p, cv2.IMREAD_UNCHANGED) if os.path.exists(p) else None
+        g = None
+        if im is not None and im.shape[2] == 4:
+            a = im[..., 3:] / 255.0
+            g = _gold((im[..., :3] * a).astype(np.uint8))
+            ys, xs = np.nonzero(g)
+            g = g[ys.min():ys.max() + 1, xs.min():xs.max() + 1] if len(xs) >= 50 else None
+        _ICONS[card_id] = g
+    return _ICONS[card_id]
+
+
+def leader_icon_scores(frame, side, card_ids):
+    """左上（对方）/ 左下（我方）领袖徽章顶部的纹章和各领袖技能图标比：{编号: 相似度 -1~1}。
+    游戏里徽章只露出金色纹章（图标的彩色盾牌底看不到），所以只比金色部分的形状，按几个缩放找最像的。
+    2026-10-01 真人局对方游击战术约 0.7–0.8，别的都在 0.35 以下；用完之后徽章变暗，认不准。"""
+    import layout
+    box = layout.get(frame).get(f'lead_icon_{side}')
+    if not box:
+        return {}
+    reg = _gold(crop(frame, box))
+    if reg.sum() < 30:
+        return {}
+    out = {}
+    for cid in card_ids:
+        t0 = _icon(cid)
+        if t0 is None:
+            continue
+        best = -1.0
+        for wf in np.arange(0.45, 0.95, 0.05):
+            w = int(reg.shape[1] * wf)
+            h = int(t0.shape[0] * w / t0.shape[1])
+            if h >= reg.shape[0] or w < 8:
+                continue
+            r = cv2.matchTemplate(reg, cv2.resize(t0, (w, h), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED)
+            best = max(best, float(r.max()))
+        out[cid] = best
+    return out
 
 
 _sift_board = cv2.SIFT_create()

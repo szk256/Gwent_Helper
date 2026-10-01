@@ -28,7 +28,8 @@ def main():
     out = os.path.join(HERE, 'cache', 'rec', time.strftime('%Y%m%d-%H%M%S'))
     os.makedirs(out, exist_ok=True)
     print(f'录到 {out}，{minutes:.0f} 分钟，Ctrl+C 结束')
-    prev, n, t_end, last_warn = None, 0, time.time() + minutes * 60, 0
+    import detect
+    prev, n, t_end, last_warn, last_save = None, 0, time.time() + minutes * 60, 0, 0.0
     with MSS() as s:
         try:
             while time.time() < t_end:
@@ -43,14 +44,17 @@ def main():
                 im = cv2.cvtColor(np.asarray(s.grab(a)), cv2.COLOR_BGRA2BGR)
                 small = cv2.cvtColor(cv2.resize(im, (320, 180), interpolation=cv2.INTER_AREA),
                                      cv2.COLOR_BGR2GRAY).astype(np.float32)
-                if prev is None or float(np.abs(small - prev).mean()) > 2.5:
+                # 每秒看约 10 次（截屏约 60 ms）：画面变了至少隔 0.3 秒存一张；右侧展示框（对方出牌放大，不到 1 秒）出现时每 0.1 秒存一张
+                changed = prev is None or float(np.abs(small - prev).mean()) > 2.5
+                showing = detect.paper_ratio(im) > 0.5
+                if (changed and t0 - last_save >= 0.3) or (showing and t0 - last_save >= 0.1):
                     name = time.strftime('%H%M%S') + f'_{int(t0 * 10) % 10}.jpg'
                     cv2.imencode('.jpg', im, [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tofile(os.path.join(out, name))
-                    prev = small
+                    prev, last_save = small, t0
                     n += 1
                     if n % 50 == 0:
                         print(f'  {n} 帧')
-                time.sleep(max(0.02, 0.33 - (time.time() - t0)))
+                time.sleep(max(0.005, 0.1 - (time.time() - t0)))
         except KeyboardInterrupt:
             pass
     print(f'共 {n} 帧 → {out}')

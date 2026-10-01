@@ -17,6 +17,8 @@ import sys
 import time
 from collections import Counter
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deck  # noqa: E402
 import timeline  # noqa: E402
@@ -196,7 +198,8 @@ def depart_reason(states, t, side):
 
 
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
-               runs=None, extra=None, sync_states=None, states=None, deck_filter=True, t0=None, review=None):
+               runs=None, extra=None, sync_states=None, states=None, deck_filter=True, t0=None, review=None,
+               op_leader=None):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
     sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
@@ -664,6 +667,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             x = {'who': who, 'a': 'leader'}
             if who == 'me' and leader:
                 x['c'] = leader
+            elif who == 'op' and op_leader:
+                x['c'] = op_leader
             if name and row:   # 目标（leader_from_glow 按战力变化认出的）
                 u = next((u for u in units.get(rowkey(who, ROW[row]), []) if u[1] == name), None)
                 if u:
@@ -719,7 +724,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                         pending_step = True
                     elif who == 'op' and op_lead_drop(ts0, t) > lead_used.get(ts0, 0):
                         lead_used[ts0] = lead_used.get(ts0, 0) + 1
-                        push({'who': 'op', 'a': 'leader', 'tgts': [{'uid': mu[0]}],
+                        push({'who': 'op', 'a': 'leader', **({'c': op_leader} if op_leader else {}), 'tgts': [{'uid': mu[0]}],
                               'hud': '回合中途移排、没有可用的移排指令、这回合对方领袖次数在减少：推测是领袖技能'}, t - 0.2)
                         pending_step = True
                     elif review is not None:
@@ -787,7 +792,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                    if x['who'] == 'op' and x.get('c') in cards_by_name and cards_by_name[x['c']]['fac'] != 'NE')
     return {
         'date': f'{date[:4]}-{date[4:6]}-{date[6:8]}', 'myF': my_fac, 'leader': leader,
-        'fac': facs.most_common(1)[0][0] if facs else 'NR', 'opLeader': None,
+        'fac': facs.most_common(1)[0][0] if facs else 'NR', 'opLeader': op_leader,
         'coin': {'me': '先', 'op': '后'}.get(first_side), 'rounds': rounds, 'log': log,
         'note': f'hud 自动识别（{time.strftime("%Y-%m-%d %H:%M")}），召唤记录和备注需要核对',
     }
@@ -851,6 +856,27 @@ def leader_from_glow(events, states, eps):
         else:
             out.append((it['t0'], '领袖?', '我方', '', ''))
     return sorted(out, key=lambda e: e[0])
+
+
+def identify_op_leader(frame_paths, fac, cards, every=8):
+    """对方领袖技能：抽样的帧里对方徽章纹章和该阵营各领袖技能图标比，取各自分数的中位数；
+    最高的 ≥ 0.55、比第二名高 0.15 以上才算认出（返回牌名），否则 None（清单里问一次）。"""
+    import statistics
+    import cv2
+    import detect
+    leaders = {str(c['id']): c['name'] for c in cards if c.get('type') == '领袖能力' and (not fac or c.get('fac') == fac)
+               and c.get('id')}
+    acc = {k: [] for k in leaders}
+    for p in frame_paths[::every]:
+        im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+        sc = detect.leader_icon_scores(im, 'op', list(leaders))
+        if sc and max(sc.values()) > 0.3:   # 覆盖界面 / 徽章不在的帧不算
+            for k, v in sc.items():
+                acc[k].append(v)
+    med = sorted(((statistics.median(v), k) for k, v in acc.items() if len(v) >= 5), reverse=True)
+    if med and med[0][0] >= 0.55 and (len(med) < 2 or med[0][0] - med[1][0] >= 0.15):
+        return leaders[med[0][1]], med[:3]
+    return None, med[:3]
 
 
 def video_start(path):
@@ -942,10 +968,19 @@ def main():
     sync = '--sync-power' in sys.argv
     video = next((a[8:] for a in sys.argv if a.startswith('--video=')), None)
     review = []
+    import glob
+    op_facs = Counter(m.cards_by_name[n]['fac'] for _t, k, side, n, _r in events
+                      if side == '对方' and k in ('打出', '展示') and n in m.cards_by_name and m.cards_by_name[n]['fac'] != 'NE')
+    frame_paths = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=timeline.frame_time)
+    op_leader, lead_scores = identify_op_leader(frame_paths, op_facs.most_common(1)[0][0] if op_facs else None, m.cards)
+    print('对方领袖：' + (op_leader or '没认出') + '（' + '、'.join(f'{m.by_id.get(int(k), k)} {v:.2f}' for v, k in lead_scores) + '）')
+    if not op_leader and any(e[1] == '领袖' and e[2] == '对方' for e in events):
+        review.append({'ts': next(e[0] for e in events if e[1] == '领袖' and e[2] == '对方'), 'cat': '对方领袖',
+                       'who': 'op', 'c': '', 'text': '对方领袖技能没认出（徽章图案和 gwent.one 图标比不上）：是哪个？导入后在对方领袖处选'})
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
                       runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states,
                       deck_filter='--no-deck-filter' not in sys.argv, t0=video_start(video) if video else None,
-                      review=review)
+                      review=review, op_leader=op_leader)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)

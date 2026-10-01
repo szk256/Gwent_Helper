@@ -69,6 +69,8 @@ class Matcher:
         self.by_art = {}
         for c in self.cards:
             self.by_art.setdefault(c['art'], []).append(c)
+        self.cards_by_name = {c['name']: c for c in self.cards}
+        self.by_id = {c['id']: c['name'] for c in self.cards if c.get('id')}
         self.sift = cv2.SIFT_create(nfeatures=800)
         self.sift_all = cv2.SIFT_create()
         self.flann = cv2.FlannBasedMatcher({'algorithm': 1, 'trees': 4}, {'checks': 64})
