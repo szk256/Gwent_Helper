@@ -96,7 +96,7 @@ function sim(g,r,excl,ov){
       if((rec==null||rec==="")&&P&&R0){const lost=R0.res==="D"||(R0.res==="L")===(sd==="me");const A=P.E.s.sides[sd];
         if(lost&&(A.grave.includes("希里")||P.E.allUnits(sd).some(u=>u.name==="希里")))prev=Math.min(E.rules.handLimit,prev+1);}
       const S=E.s.sides[sd];S.handCount=r===0?E.rules.draws[0]:Math.min(E.rules.handLimit,(prev==null?Math.max(0,E.rules.draws[0]-4*r):prev)+E.rules.draws[r]);S.handKnown=true;}}
-  const consumed=new Set();let acted=false,justEnded=false,lastHand=null,lastAbil=null;
+  const consumed=new Set(),autoPlayed=new Set();let acted=false,justEnded=false,lastHand=null,lastAbil=null;
   // 逐步记录：第几手（每方各自计数，换人行动算新的一手）和这一步结算后的比分，偏差报告用
   const steps={},turnCnt={me:0,op:0};let lastTurn=null;
   const hzCard=nm=>{const d=nm&&E.def(nm);return d&&d.hazardCard;};
@@ -132,12 +132,15 @@ function sim(g,r,excl,ov){
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
     dq=subs.map(y=>y.c);
     const before=curBefore=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
+    // 带出的特殊牌记了排（乌鸦眼块茎生成乌鸦的那排）：引擎“生成并打出”时用
+    E.viaRows={};const effSnap={};for(const y of subs){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
+      // 它的目标（海之新娘从墓场打出的玛哈坎麦酒 +5 给谁）：引擎自动打出这张时用；没有自动打出就原样留给它自己那条记录
+      const ts=(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);if(ts.length){if(!(y.c in effSnap))effSnap[y.c]=(effQ[y.c]||[]).slice();(effQ[y.c]=effQ[y.c]||[]).push(...ts);}}
     const def=x.c?E.def(x.c):null;
     try{
     switch(x.a){
       case "play":{if(def&&(def.type==="tactic"||def.type==="leader")){E.useAbility(side,x.c,{force:true});break;}
-        if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});
-}
+        if(def&&def.type==="special"){E.play(side,x.c,null,null,{row:x.row||(subs[0]&&subs[0].row),pos:subs[0]&&subs[0].pos});}
         else if(x.row){const u=E.play(x.side||side,x.c,x.row,x.pos,{power:x.pw,fromDeck:!!x.via&&x.via!=="墓场",fromGrave:x.via==="墓场",player:side});if(u)bind(x.id,u);}
         else E.log("不上场",{name:x.c});break;}
       case "summon":{if(x.row){if(claimAuto(x))break;const u=E.summon(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
@@ -145,7 +148,8 @@ function sim(g,r,excl,ov){
         else if(x.row){if(claimAuto(x))break;const u=E.spawn(x.c,x.side||side,x.row,x.pos);if(u)bind(x.id,u);}break;}
       case "order":{const u=(x.uid&&unitByKey(x.uid))||E.allUnits(side).find(v=>v.name===x.c&&E.canOrder(v))||E.allUnits(side).find(v=>v.name===x.c);
         if(u)E.order(u.uid,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"找不到指令单位 "+x.c});break;}
-      case "leader":case "tactic":{if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
+      case "leader":case "tactic":{if(x.a==="tactic"&&r>0)warns.push({id:x.id,m:"战术牌只在第一局有，第"+(r+1)+"局记了战术（记错局或其实是领袖）"});
+        else if(x.a==="tactic"&&g.coin&&side!==(g.coin==="先"?"me":"op"))warns.push({id:x.id,m:"只有先手方有战术牌，这条记成了"+sideN(side)+"（记错方或先后手记错）"});
         const nm=x.a==="tactic"?(x.c&&x.c!=="战术"?x.c:tacOf(side)):(x.c||(side==="me"?g.leader:g.opLeader));if(nm)E.useAbility(side,nm,{force:true,row:subs[0]&&subs[0].row,pos:subs[0]&&subs[0].pos});else warns.push({id:x.id,m:"领袖未指定"});
         if(x.a==="tactic")E.removeTactic(side);break;}   // 战术牌用掉即离场
       case "move":{const u=unitByKey(x.uid);if(u)E.move(u,x.row,x.pos);break;}
@@ -196,9 +200,15 @@ function sim(g,r,excl,ov){
       for(const t of E.trace.slice(t0)){const d=t.data||{};if(d.by&&d.by!=="手动")cards.add(d.by);if(t.type==="打出"||t.type==="生成"||t.type==="召唤")cards.add(d.name);if(t.type==="增益"&&d.uid)boosted.add(d.uid);if(t.warn)wn++;}
       if(x.c&&BY[x.c])cards.add(x.c);
       steps[x.id]={who,n:turnCnt[who]||1,me:E.score("me").total,op:E.score("op").total,cards:[...cards].filter(Boolean),wn,boosted:[...boosted]};}
+    E.viaRows=null;
+    // 带出的特殊牌引擎已经自动打出了（艾克索部署“生成并打出”乌鸦眼块茎）：那条记录不再重复打出，它带出的生成记录对应到这一步产生的单位
+    const autoSp=E.trace.slice(t0).filter(t=>t.type==="打出"&&t.data&&t.data.special).map(t=>t.data.name);const bsubs=subs.slice();
+    for(const y of subs){const d=E.def(y.c);if(y.a==="play"&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
+      for(let j=log.indexOf(y)+1;j<log.length;j++){const z=log[j];if(!z.via)break;if(z.via===y.c&&z.who===y.who&&["spawn","summon","play"].includes(z.a))bsubs.push(z);}}}
+    for(const y of subs)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
-    for(const y of subs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
+    for(const y of bsubs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
         if(y.row&&(y.side||y.who)===u.side&&(u.row!==y.row||(y.pos!=null&&E.s.sides[u.side].rows[u.row].indexOf(u)!==y.pos)))relocate(u,y.row,y.pos);}}
     // 引擎自动产生的单位（朗维德回场、神赐生成等），后面又手动记了同名的召唤/生成：对应起来，不重复放
     for(const u of fresh.slice()){curX=x;const y=laterSummon(u.name,u.side);if(!y)continue;bind(y.id,u);consumed.add(y.id);fresh.splice(fresh.indexOf(u),1);
@@ -225,10 +235,10 @@ function sim(g,r,excl,ov){
   }
   E.dropPassedTick();
   // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
-  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn({pass:true});}
+  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});const A=E.s.sides[a];E.endTurn({pass:true,forced:A.handKnown&&A.handCount<=0});}
   {const R1=g.rounds&&g.rounds[r];if(R1&&log.length)for(const sd of["me","op"]){const rec=R1[sd==="me"?"hm":"ho"];
     if(rec!=null&&rec!==""&&+rec!==E.s.sides[sd].handCount)warns.push({id:log[log.length-1].id,m:"推算"+sideN(sd)+"局末手牌 "+E.s.sides[sd].handCount+" 张，记录是 "+rec+" 张（中途抽牌、回手没记，用“修正手牌”补上）"});}}
-  const res={E,key2u,u2key,warns,unmod,steps,score:{me:E.score("me"),op:E.score("op")}};
+  const res={E,key2u,u2key,warns,unmod,steps,autoPlayed,score:{me:E.score("me"),op:E.score("op")}};
   simCache.set(key,res);if(simCache.size>16)simCache.delete(simCache.keys().next().value);return res;}
 // ---------- 偏差报告：真实比分（录屏核对的 C 记录、R 行局末比分）和推算逐步对比 ----------
 // 规则对比里逐个反过来试的未确认规则

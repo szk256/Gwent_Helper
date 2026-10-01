@@ -51,6 +51,7 @@ setTimeout(() => {
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'f1', r: 1, who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }],
       { tacCard: true, cur: 1, rounds: [{ res: 'W', me: '5', op: '0' }] });
     S = w.eval('sim(db.live,1)'); ok(!S.E.s.sides.me.rows.m.some(u => u.isTactic) && !S.E.s.sides.me.grave.includes('战术'), '战术牌：第二局没有，也不进墓场');
+    ok(!w.document.querySelector('[data-act="tactic"]'), '战术牌：第二局起不列“战术”按钮');
     live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
     ok(!w.eval('sim(db.live,0)').E.s.sides.me.rows.m.some(u => u.isTactic), '战术牌：旧对局（没有 tacCard）不放');
     // 对方先手：开局选对方战术牌，放到对方近战排最左边；旧记录只写“战术”的按它结算
@@ -78,7 +79,7 @@ setTimeout(() => {
     // 偏差报告的规则对比：对方停牌后安娜·斯特伦格（回合结束 +1）不再推进才对得上 → 标“更准”
     live([{ id: 'e1', who: 'op', a: 'play', c: '科德温骑士', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '安娜·斯特伦格', row: 'm', pos: 0, side: 'op' },
       { id: 'e3', who: 'op', a: 'pass' }, { id: 'e4', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }, { id: 'e5', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' },
-      { id: 'e6', who: 'me', a: 'pass' }], { rounds: [{ res: 'D', me: '10', op: '10' }] });
+      { id: 'e6', who: 'me', a: 'pass' }], { rounds: [{ res: 'D', me: '10', op: '11' }] });   // 停牌那一下安娜 +1（passTurnEnd），之后不再推进 → 11
     const rep2 = w.document.querySelector('details.sheet'); const ro = rep2 && rep2.textContent;
     ok(/规则对比/.test(ro) && /「停牌方回合照常推进」改成关：核对点一致 1\/1.*（更准）/.test(ro), '偏差报告：规则对比标出更准的写法');
     // 指令指示器：进场当回合虚线“令”，下回合金色；列阵在近战排当回合就能用
@@ -260,12 +261,28 @@ setTimeout(() => {
     ok(/×3/.test(ub('科德温骑士').textContent), '同一单位选了 3 次：格子上显示 ×3');
     Q('[data-do="tgtDone"]').click();
     ok(w.eval('sim(db.live,0).E.allUnits("me").find(u=>u.name==="科德温骑士").power') === kp0 - 3, '三张猫学派猎魔人都打科德温骑士：-3');
+    // “三目者”艾克索（2026-10-01 对斯凯利格第 74–79 步）：部署“生成并打出”乌鸦眼块茎，拉牌步骤有推荐；块茎记在远程 → 乌鸦生成在远程，不重复打出、不再问生成了什么
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }]);
+    w.eval('ui.who="op";startCard("“三目者”艾克索","play","op")'); Q('[data-slot="op|m|0"]').click();
+    ok(fl() === 'pull' && !!Q('.sheet.flow [data-nm="乌鸦眼块茎"]'), '艾克索：拉出了哪张，推荐乌鸦眼块茎');
+    Q('.sheet.flow [data-nm="乌鸦眼块茎"]').click(); Q('[data-slot="op|r|0"]').click();
+    S = w.eval('sim(db.live,0)');
+    ok(fl() !== 'spawn' && w.eval('db.live.log.filter(x=>x.c==="乌鸦").length') === 0, '艾克索：引擎已经生成乌鸦，不再问生成了什么');
+    ok(S.E.s.sides.op.rows.r.filter(u => u.name === '乌鸦').length === 3 && !S.E.allUnits().some(u => u.name === '乌鸦' && (u.side === 'me' || u.row === 'm'))
+      && S.E.trace.filter(t => t.type === '打出' && t.data.name === '乌鸦眼块茎').length === 1, '艾克索：块茎只打出一次，3 只乌鸦在对方远程');
+    // 海之新娘从墓场打出玛哈坎麦酒：麦酒那条记录的目标交给引擎自动打出的那张
+    live([{ id: 'e1', who: 'op', a: 'play', c: '海之新娘', row: 'r', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '玛哈坎麦酒', via: '海之新娘', tgts: [{ uid: 'e1', label: '海之新娘' }] }]);
+    S = w.eval('sim(db.live,0)');
+    ok(S.key2u.e1.power === S.key2u.e1.base + 5 && !S.warns.some(x => /麦酒/.test(x.m)) && S.E.trace.filter(t => t.type === '打出' && t.data.name === '玛哈坎麦酒').length === 1, '海之新娘：麦酒 +5 给记的目标，只打出一次');
     // 先记“触发效果”（回合已结束）再记“结束回合”：不重复结算（以前猫会移回去）
     live([{ id: 'e1', who: 'op', a: 'play', c: '猫学派猎魔人', row: 'r', side: 'op' }, { id: 'e2', who: 'op', a: 'effect', c: '猫学派猎魔人', uid: 'e1' }, { id: 'e3', who: 'op', a: 'end' }]);
     ok(w.eval('sim(db.live,0).E.s.sides.op.rows.m.length') === 1, '触发效果结束回合后再记结束回合：不重复结算');
-    // 停牌不结算回合结束效果（rules.passTurnEnd，未确认）
+    // 停牌也结算回合结束效果（rules.passTurnEnd，用户 2026-10-01 确认）：鼓手相邻 +1
     live([{ id: 'e1', who: 'op', a: 'play', c: '泰莫利亚鼓手', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e3', who: 'op', a: 'pass' }]);
-    ok(us('op') === '泰莫利亚鼓手5 寒冰巨人7', '停牌：默认不结算回合结束效果');
+    ok(us('op') === '泰莫利亚鼓手5 寒冰巨人8', '停牌：结算回合结束效果');
+    // 手里没牌被迫停牌：没有这个回合，不结算
+    live([{ id: 'e1', who: 'op', a: 'play', c: '泰莫利亚鼓手', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e3', who: 'op', a: 'hand', side: 'op', v: '0' }, { id: 'e4', who: 'op', a: 'pass' }]);
+    ok(us('op') === '泰莫利亚鼓手5 寒冰巨人7', '停牌：手里没牌被迫停牌不结算回合结束');
     // 泰莫利亚步兵：领袖还没用过也按剩余充能算
     live([{ id: 'e1', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '泰莫利亚步兵', row: 'm', side: 'op' }, { id: 'e3', who: 'op', a: 'order', c: '泰莫利亚步兵', uid: 'e2', tgts: [{ uid: 'e1' }] }], { opLeader: '揭竿而起' });
     ok(/寒冰巨人13/.test(us('op')), '泰莫利亚步兵：领袖没用过按 3 层充能');
@@ -284,6 +301,14 @@ setTimeout(() => {
     Q('[data-edit="e1"]').click(); Q('[data-do="eDown"]').click();
     ok(Q('.log .sheet.flow.inline') && w.eval('db.live.log.map(x=>x.id).join()') === 'e2,e1' && w.eval('ui.flow[0].id') === 'e1', '修改记录：原地展开，移动后仍聚焦在这一条');
     ok(/ Z$/.test(w.eval('GwentCodec.encodeGame(Object.assign({},db.live,{log:[{r:0,id:"e1",who:"op",a:"end"}]}))')), '导出码：结束回合 Z');
+    // 牌库：衍生牌默认不列，筛选“衍生牌：只看/包含”能找到乌鸦（2026-10-01 对斯凯利格第 62 步），点开是详情、不登记张数
+    w.eval('ui.tab="coll";ui.collF="SK";ui.collTok="";render()');
+    const collNames = () => QA('#collList .tile .nm').map(e => e.textContent);
+    ok(!collNames().includes('乌鸦'), '牌库：默认不含衍生牌');
+    Q('[data-ctok="only"]').click();
+    ok(collNames().includes('乌鸦') && !collNames().includes('乌鸦之母') && !!Q('#collList .tile[data-cardb]') && !Q('#collList .tile[data-own]'), '牌库：只看衍生牌，有乌鸦，点开看详情');
+    Q('[data-ctok="with"]').click(); ok(collNames().includes('乌鸦') && collNames().includes('乌鸦之母'), '牌库：包含衍生牌');
+    w.eval('ui.collTok="";ui.collF="NR";ui.tab="match";render()');
     // 备份提醒
     ok(w.eval('backupAge()') === null, '备份：没备份过');
   } catch (e) { fails++; console.log('✗ 出错', e.stack); }

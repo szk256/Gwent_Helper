@@ -35,7 +35,7 @@ const DEFAULT_RULES = {
   graveSelfPlayCounts: true,  // 洞察之球从墓场打出自己时算“己方打出特殊牌”（未确认）
   passedTurnsTick: true,      // 停牌之后停牌方的回合开始/结束效果照常结算（NamuWiki；用户确认对方停牌后数值还会涨）。另一方出完最后一张牌强制停牌时没有这个回合（对局簿 deferPassedTick）
   veteranOffBoard: true,      // 老兵在手牌/牌组里也加（用户实测：手牌、牌组都会变）
-  passTurnEnd: false,         // 停牌时是否结算己方“回合结束”效果（未确认；2026-09-30 两局 5 处比分都是不结算才对得上）
+  passTurnEnd: true,          // 停牌时结算己方“回合结束”效果（用户 2026-10-01 在游戏里确认；对斯凯利格第一局录像：停牌后瑞达尼亚骑士壁垒 +1、神赐给雷纳德 +1，50 → 52）。手里没牌被迫停牌不算（没有这个回合）
 };
 
 // ---------- 整排效果（灾厄）：拥有者回合开始时结算，见词条辞典 ----------
@@ -387,7 +387,8 @@ class Game {
       deathwishOf: t => g.triggerDeathwish(t, u), drain: (t, n) => g.drain(u, t, n), swap: (a, b) => g.swap(a, b),
       frost: (side, row) => { const h = g.s.hazards[side][row]; return h && h.kind === '霜' ? h : null; },
       // 生成并打出：单位走“生成（算打出）”，特殊牌直接结算
-      spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
+      // 特殊牌：对局簿记了它放在哪排（乌鸦眼块茎“生成至己方单排”）就用记的排（g.viaRows，sim 每步设置）
+      spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row: (g.viaRows && g.viaRows[name]) || row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
       leader: () => Object.values(g.s.sides[u.side].abilities || {}).find(h => h.def.type === 'leader') || null,
     };
   }
@@ -956,7 +957,7 @@ class Game {
   // opts.pass：停牌引起的回合结束（rules.passTurnEnd 为 false 时不结算回合结束效果，只换人）
   endTurn(opts = {}) {
     const side = this.s.active;
-    if (opts.pass && !this.rules.passTurnEnd) { this.log('停牌不结算回合结束', { side }); return this._nextTurn(side); }
+    if (opts.pass && (!this.rules.passTurnEnd || opts.forced)) { this.log(opts.forced ? '没牌被迫停牌，不结算回合结束' : '停牌不结算回合结束', { side }); return this._nextTurn(side); }
     this._turnEndEffects(side);
     return this._nextTurn(side);
   }
@@ -1022,7 +1023,9 @@ class Game {
     this.s.sides[side].passed = true;
     this.log('停牌', { side });
     this.emit('passed', { side });
-    this.endTurn({ pass: true });
+    // 手里没牌被迫停牌：没有这个回合，不结算回合结束（手牌数不知道时按主动停牌）
+    const S = this.s.sides[side];
+    this.endTurn({ pass: true, forced: S.handKnown && S.handCount <= 0 });
   }
 
   // ---------- 小局 ----------
