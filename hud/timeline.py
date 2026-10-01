@@ -54,8 +54,9 @@ def reader():
 
 def joint_powers(cands, score):
     """每张牌的战力候选 + 右侧总分 → 每张牌的战力。
-    一方所有单位战力之和应该等于这一方的总分：从每张牌的候选里各选一个、加起来等于总分、总误差最小（动态规划）。
-    凑得上的一方标 ok（整方战力可信）；凑不上（有牌没认出、总分读错）就用各自误差最小的候选。
+    一方所有单位战力之和应该等于这一方的总分。读数本身已经比较准（2026-10-01 评估 97%），所以只做保守的纠错：
+    第一候选加起来正好等于总分 → 可信（ok）；只改一张牌、换成它的备选读数（误差多不超过 0.1）就能凑上、而且这种改法只有一种 → 改它；
+    其他情况（有牌没认出、总分里有别的来源）保留第一候选，不硬凑（以前用动态规划硬凑，会把读对的 20 改成 38）。
     返回 ({排: [战力或 None]}, {'对方': bool, '我方': bool})。"""
     pws, ok = {}, {}
     for side, total in (('对方', score[0] if score else None), ('我方', score[1] if score else None)):
@@ -64,23 +65,17 @@ def joint_powers(cands, score):
         for r in rows:
             pws[r] = [cl[0][0] if cl else None for cl in cands[r]]
         ok[side] = False
-        if total is None or not items or any(not cl for _r, _i, cl in items) or total > 400:
+        if total is None or not items or any(not cl for _r, _i, cl in items):
             continue
-        # dp: 和 -> (误差, 选择)
-        dp = {0: (0.0, [])}
-        for _r, _i, cl in items:
-            nd = {}
-            for s, (e, ch) in dp.items():
-                for v, ev in cl:
-                    s2 = s + v
-                    if s2 > total:
-                        continue
-                    if s2 not in nd or e + ev < nd[s2][0]:
-                        nd[s2] = (e + ev, ch + [v])
-            dp = nd
-        if total in dp:
-            for (r, i, _cl), v in zip(items, dp[total][1]):
-                pws[r][i] = v
+        s1 = sum(cl[0][0] for _r, _i, cl in items)
+        if s1 == total:
+            ok[side] = True
+            continue
+        fixes = [(r, i, v) for r, i, cl in items for v, ev in cl[1:]
+                 if ev <= cl[0][1] + 0.1 and s1 - cl[0][0] + v == total]
+        if len(fixes) == 1:
+            r, i, v = fixes[0]
+            pws[r][i] = v
             ok[side] = True
     return pws, ok
 
@@ -116,7 +111,7 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
-CLS_VER = 2   # 分排规则（board.classify）、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+CLS_VER = 7   # 分排规则（board.classify）、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
 
 
 def derive(im, ent):
@@ -135,12 +130,13 @@ def derive(im, ent):
         if r == '手牌':
             continue
         out = []
-        for x, n, y, h in cs:
+        hs = board.row_heights(L, [(x, y, h) for x, _n, y, h in cs])   # 同排牌高（截战力 / 护盾的框）
+        for (x, n, y, _h), h in zip(cs, hs):
             c = CARDS.get(n, {})
             base = int(c['power']) if str(c.get('power')).isdigit() else None
             out.append(reader().power_cands(im, x, y, h, base) if c.get('type') == '单位' else [(0, 0.0)])
         cands[r] = out
-        sh[r] = [detect.shield(im, x, y, h) for x, _n, y, h in cs]
+        sh[r] = [detect.shield(im, x, y, h) for (x, _n, y, _h), h in zip(cs, hs)]
     ent['rows'] = {r: [n for _x, n, _y, _h in cs] for r, cs in rows.items()}
     ent['pw'], ent['pw_ok'] = joint_powers(cands, ent.get('score'))
     ent['sh'] = sh

@@ -1,6 +1,7 @@
 """读数字：右侧双方总分、场上每张牌左上角的战力。游戏里的数字是同一种字体，用 0–9 模板比对。
 
 模板从总分截图自动生成（python hud/digits.py build 帧目录，样本写在 SAMPLES 里），存 hud/digits.npz（很小，提交）。
+战力模板用人工标注的场上牌生成：python hud/digits.py train-power 标注.json（见 train_power）。
 """
 import os
 import sys
@@ -172,6 +173,50 @@ def badge_color(b):
     return best[1] if best[0] > 0.03 * inner.sum() else None
 
 
+POWER_SHIFT_ERR = 0.08   # 第一候选的平均像素误差超过这个就试着挪截取框
+WHITE_MAX_ERR = 0.15     # 白色数字和基础战力的模板误差上限（超过说明是卡图里的白色东西）
+
+
+def power_glyphs(m):
+    """战力菱形掩码 → 数字字形。数字高约截取框高的 0.4（0.36–0.44）；护盾金光会贴在数字下方连成一个更高的字形
+    （“5”被认成“6”），比预期高 20% 以上的只留顶部一个数字高重新切。数字顶端对齐：按顶端去掉碎片。"""
+    H = m.shape[0]
+    gs = glyphs(m, min_h=max(4, int(H * 0.3)))
+    if not gs:
+        return []
+    normal = [g[2][3] for g in gs if 0.3 * H <= g[2][3] <= 0.5 * H]
+    hd = float(np.median(normal)) if normal else 0.4 * H
+    out = []
+    for g in gs:
+        x, y, w, h = g[2]
+        if h > 1.2 * hd:
+            sub = glyphs(m[y:y + int(round(hd)) + 1, x:x + w], min_h=max(4, int(0.7 * hd)))
+            if len(sub) == 1:
+                sx, sg, (bx, by, bw, bh) = sub[0]
+                out.append((x + sx, sg, (x + bx, y + by, bw, bh)))
+            continue
+        out.append(g)
+    if not out:
+        return []
+    top = min(out, key=lambda g: abs(g[2][3] - hd))[2][1]   # 高度最像数字的那个的顶端
+    return [g for g in out if abs(g[2][1] - top) <= 0.25 * hd]
+
+
+def glyph_color(b, m, gs):
+    """数字的颜色，只看切出来的字形里的像素：white / green / red / None。"""
+    hsv = cv2.cvtColor(b, cv2.COLOR_BGR2HSV)
+    sel = np.zeros(m.shape, bool)
+    for _x, _g, (x, y, w, h) in gs:
+        sel[y:y + h, x:x + w] |= m[y:y + h, x:x + w] > 0
+    if sel.sum() < 5:
+        return None
+    h, s, v = (hsv[..., i][sel].astype(np.int16) for i in range(3))
+    white = ((s < 55) & (v > 140)).sum()
+    green = ((h >= 35) & (h <= 90) & (s > 50) & (v > 110)).sum()
+    red = (((h <= 8) | (h >= 172)) & (s > 120) & (v > 120)).sum()
+    return max((white, 'white'), (green, 'green'), (red, 'red'))[1]
+
+
 def power_crop(frame, cx, cy, h):
     """场上牌左上角的战力菱形（略放宽，diamond() 再按深蓝底精确找）。"""
     H, W = frame.shape[:2]
@@ -297,19 +342,41 @@ class Reader:
                      if L.get(k) else None for k in ('lead_op', 'lead_me'))
 
     def power_cands(self, frame, cx, cy, h, base=None, k=3):
-        """战力的几个候选 [(值, 误差)]，按误差从小到大；白色直接 [(基础, 0)]；绿 / 红只留符合大小约束的。读不出返回 []。"""
+        """战力的几个候选 [(值, 误差)]，按误差从小到大；白色直接 [(基础, 0)]；绿 / 红只留符合大小约束的。读不出返回 []。
+        原位置读不出或误差偏大时，截取框在小范围内挪几次（不超过菱形宽 1/4、高 1/6），取最吻合的：
+        卡图构图和 gwent.one 不同的牌估出的中心会偏一点，菱形被切在边上。"""
+        out = self._power_at(frame, cx, cy, h, base, k)
+        if out and out[0][1] <= POWER_SHIFT_ERR:
+            return out
+        H, W = frame.shape[:2]
+        cw = h * H * 0.70 * 0.38 / W            # 截取框宽（画面比例）
+        chh = h * 0.26                           # 截取框高
+        best = out
+        for dx in (-0.25, -0.12, 0.12):
+            for dy in (-0.15, 0.0, 0.15):
+                o = self._power_at(frame, cx + dx * cw, cy + dy * chh, h, base, k)
+                if o and (not best or o[0][1] < best[0][1] - 0.02):
+                    best = o
+        return best
+
+    def _power_at(self, frame, cx, cy, h, base, k):
         b = power_crop(frame, cx, cy, h)
         if b.size == 0:
             return []
-        b = diamond(b)
+        # 截取框按同排牌高定位已经够准；diamond() 按深蓝底找菱形，对方的绿底会抓到卡图里的蓝色、把数字裁掉，不再用
         col = badge_color(b)
+        m = rhombus(mask_power(b))
+        gs = power_glyphs(m)
+        if gs:
+            col = glyph_color(b, m, gs) or col   # 颜色只看数字本身（对方的绿底、护盾金光会让整块判错）
         if col == 'white' and base is not None:
-            return [(base, 0.0)]
-        gs = glyphs(rhombus(mask_power(b)), min_h=max(4, int(b.shape[0] * 0.3)))
-        if gs:  # 和 number() 一样按基线去掉碎片
-            ref = min(gs, key=lambda g: self.classify(g[1], True)[1])[2]
-            tol = 0.2 * ref[3]
-            gs = [g for g in gs if abs(g[2][1] - ref[1]) <= tol and abs(g[2][1] + g[2][3] - ref[1] - ref[3]) <= tol]
+            # 白色 = 基础战力；但卡图里的白色东西（旗子、刀）也会被当成数字：字形要真像基础战力的那几位才算
+            if len(gs) == len(str(base)):
+                errs = [0.0 if (ch == '1' and bb[2] < 0.36 * bb[3]) else dict(self.ranked(g, True, 10)).get(int(ch), 1.0)
+                        for (_x, g, bb), ch in zip(gs, str(base))]
+                if max(errs) <= WHITE_MAX_ERR:
+                    return [(base, sum(errs))]
+            col = None   # 不像：颜色判错了，按普通数字认
         if not 1 <= len(gs) <= 2:
             return []
         cands = [[(1, 0.02)] if bb[2] < 0.36 * bb[3] else self.ranked(g, True, k) for _x, g, bb in gs]
@@ -406,8 +473,32 @@ def build(d):
     print(f'模板 {len(tpl)} 个，数字 {sorted(set(lab))} → {TPL_PATH}')
 
 
+def train_power(labels_path):
+    """用人工标注的场上牌战力（JSON：[{dir, frame, x, y, h, power}]，h 用同排牌高）生成战力模板 ptpl / plab。
+    标注方法：抽一批场上牌的战力菱形拼成图，看图写真实值（2026-10-01 两局录像标了 158 张，见 cache/rec/power_train_labels.json）。
+    评估用另一批（帧目录/power_truth.json，python hud/eval_power.py 帧目录），不要混进训练。"""
+    import json
+    with open(labels_path, encoding='utf-8') as f:
+        train = json.load(f)
+    tpl, lab = [], []
+    for t in train:
+        im = cv2.imdecode(np.fromfile(os.path.join(t['dir'], t['frame']), np.uint8), cv2.IMREAD_COLOR)
+        gs = power_glyphs(rhombus(mask_power(power_crop(im, t['x'], t['y'], t['h']))))
+        if len(gs) != len(str(t['power'])):
+            continue
+        for (_x, g, _b), ch in zip(gs, str(t['power'])):
+            tpl.append(g)
+            lab.append(int(ch))
+    old = dict(np.load(TPL_PATH))
+    old.update(ptpl=np.array(tpl), plab=np.array(lab))
+    np.savez_compressed(TPL_PATH, **old)
+    print(f'战力模板 {len(lab)} 个：' + str({k: lab.count(k) for k in range(10)}) + f' → {TPL_PATH}')
+
+
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == 'build':
         build(sys.argv[2])
+    elif len(sys.argv) >= 3 and sys.argv[1] == 'train-power':
+        train_power(sys.argv[2])
     else:
         print(__doc__)

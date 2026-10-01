@@ -77,6 +77,26 @@ def _cluster(a, min_votes):
 WEAK_V, WEAK_R = 6, 0.15
 
 
+def expected_h(L, y):
+    """这个位置（中心 y）场上牌的预期高度（透视；没有模型返回 None）。"""
+    if 'board_h' not in L:
+        return None
+    y0, h0, k = L['opp_h'] if y < dict(L['row_cy'])['对方近战'] and 'opp_h' in L else L['board_h']
+    return h0 + k * (y - y0)
+
+
+def row_heights(L, cs):
+    """同一排的牌一样大：[(x, ...), y, h] 列表 → 每张牌用的高度。
+    单张估出的高度跟卡图构图有关（游戏内卡图和 gwent.one 不同的，系统性偏 10–16%），读战力 / 护盾的截取框会错位；
+    一排有 3 张以上时用同排中位数，否则用透视模型的预期高度（没有模型就用自己的）。"""
+    import statistics
+    hs = [c[-1] for c in cs]
+    if len(hs) >= 3:
+        ref = statistics.median(hs)
+        return [ref] * len(hs)
+    return [expected_h(L, c[-2]) or c[-1] for c in cs]
+
+
 def classify(L, x, y, h, votes):
     """一张认出的牌（中心 x、y，高度 h，画面比例；票数）→ 排名，None = 丢掉。
     有 board_h（电脑）时我方半场按这个位置的场上牌高判断是不是手牌（只用我方半场的数据量的，对方半场透视不同），
