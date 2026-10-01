@@ -986,6 +986,12 @@ def main():
     my_deck = deck.load(spec, m.cards)
     sync = '--sync-power' in sys.argv
     video = next((a[8:] for a in sys.argv if a.startswith('--video=')), None)
+    t0 = video_start(video) if video else None
+    src = os.path.join(d, 'source.json')   # video_frames.py 从视频抽的帧：录屏时间就是这个视频的进度
+    if t0 is None and os.path.exists(src):
+        with open(src, encoding='utf-8') as f:
+            meta = json.load(f)
+        video, t0 = meta.get('video'), meta.get('start')
     review = []
     import glob
     op_facs = Counter(m.cards_by_name[n]['fac'] for _t, k, side, n, _r in events
@@ -998,7 +1004,7 @@ def main():
                        'who': 'op', 'c': '', 'text': '对方领袖技能没认出（徽章图案和 gwent.one 图标比不上）：是哪个？导入后在对方领袖处选'})
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
                       runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states,
-                      deck_filter='--no-deck-filter' not in sys.argv, t0=video_start(video) if video else None,
+                      deck_filter='--no-deck-filter' not in sys.argv, t0=t0,
                       review=review, op_leader=op_leader)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
