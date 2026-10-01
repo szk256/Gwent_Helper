@@ -26,6 +26,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TGT_WORDS = re.compile(r'伤害|增益|锁定|摧毁|重置')
 
 
+DECK_PLAY = re.compile(r'从(?:己方)?牌组(?:中)?打出')
+
+
 def target_text(card):
     """这张牌打出时要指定目标的那段效果文字（特殊牌第一段、单位的“部署”段），没有返回 ''。"""
     text = card.get('text') or ''
@@ -263,8 +266,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         if x['a'] in ('play', 'summon') and x.get('row'):
             us = units.setdefault(rowkey(x['who'], x['row']), [])
             us.insert(min(x.get('pos', len(us)), len(us)), [x['id'], x['c'], x.get('pw')])
-        if x['a'] in ('play', 'summon') and x.get('row'):
-            recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}[x['row']], '打出' if x['a'] == 'play' else '进场'))
+        if x['a'] in ('play', 'summon') and (x.get('row') or x['a'] == 'play'):
+            # 特殊牌没有排，也记进来（水路突袭、骑士册封从牌组打出单位）
+            recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}.get(x.get('row'), ''),
+                           '打出' if x['a'] == 'play' else '进场'))
 
     def flush_scores(upto):
         """把 upto 之前的稳定总分里、最后一个写成核对点（每一手之后一个）。"""
@@ -288,16 +293,20 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     recent = []  # [(时间, 方, 牌名, 排, 类型)] 最近的打出 / 进场（判断完当前这张再加进去）
 
     def summoner(t, who, name, row):
-        """这张进场的牌是不是由几秒内刚打出的牌带出来的：同一排同名（复制、召唤同名牌），或卡面写着“召唤”的牌。"""
+        """这张进场的牌是不是由几秒内刚打出的牌带出来的：同一排同名（复制、召唤同名牌），或卡面写着“召唤” / “从牌组打出”的牌。
+        返回 (来源牌名, 'summon' | 'play') 或 None。"""
         for t2, w2, n2, r2, k2 in reversed(recent):
             if t - t2 > 8:
                 break
             if w2 != who:
                 continue
             if n2 == name and r2 == row[-2:] and t - t2 <= 4:
-                return n2
-            if n2 != name and k2 == '打出' and '召唤' in (cards_by_name.get(n2, {}).get('text') or ''):
-                return n2
+                return n2, 'summon'
+            text = cards_by_name.get(n2, {}).get('text') or ''
+            if n2 != name and k2 == '打出' and DECK_PLAY.search(text):
+                return n2, 'play'   # “从牌组打出”：对局簿记成带 via 的打出（算“己方打出”）
+            if n2 != name and k2 == '打出' and '召唤' in text:
+                return n2, 'summon'
         return None
 
     # 比分变化当证据：打出单位 → 这一方总分上涨；打出特殊牌 → 几秒内双方总分有变化。没有证据的当误识别（手牌区误认、拖动）
@@ -380,7 +389,11 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             units.clear()
             continue
         c = cards_by_name.get(name, {})
-        if kind == '打出':
+        if kind == '打出' and who == 'me' and (src := summoner(t, who, name, row)) and src[0] != name:
+            # 一回合只打一张：刚打出召唤 / 从牌组打出的牌，几秒后进场的同名牌是它带出的（手牌里另一张同名牌正好闪了一下）
+            push({'who': who, 'a': src[1], 'c': name, 'row': ROW.get(row, 'm'), 'side': who, 'via': src[0],
+                  'hud': '推测由这张牌带出'}, t)
+        elif kind == '打出':
             x = {'who': who, 'a': 'play', 'c': name, 'side': who}
             if row in ROW and c.get('type') != '特殊':
                 x['row'] = ROW[row]
@@ -391,9 +404,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             push({'who': 'op', 'a': 'play', 'c': name, 'side': 'op', 'hud': '只看到展示'}, t)
             pending_step = True
             first_side = first_side or who
-        elif kind == '进场' and (via := summoner(t, who, name, row)):
-            # 由刚打出的牌带出来（同名复制、从牌组召唤）：记成召唤，带 via，对局簿对应到引擎自动生成的单位
-            push({'who': who, 'a': 'summon', 'c': name, 'row': ROW.get(row, 'm'), 'side': who, 'via': via,
+        elif kind == '进场' and (src := summoner(t, who, name, row)):
+            # 由刚打出的牌带出来（同名复制、从牌组召唤 / 打出）：带 via，对局簿对应到引擎自动产生的单位
+            push({'who': who, 'a': src[1], 'c': name, 'row': ROW.get(row, 'm'), 'side': who, 'via': src[0],
                   'hud': '推测由这张牌带出'}, t)
         elif kind == '进场' and (who == 'me' or not has_show) and c.get('set') != 'token' and c.get('type') in ('单位', '神器'):
             # 我方可收集的单位 / 神器落到场上：多半是从手牌打出（从牌组召唤的也会落在这里，标出来核对）
@@ -470,7 +483,7 @@ def main():
         tr.update(t, ent)
     events = tr.finish()
     scores = stable_scores(states)
-    has_show = any(ent.get('show') for _t, ent in states) or not any(ent.get('smin') == 200 for _t, ent in states)
+    has_show = any(ent.get('show') for _t, ent in states) or not any(ent.get('prof') == '4:3' for _t, ent in states)
     spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
     my_deck = deck.load(spec, m.cards)
     sync = '--sync-power' in sys.argv

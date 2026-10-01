@@ -89,23 +89,37 @@ _MINE = {}
 DECK_SPEC = None   # 卡组代码 / 文件路径；None = hud/deck.txt
 
 
+def deck_tokens(cards, dk):
+    """卡组里的牌（和它们生成的牌）卡面上点名的衍生牌，如“无畏者”布朗温。只认这些：同阵营 / 中立的衍生牌有几十张，
+    卡图里常有和场面纹理凑巧对上的（古德伦·约斯多蒂尔误认在我方两排之间）。"""
+    toks = [c for c in cards if c['set'] == 'token']
+    texts = [c.get('text') or '' for c in cards if c['name'] in dk]
+    out = set()
+    while True:
+        new = {c['name'] for c in toks if c['name'] not in out and any(c['name'] in t for t in texts)}
+        if not new:
+            return out
+        out |= new
+        texts = [c.get('text') or '' for c in toks if c['name'] in new]
+
+
 def mine_matcher(m):
-    """我方半场用的子库：hud/deck.txt 里的卡组 + 同阵营 / 中立衍生牌。没有卡组返回 None（用全库）。"""
+    """我方半场用的子库：hud/deck.txt 里的卡组 + 卡面点名的衍生牌。没有卡组返回 None（用全库）。"""
     if id(m) not in _MINE:
         import deck
         dk = deck.load(DECK_SPEC, m.cards)
         if not dk:
             _MINE[id(m)] = None
         else:
-            facs = {c['fac'] for c in m.cards if c['name'] in dk} | {'NE'}
-            names = set(dk) | {c['name'] for c in m.cards if c['set'] == 'token' and c['fac'] in facs}
+            names = set(dk) | deck_tokens(m.cards, dk)
             _MINE[id(m)] = m.subset(names)
     return _MINE[id(m)]
 
 
 def scan_frame(m, im):
     import layout
-    det = board.scan(m, im, detail=True, mine=mine_matcher(m))
+    raw = []
+    det = board.scan(m, im, detail=True, mine=mine_matcher(m), raw=raw)
     rows = board.names(m, {r: [c[:3] for c in cs] for r, cs in det.items()})
     score = reader().scores(im)
     cands = {}
@@ -120,8 +134,9 @@ def scan_frame(m, im):
         cands[r] = out
     pws, ok = joint_powers(cands, score)
     ent = {'rows': rows, 'pw': pws, 'pw_ok': ok, 'sharp': sharpness(im), 'show': None,
-           'score': score, 'smin': layout.get(im)['sharp_min'], 'lead': reader().leader(im),
-           'turn': reader().turn(im), 'cnt': reader().counts(im), 'v2': 1}  # v2：我方半场用卡组子库
+           'score': score, 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im), 'lead': reader().leader(im),
+           'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw,
+           'v3': 1}  # v3：我方半场用卡组子库 + 游戏内卡图模板、按透视分排；det 是分排前的原始检测
     sc = detect.showcase(im)
     if sc is not None:
         res = m.match(sc)
@@ -151,6 +166,7 @@ def save_json(path, obj):
 
 
 def scan_dir(m, d, jobs=1):
+    import layout
     cache = os.path.join(d, 'scan.json')
     done = {}
     if os.path.exists(cache):
@@ -158,7 +174,7 @@ def scan_dir(m, d, jobs=1):
             done = json.load(f)
     frames = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=frame_time)
     t0 = time.time()
-    todo = [p for p in frames if 'v2' not in (done.get(os.path.basename(p)) or {})]
+    todo = [p for p in frames if 'v3' not in (done.get(os.path.basename(p)) or {})]
     if jobs > 1 and len(todo) > 20:
         import multiprocessing as mp
         with mp.Pool(jobs, _init_worker) as pool:
@@ -170,7 +186,10 @@ def scan_dir(m, d, jobs=1):
     for i, p in enumerate(frames):
         k = os.path.basename(p)
         ent = done.get(k)
-        if ent is not None and 'v2' in ent:
+        if ent is not None and 'v3' in ent:
+            # 阈值按当前 layout（旧缓存没存画面比例：iPad 的旧阈值是 200）
+            ent.setdefault('prof', '4:3' if ent.get('smin') == 200 else '16:9')
+            ent['smin'] = layout.PROFILES[ent['prof']]['sharp_min']
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
@@ -203,7 +222,8 @@ CARD_TYPE = {c['name']: c['type'] for c in Matcher.load_cards_static()}
 
 class Tracker:
     """按“排 × 牌名”记张数，带迟滞：连续 IN_N 次多看到才算进场，连续 OUT_N 次（且至少 OUT_S 秒）少看到才算离场。
-    一次扫描里一大半已知的牌同时不见（被窗口挡住、动画）不算；持续 ROUND_S 秒都这样 = 小局结束，清空。
+    一次扫描里一大半已知的牌同时不见（被窗口挡住、动画）先不算；ROUND_S 秒内出现过场画面 = 小局结束，清空；
+    超过 ROUND_S 秒没有过场画面 = 真的离场，照常按迟滞记。
     展示框里认出的牌（对方刚打出）用来把对方的进场分成“打出”和“召唤/生成”。"""
     IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S = 2, 3, 2.5, 8.0, 10.0, 40.0
 
@@ -212,7 +232,7 @@ class Tracker:
         self.more = {}       # (排, 名) -> (连续次数, 首次时间, 看到的张数)
         self.less = {}       # (排, 名) -> (连续次数, 首次时间, 看到的张数)
         self.vanish_since = None
-        self.blur_seen = False
+        self.blur_seen, self.blur_t = False, None
         self.lead = {}
         self.last_score, self.zero_n, self.zero_t, self.score_run = None, 0, None, 0
         self.extra = {}      # (时间, 牌名, 排) -> {'pos': 排内第几个（从 0 数）, 'pw': 落地战力}
@@ -256,6 +276,8 @@ class Tracker:
                 self.zero_t = self.zero_t or t
         if ent['sharp'] < ent.get('smin', 300) or sc[0] is None or sc[1] is None:
             # 调度、墓场、选牌、过场画面（背景模糊、右侧没有总分），或开局前的界面：不看
+            if not self.blur_seen:
+                self.blur_t = t
             self.blur_seen = True
             return
         obs = {}
@@ -269,14 +291,21 @@ class Tracker:
         missing = sum(max(0, c - obs.get(k, 0)) for k, c in self.count.items() if k[0] != '手牌')
         if total >= 3 and missing > total / 2:
             # 一大半场上的牌同时不见：被窗口挡住（不算），或小局结束（中间会有模糊的过场画面）
+            # 过场画面要在消失后 ROUND_S 秒内出现才算小局结束；一直没有，就是真的离场（场上 3 张被解掉 2 张），照常记
             if self.vanish_since is None:
                 self.vanish_since, self.blur_seen = t, False
-            if self.blur_seen:
+            if self.blur_seen and self.blur_t - self.vanish_since <= self.ROUND_S:
                 self.events.append((self.vanish_since, '小局结束', '', '', ''))
                 self.count = {k: c for k, c in self.count.items() if k[0] == '手牌'}
                 self.more, self.less, self.vanish_since = {}, {}, None
-            return
-        self.vanish_since = None
+                return
+            if t - self.vanish_since <= self.ROUND_S:
+                return
+        else:
+            self.vanish_since = None
+        # 这一帧没看到的牌，之前攒的“多看到”作废（否则隔几十秒的两次零星误认会凑成“连续两次”）
+        for k in [k for k in self.more if k not in obs]:
+            self.more.pop(k)
         for k in set(obs) | set(self.count):
             o, c = obs.get(k, 0), self.count.get(k, 0)
             if o > c:
@@ -387,14 +416,15 @@ class Tracker:
         self.emit(t, '离场', row, name)
 
     def snapshot(self, transient=8.0):
-        """当前时间线（不改内部状态，实时显示用）：没落到场上的展示记为“展示”；进场后几秒内就离场的去掉。"""
+        """当前时间线（不改内部状态，实时显示用）：没落到场上的展示记为“展示”；进场后几秒内就离场 / 回手的去掉。"""
         ev = sorted(self.events + [(t, '展示', '对方', n, '') for t, n in self.shows], key=lambda e: e[0])
         drop = set()
         for i, e in enumerate(ev):
             if e[1] not in ('进场', '抽到') or i in drop:
                 continue
-            out = '离场' if e[1] == '进场' else '离手'
-            j = next((j for j in range(i + 1, len(ev)) if j not in drop and ev[j][1] == out
+            # 进场后几秒就离场 / 回到手牌：拖动、悬停的手牌，或识别闪烁
+            out = ('离场', '回手') if e[1] == '进场' else ('离手',)
+            j = next((j for j in range(i + 1, len(ev)) if j not in drop and ev[j][1] in out
                       and ev[j][2:] == e[2:] and ev[j][0] - e[0] < transient), None)
             if j is not None:
                 drop |= {i, j}

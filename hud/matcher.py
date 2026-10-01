@@ -10,6 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, 'cache')
 FAC_CN = {'NR': '北方王国', 'NE': '中立', 'MO': '怪兽', 'NG': '尼弗迦德', 'ST': '松鼠党', 'SK': '史凯利格', 'SY': '辛迪加'}
 QUERY_H = 357  # 和建库时同一尺度
+TMPL_DIR = os.path.join(CACHE, 'tmpl')   # 游戏内卡图模板（learn_art.py 截的），文件名 <卡图编号>__<来源>.png
 
 
 def load_cards():
@@ -44,6 +45,16 @@ def removal_kind(card):
     return '、'.join(dict.fromkeys(kinds))
 
 
+def template_mask(h, w):
+    """模板（卡框外沿截下的整张牌）里只用画面部分：卡框、左上战力菱形、右上护甲、底部的状态 / 指令图标每张牌都有，
+    学进去会让这张牌在别的牌上也对得上。"""
+    m = np.zeros((h, w), np.uint8)
+    m[int(0.07 * h):int(0.80 * h), int(0.09 * w):int(0.91 * w)] = 255
+    m[:int(0.24 * h), :int(0.40 * w)] = 0
+    m[:int(0.20 * h), int(0.70 * w):] = 0
+    return m
+
+
 class Matcher:
     load_cards_static = staticmethod(load_cards)
 
@@ -53,6 +64,7 @@ class Matcher:
         self.owner = db['owner']
         self.arts = [str(a) for a in db['arts']]
         self.geo = db['geo'] if 'geo' in db.files else None  # 旧特征库没有：重跑 build_db.py
+        self._add_templates()
         self.cards = load_cards()
         self.by_art = {}
         for c in self.cards:
@@ -62,6 +74,27 @@ class Matcher:
         self.flann = cv2.FlannBasedMatcher({'algorithm': 1, 'trees': 4}, {'checks': 64})
         self.flann.add([self.desc])
         self.flann.train()
+
+    def _add_templates(self):
+        """把 cache/tmpl/ 里的游戏内卡图模板并进特征库（和 build_db.py 同样的尺度和几何），算同一张卡图的票。"""
+        if not os.path.isdir(TMPL_DIR) or self.geo is None:
+            return
+        sift = cv2.SIFT_create(nfeatures=400)
+        idx = {a: i for i, a in enumerate(self.arts)}
+        for f in sorted(os.listdir(TMPL_DIR)):
+            o = idx.get(f.split('__')[0])
+            img = cv2.imdecode(np.fromfile(os.path.join(TMPL_DIR, f), np.uint8), cv2.IMREAD_GRAYSCALE)
+            if o is None or img is None:
+                continue
+            g = cv2.resize(img, (round(img.shape[1] * QUERY_H / img.shape[0]), QUERY_H), interpolation=cv2.INTER_CUBIC)
+            h, w = g.shape
+            kp, d = sift.detectAndCompute(g, template_mask(h, w))
+            if d is None:
+                continue
+            geo = np.array([((k.pt[0] - w / 2) / h, (k.pt[1] - h / 2) / h, k.size / h, k.angle) for k in kp], np.float32)
+            self.desc = np.vstack([self.desc, d.astype(self.desc.dtype)])
+            self.owner = np.concatenate([self.owner, np.full(len(d), o, self.owner.dtype)])
+            self.geo = np.vstack([self.geo, geo.astype(self.geo.dtype)])
 
     def subset(self, names):
         """只在这些牌（牌名）里找的轻量副本（共用卡牌数据，自己一份小索引）：候选少，比值检验放过的正确匹配更多。"""

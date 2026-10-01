@@ -1,11 +1,11 @@
 // 把 hud 导出的 v2 对局代码喂给对局簿的推算引擎（jsdom 载入 dist/gwent_tracker.html），逐局出偏差报告：
 // 核对点（真实比分）和推算比分对不对得上，从哪一步开始偏。
-// 用法：node hud/replay_check.js 帧目录/game_v2.txt [对局簿备份.json（取卡组）] [--full]
+// 用法：node hud/replay_check.js 帧目录/game_v2.txt [对局簿备份.json（取卡组）] [--full]   （TRACKER=其他 gwent_tracker.html 换引擎）
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
-const html = fs.readFileSync(path.join(root, 'dist', 'gwent_tracker.html'), 'utf8');
+const html = fs.readFileSync(process.env.TRACKER || path.join(root, 'dist', 'gwent_tracker.html'), 'utf8');  // TRACKER=别的打包产物
 const code = fs.readFileSync(process.argv[2], 'utf8');
 const backup = process.argv[3] && !process.argv[3].startsWith('--') ? JSON.parse(fs.readFileSync(process.argv[3], 'utf8')) : null;
 const full = process.argv.includes('--full');

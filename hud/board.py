@@ -58,10 +58,11 @@ def _cluster(a, min_votes):
         idx = np.flatnonzero(left)
         p = a[idx]
         r = 0.22 * np.median(p[:, 2])
-        d2 = (p[:, None, 0] - p[None, :, 0]) ** 2 + (p[:, None, 1] - p[None, :, 1]) ** 2
-        nb = d2 < r * r
-        best = nb.sum(1).argmax()
-        mem = idx[nb[best]]
+        # 两两距离是 n²：点特别多时（大图、选牌界面）只在抽样的点里找最密的中心，再按它收全部的点
+        q = p if len(p) <= 1500 else p[np.random.default_rng(0).choice(len(p), 1500, replace=False)]
+        d2 = (q[:, None, 0] - q[None, :, 0]) ** 2 + (q[:, None, 1] - q[None, :, 1]) ** 2
+        best = q[(d2 < r * r).sum(1).argmax()]
+        mem = idx[(p[:, 0] - best[0]) ** 2 + (p[:, 1] - best[1]) ** 2 < r * r]
         if len(mem) < min_votes:
             break
         c = np.median(a[mem], 0)
@@ -69,16 +70,40 @@ def _cluster(a, min_votes):
         # 这张牌范围内的点都去掉（同一张牌里偶尔有偏得较远的估计）
         dd = (a[:, 0] - c[0]) ** 2 + (a[:, 1] - c[1]) ** 2
         left &= ~(dd < (0.3 * c[2]) ** 2)
+        left[mem] = False   # 簇里的点估出的牌高接近 0 时上面一个都去不掉，会死循环
     return out
 
 
-def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None):
+WEAK_V, WEAK_R = 6, 0.15
+
+
+def classify(L, x, y, h, votes):
+    """一张认出的牌（中心 x、y，高度 h，画面比例；票数）→ 排名，None = 丢掉。
+    有 board_h（电脑）时按这个位置的场上牌高判断是不是手牌，否则按固定的 hand_h。"""
+    if h > L.get('max_h', 9):
+        return None
+    if y >= L['hand_y']:
+        return '手牌'
+    if 'board_h' in L:
+        y0, h0, k = L['board_h']
+        hb = h0 + k * (y - y0)
+        if h >= L['board_ratio'] * hb:
+            return '手牌'
+        if h < L['board_min'] * hb:
+            return None   # 比场上的牌还小得多：几个零散特征点凑出来的
+    elif h >= L['hand_h']:
+        return '手牌'
+    return next(r for r, lim in L['row_cy'] if y < lim)
+
+
+def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=None):
     """返回 {排名: [(x, 卡图, 票数)]}，x 为画面宽度比例，从左到右。
     每个特征点反推卡牌中心和高度，按中心聚成一张张牌；高度大的是手牌，其余按中心高度分排。
     同一个中心、同一个大小上的几票互相印证，随机误匹配很难凑到一起，所以 4 票就够；高亮（金光）的牌票数少，
     card_h（扫描时把场上牌缩放到的高度）从 160 提到 220 能多认出来，代价是每帧约 1.1 → 1.8 秒。
     mine：我方半场（两排 + 手牌）改用这个匹配器（matcher.subset(卡组 + 衍生牌)）：候选少，高亮的牌也认得出来。
-    位置参数按画面比例取 layout（电脑 16:9 / iPad 4:3）。detail=True 时每项为 (x, 卡图, 票数, y, 高度)。"""
+    位置参数按画面比例取 layout（电脑 16:9 / iPad 4:3）。detail=True 时每项为 (x, 卡图, 票数, y, 高度)。
+    raw：传一个列表进来，分排之前的每个检测 [牌名, 票数, x, y, 高度] 追加进去（存进缓存，改分排规则不用重扫）。"""
     L = layout.get(frame)
     H, W = frame.shape[:2]
     showing = detect.paper_ratio(frame) > 0.5
@@ -101,16 +126,26 @@ def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None):
         for o, ps in pts.items():
             if len(ps) < min_votes:
                 continue
-            for v, cx, cy, h in _cluster(np.array(ps), min_votes):
+            cl = sorted(_cluster(np.array(ps), min_votes), reverse=True)
+            vmax = cl[0][0] if cl else 0
+            kept = []
+            for v, cx, cy, h in cl:
+                if v <= WEAK_V and v < WEAK_R * vmax:
+                    continue  # 同一张卡图另有强得多的一簇：这是那张牌的零散特征点凑出来的影子
+                if any(abs(cx - c2[1]) < 0.45 * 0.7 * max(h, c2[3]) and abs(cy - c2[2]) < 0.6 * max(h, c2[3])
+                       for c2 in kept):
+                    continue  # 和更强的一簇是同一张牌（游戏内卡图模板和 gwent.one 卡图构图不同，反推的中心差半张牌）
+                kept.append((v, cx, cy, h))
                 x, y, hh = cx / W, cy / H, h / H
                 if keep and not keep(y):
                     continue
                 if showing and x > bx and y < by:  # 展示框（右上）里的牌不算场上的
                     continue
-                if hh >= L['hand_h'] or y >= L['hand_y']:
-                    row = '手牌'
-                else:
-                    row = next(r for r, lim in L['row_cy'] if y < lim)
+                if raw is not None:
+                    raw.append([matcher.by_art[matcher.arts[o]][0]['name'], int(v), round(x, 4), round(y, 4), round(hh, 4)])
+                row = classify(L, x, y, hh, v)
+                if row is None:
+                    continue
                 rows[row].append((x, matcher.arts[o], v, y, hh) if detail else (x, matcher.arts[o], v))
     for r in rows.values():
         r.sort()
