@@ -62,6 +62,26 @@ def shield(frame, x, y, h):
     return False
 
 
+def leader_glow(frame):
+    """我方领袖图标外圈的光：'Y' 黄光（已点选领袖、正在找目标）、'G' 绿光（能用）、None 无光 / 没标定。
+    用户确认：绿 = 随时能用；无光 = 正在拖牌等用不了但有次数；黄 = 已点选正在找目标；变暗、没有数字框 = 用完。"""
+    import layout
+    box = layout.get(frame).get('lead_badge_me')
+    if not box:
+        return None
+    c = crop(frame, box)
+    hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
+    h, s, v = (hsv[..., i].astype(int) for i in range(3))
+    ring = np.ones(h.shape, bool)
+    ch, cw = h.shape
+    ring[int(ch * .13):int(ch * .82), int(cw * .23):int(cw * .77)] = False   # 图标本身（金色王冠、数字）不算
+    if ((h >= 5) & (h <= 25) & (s >= 150) & (v >= 180) & ring).mean() > 0.08:
+        return 'Y'
+    if ((h >= 40) & (h <= 95) & (s >= 70) & (v >= 140) & ring).mean() > 0.05:
+        return 'G'
+    return None
+
+
 _sift_board = cv2.SIFT_create()
 
 

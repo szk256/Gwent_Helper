@@ -148,7 +148,7 @@ def scan_frame(m, im):
     pws, ok = joint_powers(cands, score)
     ent = {'rows': rows, 'pw': pws, 'pw_ok': ok, 'sharp': sharpness(im), 'show': None,
            'score': score, 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im), 'lead': reader().leader(im),
-           'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw, 'sh': sh,
+           'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw, 'sh': sh, 'lglow': detect.leader_glow(im),
            'v3': 1}  # v3：我方半场用卡组子库 + 游戏内卡图模板、按透视分排；det 是分排前的原始检测
     sc = detect.showcase(im)
     if sc is not None:
@@ -203,10 +203,11 @@ def scan_dir(m, d, jobs=1):
             # 阈值按当前 layout（旧缓存没存画面比例：iPad 的旧阈值是 200）
             ent.setdefault('prof', '4:3' if ent.get('smin') == 200 else '16:9')
             ent['smin'] = layout.PROFILES[ent['prof']]['sharp_min']
-            if 'sh' not in ent:
-                # 旧缓存：按原始检测重新分排（和扫描时同一规则、同一顺序），补算每张场上牌的护盾
+            if 'sh' not in ent or 'lglow' not in ent:
+                # 旧缓存：按原始检测重新分排（和扫描时同一规则、同一顺序），补算每张场上牌的护盾、领袖图标的光
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
                 ent['sh'] = shields_from_det(im, ent)
+                ent['lglow'] = detect.leader_glow(im)
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
@@ -273,6 +274,7 @@ class Tracker:
         sc = ent.get('score') or (None, None)
         if ent['sharp'] >= ent.get('smin', 300) and sc[0] is not None and sc[1] is not None:
             self.update_leader(t, ent.get('lead') or (None, None))
+            self.update_glow(t, ent.get('lglow'))
             # 双方总分从大于 0 回到 0:0（连续两帧）= 新小局开始（场上牌少时“一大半消失”的规则触发不了）
             if sc[0] == 0 and sc[1] == 0 and self.last_score and sum(self.last_score) >= 5 and self.score_run >= 3                     and not any(e[1] == '小局结束' and t - e[0] < 60 for e in self.events):
                 self.zero_n += 1
@@ -352,6 +354,18 @@ class Tracker:
     # 领袖剩余次数：读数稳定下降 = 用了；标牌消失很久 = 用完了（我方标牌用完就消失；对方的时隐时现，要等更久）
     # 对方的次数标牌只在对方回合显示，所以对方只看读数下降（最后一次用完看不出来）
     LEAD_RUN, LEAD_GONE = 3, {'我方': 8, '对方': 10 ** 9}
+
+    # 我方领袖图标的黄光（已点选、正在找目标）：一段黄光 = 一次点选。只按次数记领袖；
+    # 次数没变的点选（皇家激励触发神赐会重置次数、增益 -1，次数一直是 1；或者取消了）记成“领袖?”，导出进待确认清单
+    GLOW_GAP = 2.0
+
+    def update_glow(self, t, g):
+        eps = self.__dict__.setdefault('glow_eps', [])
+        if g == 'Y':
+            if eps and t - eps[-1][1] <= self.GLOW_GAP:
+                eps[-1][1] = t
+            else:
+                eps.append([t, t])
 
     def update_leader(self, t, vals):
         for side, v in zip(('对方', '我方'), vals):
@@ -466,6 +480,18 @@ class Tracker:
 
     def finish(self, transient=8.0):
         self.events = self.snapshot(transient)
+        eps = self.__dict__.get('glow_eps', [])
+        used = set()
+        for e in self.events:   # 每次按次数记到的领袖，配它之前最近的一段黄光
+            if e[1] == '领袖' and e[2] == '我方':
+                j = max((j for j, (t0, t1) in enumerate(eps) if j not in used and t0 <= e[0] + 1 and e[0] - t1 <= 12),
+                        default=None, key=lambda j: eps[j][0])
+                if j is not None:
+                    used.add(j)
+        for j, (t0, _t1) in enumerate(eps):
+            if j not in used:
+                self.events.append((t0, '领袖?', '我方', '', ''))
+        self.events.sort(key=lambda e: e[0])
         self.shows = []
         return self.events
 

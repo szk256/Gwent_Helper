@@ -448,6 +448,11 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             push({'who': who, 'a': 'summon', 'c': name, 'row': ROW.get(row, 'm'), 'side': who,
                   'hud': '进场（召唤/生成，或没看到打出）'}, t)
             pending_step = True
+        elif kind == '领袖?':
+            if review is not None:
+                review.append({'ts': t, 'cat': '领袖次数', 'who': 'me', 'c': leader or '',
+                               'text': '看到我方点选了领袖（图标黄光），但次数没变：皇家激励触发神赐会重置次数（增益 -1），'
+                                       '次数一直显示 1；也可能是取消了。用了的话请补记领袖和目标'})
         elif kind == '领袖':
             x = {'who': who, 'a': 'leader'}
             if who == 'me' and leader:
