@@ -234,7 +234,7 @@ function sim(g,r,excl,ov){
   }
   E.dropPassedTick();
   // 这一局已结束但最后一方的停牌没记：补一次停牌（结算回合结束效果）
-  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});E.endTurn({pass:true});}
+  if(g.rounds&&g.rounds[r]&&!E.s.sides[E.s.active].passed&&log.length){const a=E.s.active;E.s.sides[a].passed=true;E.log("停牌（补）",{side:a});const A=E.s.sides[a];E.endTurn({pass:true,forced:A.handKnown&&A.handCount<=0});}
   {const R1=g.rounds&&g.rounds[r];if(R1&&log.length)for(const sd of["me","op"]){const rec=R1[sd==="me"?"hm":"ho"];
     if(rec!=null&&rec!==""&&+rec!==E.s.sides[sd].handCount)warns.push({id:log[log.length-1].id,m:"推算"+sideN(sd)+"局末手牌 "+E.s.sides[sd].handCount+" 张，记录是 "+rec+" 张（中途抽牌、回手没记，用“修正手牌”补上）"});}}
   const res={E,key2u,u2key,warns,unmod,steps,autoPlayed,score:{me:E.score("me"),op:E.score("op")}};
