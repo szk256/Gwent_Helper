@@ -1628,12 +1628,37 @@ def to_v2(game_path):
                           encoding='utf-8', check=True).stdout
 
 
+GAME_LOG_DIR = os.path.expandvars(r'%USERPROFILE%\AppData\LocalLow\CDProjektRED\Gwent')
+
+
+def save_game_log(d, date, t0, t1):
+    """把这局时间段（前后各 1 分钟）的游戏日志存进帧目录 game_log.txt（游戏会清理旧日志）。
+    真人对局的日志没有牌名，只有落地 / 死亡 / 放逐 / 生成 / 护盾等视觉特效和时间，都是画面上公开的。已经存过就不再存。"""
+    import glob
+    out = os.path.join(d, 'game_log.txt')
+    if os.path.exists(out):
+        return
+    lines = []
+    for p in sorted(glob.glob(os.path.join(GAME_LOG_DIR, f'GwentClient-{date}*.log')), key=os.path.getmtime):
+        with open(p, encoding='utf-8', errors='replace') as f:
+            for line in f:
+                mt = re.match(r'(\d\d):(\d\d):(\d\d\.\d+)', line)
+                if mt and t0 - 60 <= int(mt.group(1)) * 3600 + int(mt.group(2)) * 60 + float(mt.group(3)) <= t1 + 60:
+                    lines.append(line)
+    if lines:
+        with open(out, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        print(f'游戏日志 {len(lines)} 行 → {out}')
+
+
 def main():
     d = sys.argv[1]
     date = next((a for a in sys.argv[2:] if a.isdigit()), time.strftime('%Y%m%d'))
     jobs = next((int(a[7:]) for a in sys.argv if a.startswith('--jobs=')), 1)
     m = Matcher()
     states = timeline.scan_dir(m, d, jobs)
+    if states:
+        save_game_log(d, date, states[0][0], states[-1][0])
     tr = timeline.Tracker()
     for t, ent in states:
         tr.update(t, ent)
