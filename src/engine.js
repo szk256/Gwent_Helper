@@ -22,7 +22,7 @@ const DEFAULT_RULES = {
   resilienceKeepsArmor: false,// 坚韧留场时护甲（含卡面自带的）清零（英/俄/德/波/日/韩释义 + Steam 讨论；中文写“额外护甲”）
   resilienceKeepsDamage: false,// 坚韧留场时回到基础战力（资料有分歧，暂按 NamuWiki：伤害也恢复）
   knightSummonSelf: false,    // 骑士册封“己方每控制 1 名骑士”不算被拉出的骑士自己（已确认）
-  timerRepeats: true,         // 计时归零触发后重新计时（未确认）
+  timerRepeats: false,        // 计时归零触发后重新计时：只有卡面写“重置计时”的才重新计时（米薇女王、萨琪亚：指挥官；千里镜实测只生成 1 次）
   dragonDreamOnLast: true,    // 龙之梦在最后一个回合开始时爆炸（未确认）
   coinLimit: 9,               // 金币上限（词条辞典）
   autoTribute: true,          // 献金：没有记录时，金币够就当作付了（未确认，对局簿可逐次记录）
@@ -154,6 +154,7 @@ class Game {
       for (const seg of text.split(/\s*\/\s*/).map(x => x.replace(/[。.．\s]+$/, '').trim()).filter(Boolean)) {
         const tm = seg.match(/^计时\s*(\d+)\s*[：:]/);   // “计时 3：……”：先记下回合数，效果靠卡牌行为
         if (tm) d.timerN = +tm[1];
+        if (/重置计时/.test(seg)) d.timerReset = true;
         // 金币能力：先记下数额（付款由引擎处理），效果靠卡牌行为
         let mm;
         if ((mm = seg.match(/(?:^|、)\s*献金\s*(\d+)\s*[：:]/))) d.tributeN = +mm[1];
@@ -226,7 +227,9 @@ class Game {
     for (const sd of sides) for (const r of ROWS) out.push(...this.s.sides[sd].rows[r]);
     return out;
   }
-  units(side) { return this.allUnits(side).filter(u => u.def.type !== 'artifact' && !u.isTactic); }
+  units(side) { return this.allUnits(side).filter(u => !this.notUnit(u)); }
+  // 神器、战术牌：占位置、算相邻，但不是单位（不受伤害、不受增益；蟹蜘蛛毒液的致死伤害打到相邻的落难的少女不会摧毁它）
+  notUnit(u) { return u.def.type === 'artifact' || !!u.isTactic; }
   find(uid) { return this.allUnits().find(u => u.uid === uid) || null; }
   rowOf(u) { return this.s.sides[u.side].rows[u.row]; }
   adjacent(u) {
@@ -698,7 +701,7 @@ class Game {
   }
 
   boost(u, n, src) {
-    if (!u || n <= 0 || !this.find(u.uid)) return;
+    if (!u || n <= 0 || !this.find(u.uid) || this.notUnit(u)) return;
     u.power += n;
     this.log('增益', { uid: u.uid, name: u.name, n, by: src && src.name, power: u.power });
     this.emit('boosted', { unit: u, n, src });
@@ -707,7 +710,7 @@ class Game {
 
   // 伤害：护盾 → 护甲 → 战力；返回实际扣除的战力
   damage(u, n, src, o = {}) {
-    if (!u || n <= 0 || !this.find(u.uid)) return 0;
+    if (!u || n <= 0 || !this.find(u.uid) || this.notUnit(u)) return 0;
     const shieldApplies = !(o.bleed && this.rules.bleedIgnoresShield);
     if (u.status.shield && shieldApplies && !o.ignoreShield) {
       u.status.shield = false;
@@ -966,7 +969,7 @@ class Game {
         this.log('计时触发', { uid: u.uid, name: u.name, unmodeled: !run }, !run);
         if (run) run(this.ctx(u));
         const n = u.def.timer ? u.def.timer.n : u.def.timerN;
-        u.timer = this.rules.timerRepeats ? n : null;
+        u.timer = this.rules.timerRepeats || u.def.timerReset ? n : null;
       }
     }
     // 耐性：己方回合结束时指令还没用过，则数值永久 +1（带“近战/远程”的只在那一排）

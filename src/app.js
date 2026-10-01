@@ -213,7 +213,8 @@ function flowDone(){const g=db.live;const ids=ui.recent||[];ui.recent=[];if(!g||
   const recs=ids.map(entry).filter(Boolean);
   for(const w of S.warns){if(!w.src||!ids.includes(w.id))continue;const x=entry(w.id);if(!x||w.src===x.c||(ENG.HAZARDS||{})[w.src])continue;
     if(st.some(s=>s.src===w.src&&s.of===w.id))continue;const su=S.E.allUnits().find(u=>u.name===w.src);
-    const i=pushLog({who:su?su.side:x.who,a:"effect",c:w.src,chain:1});ui.recent=[];st.push({t:"target",id:g.log[i].id,src:w.src,of:w.id,prompt:w.prompt});}
+    const n=S.warns.filter(v=>v.src===w.src&&v.id===w.id).length;   // 同名来源缺几次（几张猫学派猎魔人）：一次多选，按顺序
+    const i=pushLog({who:su?su.side:x.who,a:"effect",c:w.src,chain:1});ui.recent=[];st.push({t:"target",id:g.log[i].id,src:w.src,of:w.id,prompt:w.prompt+(n>1?"，共 "+n+" 次，按顺序选":"")});}
   for(const x of recs){if(x.a!=="leader")continue;const last=g.log.filter(y=>y.r===x.r&&y.a==="leader"&&y.who===x.who).pop();if(last!==x)continue;
     Object.keys(S.key2u).filter(k=>k.startsWith(x.id+"/")).forEach(k=>{const u=S.key2u[k];if(u&&S.E.find(u.uid))st.push({t:"place",a:"spawn",who:x.who,side:u.side,card:u.name,via:x.c});});}
   for(const x of recs){const sd=sameStep(g,S,x);if(sd)st.push(sd);}
@@ -352,8 +353,9 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     leader(){const i=pushLog({who:"me",a:"leader",c:g.leader||null});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[g.leader],"leader","me"));rMatch();},
     tactic(){recTactic("me");},
     tacticOp(){recTactic("op");},
-    endTurn(){const sd=pendingEnd(g)||ui.who;const i=pushLog({who:sd,a:"end"});ui.recent=[];const other=sd==="me"?"op":"me";
-      if(!g.log.some(x=>x.r===VR()&&x.a==="pass"&&x.who===other))ui.who=other;ui.act="play";ui.flow=null;toast(logText(g.log[i]));rMatch();},
+    endTurn(){const sd=pendingEnd(g)||ui.who;const i=pushLog({who:sd,a:"end"});ui.recent=[g.log[i].id];const other=sd==="me"?"op":"me";
+      if(!g.log.some(x=>x.r===VR()&&x.a==="pass"&&x.who===other))ui.who=other;ui.act="play";ui.flow=null;toast(logText(g.log[i]));
+      flowDone();rMatch();},   // 回合结束效果缺的选择（猫学派猎魔人随机伤害打到谁）接着问
     adjNotEnd(){ui.endAsked=lastTurnActId(g);rMatch();},
     adjEnd(){const sd=pendingEnd(g);if(!sd)return;pushLog({who:sd,a:"end"});ui.recent=[];toast(sideN(sd)+"回合结束");rMatch();},   // 面板按回合结束后的新值显示
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},

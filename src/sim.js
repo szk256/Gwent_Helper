@@ -122,7 +122,7 @@ function sim(g,r,excl,ov){
     else if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
     else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
     // 试验：界面切到另一方后记的修正，先结算上一方回合结束
-    if(E.rules.autoEndOnSwitch&&!turnAct&&["adj","kill","move"].includes(x.a)&&x.who!==E.s.active&&acted&&!justEnded&&!E.s.sides[E.s.active].passed&&!E.s.sides[x.who].passed){E.log("自动结束回合",{side:E.s.active,by:x.id});E.endTurn();acted=false;justEnded=true;}
+    if(E.rules.autoEndOnSwitch&&!turnAct&&["adj","kill","move"].includes(x.a)&&x.who!==E.s.active&&acted&&!justEnded&&!E.s.sides[E.s.active].passed&&!E.s.sides[x.who].passed){const sd=E.s.active;E.log("自动结束回合",{side:sd,by:x.id});E.endTurn();acted=false;justEnded=sd;}
     if(turnAct){effQ={};
       // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
       for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];
@@ -166,7 +166,12 @@ function sim(g,r,excl,ov){
         const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
       case "pass":{if(lastAbil&&lastAbil.side===side&&lastAbil.turn===E.s.turn)warns.push({id:x.id,m:"这一回合用过领袖/指令/战术就不能停牌（游戏规则），可能漏记了打出的牌"});E.pass(side);break;}
       // 结束回合：在这里结算回合结束效果（之后记的改战力就是回合结束之后看到的值）
-      case "end":{if(E.s.sides[side].passed)break;if(E.s.active!==side)E.s.active=side;E.endTurn();acted=false;justEnded=true;break;}
+      // 前面记的“触发效果”（只有回合结束能力的来源，如猫学派猎魔人）已经结束了这一方的回合：不再重复结算
+      case "end":{if(E.s.sides[side].passed||justEnded===side)break;if(E.s.active!==side)E.s.active=side;
+        // 回合结束效果的随机/手动目标：记在“结束回合”后面的触发效果（猫学派猎魔人的随机伤害）
+        for(let j=i+1;j<log.length&&!isTurnAct(log[j])&&log[j].a!=="end";j++){const y=log[j];
+          if(y.a==="effect"&&modeled(y.c)&&endOnly(y.c)&&!consumed.has(y.id)){(effQ[y.c]=effQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);}}
+        E.endTurn();acted=false;justEnded=side;break;}
       case "draw":{if(x.set&&x.who==="me"&&x.cards&&x.cards.length)E.s.sides.me.handCount=x.cards.length;break;}
       case "hand":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的手牌修正「"+v+"」"});break;}
         const before=S2.handCount;S2.handCount=Math.max(0,Math.min(E.rules.handLimit,/^\+/.test(v)?S2.handCount+n:/^-/.test(v)?S2.handCount+n:n));E.log("手动手牌",{side:x.side||side,from:before,to:S2.handCount});break;}
@@ -178,7 +183,7 @@ function sim(g,r,excl,ov){
         (effQ[x.c]=effQ[x.c]||[]).push(...tq);tq=[];
         // 回合结束效果：记录到它时，该方回合已结束
         const src=E.allUnits().find(u=>u.name===x.c);
-        if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
+        if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){const sd=E.s.active;E.endTurn();acted=false;justEnded=sd;}
         break;}
     }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
     // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排

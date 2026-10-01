@@ -236,6 +236,17 @@ setTimeout(() => {
     ok(us('op') === '泰莫利亚鼓手5 寒冰巨人8' && !Q('[data-do="endTurn"]'), '结束回合：结算回合结束效果');
     w.eval('db.live.log.push({r:0,id:"e9",who:"op",a:"adj",c:"寒冰巨人",uid:"e2",side:"op",v:"8"},{r:0,id:"e10",who:"me",a:"play",c:"科德温骑士",row:"m",side:"me"})');
     ok(us('op') === '泰莫利亚鼓手5 寒冰巨人8', '结束回合：之后换人不再重复结算');
+    // 猫学派猎魔人：对面排有 2 个单位时随机伤害打到谁，结束回合后接着问；记在后面的目标用在回合结束里
+    live([{ id: 'e1', who: 'me', a: 'play', c: '科德温骑士', row: 'r', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '赤红男爵', row: 'm', side: 'me' }, { id: 'e3', who: 'me', a: 'play', c: '安赛斯王子', row: 'm', side: 'me' },
+      { id: 'e4', who: 'op', a: 'play', c: '猫学派猎魔人', row: 'r', side: 'op' }]);
+    Q('[data-do="endTurn"]').click();
+    ok(fl() === 'target' && /猫学派猎魔人/.test(Q('.sheet.flow h2').textContent), '猫学派猎魔人：结束回合后问随机伤害打到谁');
+    const pw0 = w.eval('sim(db.live,0).E.allUnits("me").find(u=>u.name==="安赛斯王子").power');
+    ub('安赛斯王子').click(); Q('[data-do="tgtDone"]').click();
+    ok(w.eval('sim(db.live,0).E.allUnits("me").find(u=>u.name==="安赛斯王子").power') === pw0 - 1 && w.eval('sim(db.live,0).E.s.sides.op.rows.m.length') === 1, '猫学派猎魔人：移到近战排，打到选的单位');
+    // 先记“触发效果”（回合已结束）再记“结束回合”：不重复结算（以前猫会移回去）
+    live([{ id: 'e1', who: 'op', a: 'play', c: '猫学派猎魔人', row: 'r', side: 'op' }, { id: 'e2', who: 'op', a: 'effect', c: '猫学派猎魔人', uid: 'e1' }, { id: 'e3', who: 'op', a: 'end' }]);
+    ok(w.eval('sim(db.live,0).E.s.sides.op.rows.m.length') === 1, '触发效果结束回合后再记结束回合：不重复结算');
     // 停牌不结算回合结束效果（rules.passTurnEnd，未确认）
     live([{ id: 'e1', who: 'op', a: 'play', c: '泰莫利亚鼓手', row: 'm', side: 'op' }, { id: 'e2', who: 'op', a: 'play', c: '寒冰巨人', row: 'm', side: 'op' }, { id: 'e3', who: 'op', a: 'pass' }]);
     ok(us('op') === '泰莫利亚鼓手5 寒冰巨人7', '停牌：默认不结算回合结束效果');
