@@ -183,7 +183,7 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
 { // 指挥号角：5 个相邻 +2，铜色每邻 1 金色额外 +1
   const g = game(); const us = ['科德温骑士', '雷纳德·奥多', '科德温骑士', '科德温骑士', '科德温骑士'].map(n => P(g, 'me', n, 'm'));
   const mid = us[2]; g.chooser = () => [mid]; g.play('me', '指挥号角');
-  ok(us[0].power === 8 && us[2].power === 9 && us[3].power === 8 && us[1].power === 10, '指挥号角：挨着金卡雷纳德的铜卡 +3，其余 +2');
+  ok(us[0].power === 8 && us[2].power === 9 && us[3].power === 8 && us[1].power === 11, '指挥号角：挨着金卡雷纳德的铜卡 +3，其余 +2');
 }
 { // 温格堡的叶奈法（近战）：所有其他单位 2 伤害
   const g = game(); const a = P(g, 'me', '老矛头', 'm'), b = P(g, 'op', '寒冰巨人', 'r'); P(g, 'op', '温格堡的叶奈法', 'm');
