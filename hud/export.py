@@ -26,6 +26,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TGT_WORDS = re.compile(r'伤害|增益|锁定|摧毁|重置')
 
 
+def has_shield_kw(card):
+    """卡面自带护盾（第一段关键词里有“护盾”），落地时就有，不用记。"""
+    first = re.split(r'\s*/\s*', card.get('text') or '')[0]
+    return bool(re.search(r'(^|、)护盾([。.、]|$)', first))
+
+
 DECK_PLAY = re.compile(r'从(?:己方)?牌组(?:中)?打出')
 
 
@@ -217,19 +223,36 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         def row_of(ent, rk):
             names = ent.get('rows', {}).get(rk, [])
             pws = (ent.get('pw') or {}).get(rk, [])
+            shs = (ent.get('sh') or {}).get(rk, [])
             keep = [j for j, nm in enumerate(names) if cards_by_name.get(nm, {}).get('type') != '战术']
-            return [names[j] for j in keep], [pws[j] if j < len(pws) else None for j in keep]
+            return ([names[j] for j in keep], [pws[j] if j < len(pws) else None for j in keep],
+                    [shs[j] if j < len(shs) else None for j in keep])
 
         for rk, us in units.items():
-            names, pws = row_of(sync_states[i][1], rk)
-            names2, pws2 = row_of(sync_states[i - 1][1], rk)
-            if names != [u[1] for u in us] or names2 != names:
+            names, pws, _ = row_of(sync_states[i][1], rk)
+            names2, pws2, _ = row_of(sync_states[i - 1][1], rk)
+            who = 'me' if rk.startswith('我方') else 'op'
+            if names == [u[1] for u in us] and names2 == names:
+                for u, p, p2 in zip(us, pws, pws2):
+                    if p is not None and p == p2 and p != u[2]:  # 连续两帧读到同样的数才写
+                        push({'who': who, 'a': 'adj', 'uid': u[0], 'v': str(p), 'hud': '画面读到的战力'}, t)
+                        u[2] = p
+            # 护盾（左下橙色圆点）：这一步之前 2 秒内、整排牌名对得上的帧都读到同样的有 / 没有才写；落地 4 秒内是动画，不看
+            reads = []
+            j = i
+            while j >= 0 and sync_t[j] >= sync_t[i] - 2.0:
+                nm, _, shs = row_of(sync_states[j][1], rk)
+                if nm == [u[1] for u in us]:
+                    reads.append(shs)
+                j -= 1
+            if len(reads) < 2:
                 continue
-            for u, p, p2 in zip(us, pws, pws2):
-                if p is not None and p == p2 and p != u[2]:  # 连续两帧读到同样的数才写
-                    push({'who': 'me' if rk.startswith('我方') else 'op', 'a': 'adj', 'uid': u[0], 'v': str(p),
-                          'hud': '画面读到的战力'}, t)
-                    u[2] = p
+            for k, u in enumerate(us):
+                vals = {r[k] for r in reads}
+                if len(vals) == 1 and None not in vals and vals != {u[3]} and t - u[4] >= 4.0:
+                    sh = vals.pop()
+                    push({'who': who, 'a': 'adj', 'uid': u[0], 'v': '+盾' if sh else '-盾', 'hud': '画面读到的护盾'}, t)
+                    u[3] = sh
 
     used = Counter()   # 我方每张牌已经打出 / 召唤的次数（不超过卡组张数；回手的退回一次）
 
@@ -265,7 +288,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             pend_tgt.append((x, t, {k: [u[:2] for u in v] for k, v in units.items()}))
         if x['a'] in ('play', 'summon') and x.get('row'):
             us = units.setdefault(rowkey(x['who'], x['row']), [])
-            us.insert(min(x.get('pos', len(us)), len(us)), [x['id'], x['c'], x.get('pw')])
+            us.insert(min(x.get('pos', len(us)), len(us)), [x['id'], x['c'], x.get('pw'),
+                                                            has_shield_kw(cards_by_name.get(x['c'], {})), t])
         if x['a'] in ('play', 'summon') and (x.get('row') or x['a'] == 'play'):
             # 特殊牌没有排，也记进来（水路突袭、骑士册封从牌组打出单位）
             recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}.get(x.get('row'), ''),

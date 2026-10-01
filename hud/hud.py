@@ -184,7 +184,7 @@ class BoardWatcher(threading.Thread):
                         self.tr.shows.append((st, name))
                     ent['show'] = None
                     self.tr.update(t0, ent)
-                    self.states.append((t0, {k: ent.get(k) for k in ('score', 'sharp', 'smin', 'prof', 'turn', 'rows', 'pw', 'cnt')}))
+                    self.states.append((t0, {k: ent.get(k) for k in ('score', 'sharp', 'smin', 'prof', 'turn', 'rows', 'pw', 'sh', 'cnt')}))
                     snap = self.tr.snapshot()
                 if self.frames_dir:
                     name = time.strftime('%H%M%S', time.localtime(t0)) + f'_{int(t0 * 10) % 10}.jpg'

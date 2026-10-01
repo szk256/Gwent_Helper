@@ -116,6 +116,18 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
+def shields_from_det(im, ent):
+    """{排: [护盾 True/False/None]}，顺序和 ent['rows'] 一样（从左到右）。"""
+    import layout
+    L = layout.get(im)
+    rows = {}
+    for n, v, x, y, h in ent.get('det') or []:
+        r = board.classify(L, x, y, h, v)
+        if r and r != '手牌':
+            rows.setdefault(r, []).append((x, y, h))
+    return {r: [detect.shield(im, x, y, h) for x, y, h in sorted(cs)] for r, cs in rows.items()}
+
+
 def scan_frame(m, im):
     import layout
     raw = []
@@ -123,6 +135,7 @@ def scan_frame(m, im):
     rows = board.names(m, {r: [c[:3] for c in cs] for r, cs in det.items()})
     score = reader().scores(im)
     cands = {}
+    sh = {r: [detect.shield(im, x, y, h) for x, _a, _v, y, h in cs] for r, cs in det.items() if r != '手牌'}
     for r, cs in det.items():
         if r == '手牌':
             continue
@@ -135,7 +148,7 @@ def scan_frame(m, im):
     pws, ok = joint_powers(cands, score)
     ent = {'rows': rows, 'pw': pws, 'pw_ok': ok, 'sharp': sharpness(im), 'show': None,
            'score': score, 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im), 'lead': reader().leader(im),
-           'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw,
+           'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw, 'sh': sh,
            'v3': 1}  # v3：我方半场用卡组子库 + 游戏内卡图模板、按透视分排；det 是分排前的原始检测
     sc = detect.showcase(im)
     if sc is not None:
@@ -190,6 +203,10 @@ def scan_dir(m, d, jobs=1):
             # 阈值按当前 layout（旧缓存没存画面比例：iPad 的旧阈值是 200）
             ent.setdefault('prof', '4:3' if ent.get('smin') == 200 else '16:9')
             ent['smin'] = layout.PROFILES[ent['prof']]['sharp_min']
+            if 'sh' not in ent:
+                # 旧缓存：按原始检测重新分排（和扫描时同一规则、同一顺序），补算每张场上牌的护盾
+                im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+                ent['sh'] = shields_from_det(im, ent)
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)

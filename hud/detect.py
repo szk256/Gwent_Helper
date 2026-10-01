@@ -36,6 +36,32 @@ def showcase(frame, thresh=0.5):
     return crop(frame, layout.get(frame)['show_card'])
 
 
+def shield(frame, x, y, h):
+    """场上这张牌（中心 x、y，高 h，画面比例）有没有护盾：左下图标列里带深色圈的橙色圆点
+    （有护盾时整张牌还会泛金光，但神赐、增益动画、金色卡框也会发金光，只看圆点）。
+    2026-10-01 真人局 2500 张场上牌人工核对，单帧错 5–6 张（孤立的一帧，导出时要求连续两帧一致）。"""
+    H, W = frame.shape[:2]
+    ch = h * H * 1.08
+    cw = ch * 0.67
+    x0, y0 = int(x * W - cw / 2), int(y * H - ch / 2)
+    if x0 < 0 or y0 < 0 or x0 + cw > W or y0 + ch > H:
+        return None
+    c = frame[y0:int(y0 + ch), x0:int(x0 + cw)]
+    ch, cw = c.shape[:2]
+    reg = c[int(.55 * ch):, :int(.42 * cw)]
+    hsv = cv2.cvtColor(reg, cv2.COLOR_BGR2HSV)
+    m = ((hsv[..., 0] >= 5) & (hsv[..., 0] <= 25) & (hsv[..., 1] >= 140) & (hsv[..., 2] >= 140)).astype(np.uint8)
+    m[:, :int(0.06 * cw)] = 0      # 卡框左边、底边的金光会和圆点连成一片
+    m[-int(0.04 * ch):, :] = 0
+    n, _lab, st, _cen = cv2.connectedComponentsWithStats(m, 8)
+    d0 = 0.15 * cw                 # 圆点直径约卡宽 15%
+    for i in range(1, n):
+        _x, _y, w, hh, a = st[i]
+        if 0.5 * d0 <= w <= 1.5 * d0 and 0.5 * d0 <= hh <= 1.5 * d0 and 0.7 <= w / max(hh, 1) <= 1.4                 and a >= 0.3 * w * hh:   # 圆点中间有时偏暗，填充率 0.37–0.8
+            return True
+    return False
+
+
 _sift_board = cv2.SIFT_create()
 
 
