@@ -623,7 +623,8 @@ class Game {
       status: Object.assign({}, d.status || {}), infused: [], blessFired: {}, orderUsed: 0, cd: 0, zeal: !!d.zeal,
       timer: d.timer ? d.timer.n : (d.timerN || null), pat: d.patience ? (d.patInit || 0) : null });
     // 战力不变的变形（被诅咒的骑士）：基础战力也保留原来的（用户实测：变成 6 战力、显示为增益的被诅咒的骑士）
-    if (o.keepPower) { u.power = p; u.base = b0; } else u.power = u.base;
+    // 变成基础同名牌：护甲也是新牌卡面的（录像实测：杜度变成瑞达尼亚骑士带 2 点护甲，壁垒照样每回合 +1）
+    if (o.keepPower) { u.power = p; u.base = b0; } else { u.power = u.base; u.armor = d.armor || 0; }
     this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
     this.checkBless(u);
   }

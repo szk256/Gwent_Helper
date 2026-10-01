@@ -381,5 +381,11 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const g2 = game(); g2.s.round = 2; const b = P(g2, 'me', '图尔赛克家族入侵者', 'm'); ok(b.base === 7, '老兵：第三局从手牌打出 → 7');
   const g3 = game(); const c1 = P(g3, 'me', '图尔赛克家族入侵者', 'm'); g3.s.round = 1; g3.startRound(); ok(c1.base === 6, '老兵：场上的单位第二局开始 +1（不重复加）');
 }
+{ // 杜度（2026-10-01 录像）：变成瑞达尼亚骑士的基础同名牌，带卡面 2 点护甲，远程壁垒每个己方回合结束 +1
+  const g = game(); const rk = P(g, 'me', '瑞达尼亚骑士', 'r'); g.endTurn();
+  g.chooser = () => [rk]; const d = P(g, 'op', '杜度', 'r');
+  ok(d.name === '瑞达尼亚骑士' && d.power === 2 && d.armor === 2, '杜度：变成瑞达尼亚骑士 2 战力 2 护甲');
+  g.endTurn(); ok(d.power === 3, '杜度变成的瑞达尼亚骑士：壁垒回合结束 +1');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

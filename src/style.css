@@ -249,6 +249,8 @@ table th{color:#6E5C3E}
 .chip.unit .upw.up{color:#7CE07C;border-color:#7CE07C}.chip.unit .upw.dn{color:#FF7A6B;border-color:#FF7A6B}.chip.unit .ust{z-index:2}.chip.unit .uar,.chip.unit .unm{z-index:2}
 .uar{position:absolute;right:2px;top:2px;min-width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;background:#556;border:1px solid #aab;border-radius:3px}
 .unm{position:absolute;right:2px;top:20px;width:16px;height:16px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#111;background:#FFD24A;border-radius:50%}
+/* 目标步骤：同一单位选了几次（几张猫学派猎魔人都打它） */
+.selx{position:absolute;left:50%;bottom:2px;transform:translateX(-50%);z-index:3;padding:0 4px;font-size:11px;font-weight:700;color:var(--onInk);background:var(--on1);border-radius:6px}
 .uord{position:absolute;right:2px;top:38px;z-index:3;width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;border-radius:3px;color:#241B08;background:var(--gold);border:1px solid #241B08}
 .uord.wait{color:#E8E0CC;background:rgba(0,0,0,.72);border:1px dashed #BFB59C}
 .ust{position:absolute;left:0;right:0;top:26px;font-size:9px;text-align:center;color:#fff;background:rgba(0,0,0,.6);line-height:12px}

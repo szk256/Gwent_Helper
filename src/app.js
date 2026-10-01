@@ -214,7 +214,7 @@ function flowDone(){const g=db.live;const ids=ui.recent||[];ui.recent=[];if(!g||
   for(const w of S.warns){if(!w.src||!ids.includes(w.id))continue;const x=entry(w.id);if(!x||w.src===x.c||(ENG.HAZARDS||{})[w.src])continue;
     if(st.some(s=>s.src===w.src&&s.of===w.id))continue;const su=S.E.allUnits().find(u=>u.name===w.src);
     const n=S.warns.filter(v=>v.src===w.src&&v.id===w.id).length;   // 同名来源缺几次（几张猫学派猎魔人）：一次多选，按顺序
-    const i=pushLog({who:su?su.side:x.who,a:"effect",c:w.src,chain:1});ui.recent=[];st.push({t:"target",id:g.log[i].id,src:w.src,of:w.id,prompt:w.prompt+(n>1?"，共 "+n+" 次，按顺序选":"")});}
+    const i=pushLog({who:su?su.side:x.who,a:"effect",c:w.src,chain:1});ui.recent=[];st.push({t:"target",id:g.log[i].id,src:w.src,of:w.id,n,prompt:w.prompt+(n>1?"，共 "+n+" 次，按顺序选，同一单位可以点多次":"")});}
   for(const x of recs){if(x.a!=="leader")continue;const last=g.log.filter(y=>y.r===x.r&&y.a==="leader"&&y.who===x.who).pop();if(last!==x)continue;
     Object.keys(S.key2u).filter(k=>k.startsWith(x.id+"/")).forEach(k=>{const u=S.key2u[k];if(u&&S.E.find(u.uid))st.push({t:"place",a:"spawn",who:x.who,side:u.side,card:u.name,via:x.c});});}
   for(const x of recs){const sd=sameStep(g,S,x);if(sd)st.push(sd);}
@@ -296,7 +296,10 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     afterCard(i,step.card,step.a,step.who);return true;}
   if(D.side&&step&&step.t==="place"){step.side=D.side;rMatch();return true;}
   if(D.u!==undefined){const {all}=board(g,undefined,tgtExcl(step));const u=all[D.u]||all[+D.u];if(!u)return true;
-    if(D.umode==="multi"){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.uid===u.uid);if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
+    if(D.umode==="multi"){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.uid===u.uid);
+      // 几张同名来源一起结算（三张猫学派猎魔人）：同一单位可以被打几次，点一下记一次，“撤销一个”去掉最后一个
+      if(step&&step.n>1){if(s.length<step.n)s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});else toast("已经选够 "+step.n+" 次");}
+      else if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
     // 指令、触发效果属于点到的单位那一方（打完牌后界面已切到对方，我方接着用指令也不会记错）
     if(ui.act==="order"&&u.eu&&u.eu.isTactic){recTactic(u.side);return true;}   // 点场上的战术牌 = 用战术
     if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
@@ -342,6 +345,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
   if(D.hrm!==undefined&&step&&step.t==="hand"){const e=entry(step.id);e.cards.splice(+D.hrm,1);persist();rMatch();return true;}
   const sw=(d)=>{const e=entry(step.id);const i=g.log.indexOf(e);let j=i+d;while(j>=0&&j<g.log.length&&g.log[j].r!==e.r)j+=d;if(j<0||j>=g.log.length)return toast("已经到头了");g.log.splice(i,1);g.log.splice(j,0,e);persist();rMatch();};
   const A={
+    tgtUndo(){(ui.sel||[]).pop();rMatch();},
     tgtDone(){const e=entry(step.id);e.tgts=(ui.sel||[]).slice();delete e.tgt;
       const n=e.a==="leader"?(ui.rep||1):1;ui.rep=1;
       for(let k=1;k<n;k++){const y=Object.assign({},e,{tgts:e.tgts.map(t=>Object.assign({},t))});delete y.id;delete y.t;const i=pushLog(y);}
@@ -462,7 +466,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{
       const us=RR[s][r];let inner="";
       if(mode==="slots"){inner=us.map((u,i)=>`<button class="slot" data-slot="${s}|${r}|${i}">＋</button><span class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} dim">${unitFace(u.n)}</span>`).join("")+`<button class="slot" data-slot="${s}|${r}|${us.length}">＋</button>`;}
-      else inner=us.map(u=>{const on=mode==="multi"&&(ui.sel||[]).some(t=>t.uid===u.uid);return `<button class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} ${on?"on":""}" data-u="${u.uid}" data-umode="${mode}" title="${esc(u.n)}">${unitFaceU(u)}</button>`;}).join("")||`<span class="note">空</span>`;
+      else inner=us.map(u=>{const k=mode==="multi"?(ui.sel||[]).filter(t=>t.uid===u.uid).length:0;return `<button class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} ${k?"on":""}" data-u="${u.uid}" data-umode="${mode}" title="${esc(u.n)}">${unitFaceU(u)}${k>1?`<span class="selx">×${k}</span>`:""}</button>`;}).join("")||`<span class="note">空</span>`;
       const lab=mode==="multi"?`<button class="bl rowpick ${(ui.sel||[]).some(t=>t.row===s+r)?"on":""}" data-rowpick="${s}${r}">${s==="me"?"我":"对"}·${ROWN[r]}</button>`:`<span class="bl">${s==="me"?"我":"对"}·${ROWN[r]}</span>`;
       const rsum=us.reduce((a,u)=>a+(u.eu?u.eu.power:0),0);
       const meta=(us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:"")+fxTags(s,r);
@@ -494,7 +498,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         const L=e&&e.a==="leader"?leaderInfo(S,g,e.who):null;const rep=ui.rep||1;
         h+=`<h2>「${esc(e.c||ACT[e.a])}」的目标</h2><p class="note">${step.src?"由前一步连带触发"+(step.prompt?"（"+esc(step.prompt)+"）":"")+"。":""}可以多选单位或整排，没有目标就跳过。${ex?"场面是这一步结算之前的样子。":""}</p>${lanes("multi",null,Rt)}
         ${e&&e.a==="leader"?`<div class="btns" style="margin-top:8px;align-items:center"><span class="note">同一目标连用</span>${[1,2,3].map(k=>`<button class="${rep===k?"primary":"ghost"}" data-rep="${k}">${k} 次</button>`).join("")}${L&&L.next!=null?`<span class="note">这次 +${L.next}</span>`:""}</div>`:""}
-        <div class="btns" style="margin-top:8px"><button class="primary" data-do="tgtDone" style="flex:1">完成${(ui.sel||[]).length?"（"+ui.sel.length+"）":""}${rep>1&&e&&e.a==="leader"?" ×"+rep:""}</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
+        <div class="btns" style="margin-top:8px"><button class="primary" data-do="tgtDone" style="flex:1">完成${(ui.sel||[]).length?"（"+ui.sel.length+"）":""}${rep>1&&e&&e.a==="leader"?" ×"+rep:""}</button>${step.n>1&&(ui.sel||[]).length?`<button class="ghost" data-do="tgtUndo">撤销一个</button>`:""}<button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="adj"){const u=(board(g,vr).all||{})[step.uid];const eu=u&&u.eu;const P=eu?eu.power:+(BY[step.card]?.pw)||0;const st=eu?eu.status:{};
         const has=[st.shield?"盾":"",st.lock?"锁":"",st.resilience?"坚":"",st.veil?"遮":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:""].filter(Boolean).join(" ");
         const pe=pendingEnd(g);const b=(v,l,cls)=>`<button class="${cls||"ghost"}" data-adjv="${esc(v)}">${esc(l||v)}</button>`;
