@@ -550,7 +550,7 @@ figcaption{color:var(--dim);font-size:13px}
 
 
 def write_review(d, review, video=None):
-    """review.html：HUD 拿不准、要人看录屏补的地方，每条附前后两帧截图（帧文件就在同一目录）。"""
+    """review.html：HUD 拿不准、要人看录屏补的地方，每条附前后两帧截图（嵌在页面里）。"""
     import bisect
     import glob
     import html
@@ -558,8 +558,16 @@ def write_review(d, review, video=None):
     ft = [timeline.frame_time(p) for p in frames]
 
     def near(t):
+        """离 t 最近的帧，缩到 1280 宽嵌进页面（单个文件拿到哪都能看）。"""
+        import base64
+        import cv2
+        import numpy as np
+        if not frames:
+            return ''
         i = min(bisect.bisect_left(ft, t), len(ft) - 1)
-        return html.escape(os.path.basename(frames[i])) if frames else ''
+        im = cv2.imdecode(np.fromfile(frames[i], np.uint8), cv2.IMREAD_COLOR)
+        im = cv2.resize(im, (1280, round(im.shape[0] * 1280 / im.shape[1])), interpolation=cv2.INTER_AREA)
+        return 'data:image/jpeg;base64,' + base64.b64encode(cv2.imencode('.jpg', im, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]).decode()
     cards = []
     for k, it in enumerate(review, 1):
         where = f"对局簿第 {it['step']} 步" if 'step' in it else f"对局簿第 {it['after']} 步之后（没记）"
