@@ -111,7 +111,7 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
-CLS_VER = 7   # 分排规则（board.classify）、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+CLS_VER = 8   # 分排规则（board.classify）、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
 
 
 def derive(im, ent):
@@ -212,6 +212,7 @@ def scan_dir(m, d, jobs=1):
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
                 derive(im, ent)
                 ent['lglow'] = detect.leader_glow(im)
+                ent['cnt'] = reader().counts(im)   # 读数字的规则也可能改了（手牌数“10/10”）
             if 'score' not in ent or 'lead' not in ent or 'turn' not in ent or 'cnt' not in ent:
                 # 旧缓存：补读总分、领袖、回合、墓场 / 手牌数（很快）
                 im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)

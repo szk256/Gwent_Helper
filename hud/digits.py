@@ -259,7 +259,7 @@ class Reader:
         best = int(np.bincount(vals).argmax())
         return best, float(diff[idx[vals == best]].min())
 
-    def number(self, mask, max_err=0.3, power=False, **kw):
+    def number(self, mask, max_err=0.3, power=False, max_digits=3, **kw):
         gs = glyphs(mask, **kw)
         if not gs:
             return None
@@ -278,7 +278,7 @@ class Reader:
                 g2 = glyphs(sub, min_h=int(0.7 * ref[3]))
                 if len(g2) == 1:
                     ds.append(self.classify(g2[0][1], power))
-        if not ds or len(ds) > 3 or any(e > max_err for _d, e in ds):
+        if not ds or len(ds) > max_digits or any(e > max_err for _d, e in ds):
             return None
         return int(''.join(str(d) for d, _e in ds))
 
@@ -321,16 +321,25 @@ class Reader:
                     gs = glyphs(m, min_h=int(0.012 * H), min_rel_h=0.8)
                     sigs.append('-'.join(sig(g) for _x, g, _b in gs[:2]) if gs and len(gs) <= 2 else None)
                 else:
-                    v = self.number(mask_white(c, red=True), power=True, min_h=int(0.3 * c.shape[0]))
-                if key == 'hand' and v is not None:
-                    s = str(v)  # “8/10”：斜杠被当成碎片去掉，剩 810 / 1010；分母固定是 10
-                    v = int(s[:-2]) if len(s) > 2 and s.endswith('10') else None
-                    if v is not None and v > 10:
-                        v = None
+                    v = self.hand_count(mask_white(c, red=True), min_h=int(0.3 * c.shape[0]))
                 vals.append(v)
             out[key] = tuple(vals)
         out['gsig'] = tuple(sigs) if len(sigs) == 2 else (None, None)
         return out
+
+    def hand_count(self, mask, min_h):
+        """手牌数“8/10”“10/10”（满手时前面是红的）：斜杠被当碎片去掉；分母固定是 10，直接去掉最后两个字形，
+        只认前面的（两位只能是 10）。分母的“0”常被认成 8，以前整串作废，第一局满手时一直读不出。"""
+        gs = glyphs(mask, min_h=min_h)
+        if not 3 <= len(gs) <= 4:
+            return None
+        head = gs[:-2]
+        cls = [(1, 0.0) if bb[2] < 0.36 * bb[3] else self.classify(g, True) for _x, g, bb in head]
+        if any(e > 0.3 for _d, e in cls):
+            return None
+        if len(cls) == 2:
+            return 10 if cls[0][0] == 1 else None
+        return cls[0][0]
 
     def leader(self, frame):
         """(对方, 我方) 领袖剩余次数；标牌不在（用完了）或读不出为 None。"""

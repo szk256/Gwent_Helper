@@ -99,6 +99,7 @@ def synth_specials(events, states, my_deck, cards_by_name, runs):
     return sorted(out, key=lambda e: e[0])
 
 
+M_ECHO = re.compile(r'(^|/)\s*回响')
 DECK_PLAY = re.compile(r'从(?:己方)?牌组(?:中)?打出')
 
 
@@ -353,9 +354,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         c = cards_by_name.get(x.get('c'), {})
         if c.get('set') == 'token' or x.get('c') not in my_deck or x.get('via') == x.get('c'):
             return False  # 衍生牌、卡组外、同名复制（不朽者骑兵这类）不占卡组张数
-        if used[x['c']] >= my_deck[x['c']]:
+        key = (x['c'], r) if M_ECHO.search(c.get('text') or '') else x['c']   # 回响：每小局回到牌组
+        if used[key] >= my_deck[x['c']]:
             return True
-        used[x['c']] += 1
+        used[key] += 1
         return False
 
     def push(x, t):
@@ -514,20 +516,24 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     if my_deck and deck_filter and mode == 'cap':
         # 超出卡组张数时，优先保留有比分变化作证据的那几次（证据一样再按先后）
         occ = {}
+        rnd = 0
         for i, (t, kind, side, name, row) in enumerate(events):
+            if kind == '小局结束':
+                rnd += 1
             c = cards_by_name.get(name, {})
             if side != '我方' or name not in my_deck or c.get('set') == 'token':
                 continue
+            key = (name, rnd if M_ECHO.search(c.get('text') or '') else None)   # 回响：每小局开始回到牌组，按小局计数
             if kind == '离手' and c.get('type') == '特殊':
                 # 特殊牌的效果往往在“离手”确认之前就出现了（离手要连续几帧看不到）：比较离手前 6 秒和后 12 秒的比分
                 d = score_change(t - 6, t + 12)
-                occ.setdefault(name, []).append((0 if d and d != (0, 0) else 1, t, i, None))
+                occ.setdefault(key, []).append((0 if d and d != (0, 0) else 1, t, i, None))
             elif kind in ('打出', '进场') and row != '手牌' and c.get('type') in ('单位', '神器'):
                 d = score_delta(t, 0.5, 10)
                 end = next((j for j in range(i + 1, len(events)) if events[j][1] in ('离场', '小局结束')
                             and (events[j][1] == '小局结束' or (events[j][3] == name and events[j][4] == row))), None)
-                occ.setdefault(name, []).append((0 if d and d[0] > 0 else 1, t, i, end))
-        for name, lst in occ.items():
+                occ.setdefault(key, []).append((0 if d and d[0] > 0 else 1, t, i, end))
+        for (name, _r), lst in occ.items():
             for _ev, _t, i, end in sorted(lst)[my_deck[name]:]:
                 drop.add(i)
                 if end is not None and events[end][1] == '离场':
@@ -572,6 +578,19 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 x['hud'] += '；目标在离手确认前已经离场'
             push(x, t)
             note_mech(x, t, 'me')
+            stext = text_of(name)
+            if log and log[-1] is x and (DECK_PLAY.search(stext) or '召唤' in stext):
+                j = next((j for j in range(len(log) - 2, -1, -1) if log[j]['who'] == 'me' and log[j]['a'] in ('play', 'summon')
+                          and not log[j].get('via') and log[j].get('row') and 0 <= t - log[j].get('ts', 0) <= 5
+                          and cards_by_name.get(log[j].get('c'), {}).get('type') == '单位'), None)
+                if j is not None:
+                    u = log[j]
+                    u['via'] = name
+                    u['a'] = 'play' if DECK_PLAY.search(stext) else 'summon'
+                    u['hud'] = f'{name} 带出（{name} 离手确认得晚，回头关联）'
+                    log.insert(j, log.pop())   # 特殊牌挪到它带出的单位前面
+                    if u['c'] in used and cards_by_name.get(u['c'], {}).get('set') != 'token':
+                        pass   # 从牌组打出的仍然占卡组张数
             pending_step = pending_step or len(log) > k0
             continue
         if row == '手牌' or kind in ('离手', '抽到') or c.get('type') == '战术':
