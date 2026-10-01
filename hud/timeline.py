@@ -111,6 +111,65 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
+def opp_matcher(m, fac):
+    """对方半场用的子库：对方阵营 + 中立 + 衍生牌，再加我方卡组（被抓过去的、我方打出的潜伏牌也在对方半场）。
+    候选少一大半，误配少、也快一些。fac 为 None 时返回 None（用全库）。"""
+    if not fac:
+        return None
+    key = (id(m), fac)
+    if key not in _OPP:
+        import deck
+        dk = deck.load(DECK_SPEC, m.cards) or {}
+        names = {c['name'] for c in m.cards if c.get('fac') in (fac, 'NE')}
+        names |= set(dk) | deck_tokens(m.cards, dk)
+        _OPP[key] = m.subset(names)
+    return _OPP[key]
+
+
+_OPP = {}
+OPP_SAMPLE = 40   # 定对方阵营抽的帧数
+
+
+def op_faction(m, d, frames, done, jobs=1):
+    """对方阵营：对方半场认出的牌（非中立、非我方卡组）按票数投票。有缓存的原始检测就直接用，没有先用全库抽样扫几十帧。
+    结果存在帧目录 scan_meta.json。"""
+    import layout
+    import deck
+    meta_p = os.path.join(d, 'scan_meta.json')
+    if os.path.exists(meta_p):
+        with open(meta_p, encoding='utf-8') as f:
+            meta = json.load(f)
+        if meta.get('op_fac'):
+            return meta['op_fac']
+    mine = set(deck.load(DECK_SPEC, m.cards) or {})
+    by_name = {c['name']: c for c in m.cards}
+    ents = [(p, done[os.path.basename(p)]) for p in frames if 'det' in (done.get(os.path.basename(p)) or {})]
+    if len(ents) < OPP_SAMPLE:
+        sample = frames[::max(1, len(frames) // OPP_SAMPLE)][:OPP_SAMPLE]
+        if jobs > 1:
+            import multiprocessing as mp
+            with mp.Pool(jobs, _init_worker, (None,)) as pool:
+                ents = [(p, e) for p, (_k, e) in zip(sample, pool.map(_scan_path, sample))]
+        else:
+            ents = [(p, scan_frame(m, cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR))) for p in sample]
+    votes = {}
+    for p, e in ents:
+        prof = layout.PROFILES[e.get('prof', '16:9')]
+        split = dict(prof['row_cy'])['对方近战']
+        for n, v, _x, y, _h in e['det']:
+            c = by_name.get(n, {})
+            if y < split and v >= 8 and n not in mine and c.get('fac') not in (None, 'NE'):
+                votes[c['fac']] = votes.get(c['fac'], 0) + v
+    fac = max(votes, key=votes.get) if votes else None
+    total = sum(votes.values())
+    if fac and votes[fac] < 0.6 * total:
+        fac = None   # 拿不准（两个阵营差不多）：用全库
+    with open(meta_p, 'w', encoding='utf-8') as f:
+        json.dump({'op_fac': fac, 'votes': votes}, f, ensure_ascii=False)
+    print(f'对方阵营：{fac or "不确定，用全库"}（{votes}）')
+    return fac
+
+
 CLS_VER = 11   # 分排规则（board.classify）、总分、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
 
 
@@ -149,10 +208,10 @@ def derive(im, ent):
     return ent
 
 
-def scan_frame(m, im):
+def scan_frame(m, im, opp=None):
     import layout
     raw = []
-    board.scan(m, im, detail=True, mine=mine_matcher(m), raw=raw)
+    board.scan(m, im, detail=True, mine=mine_matcher(m), raw=raw, opp=opp)
     ent = {'sharp': sharpness(im), 'show': None,
            'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im),
            'lead': reader().leader(im), 'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw,
@@ -161,23 +220,25 @@ def scan_frame(m, im):
     derive(im, ent)
     sc = detect.showcase(im)
     if sc is not None:
-        res = m.match(sc)
+        res = (opp or m).match(sc)   # 展示框里是对方打出的牌
         if Matcher.confident(res):
             ent['show'] = res[0][2][0]['name']
     return ent
 
 
 _W = None
+_WO = None
 
 
-def _init_worker():
-    global _W
+def _init_worker(fac=None):
+    global _W, _WO
     _W = Matcher()
+    _WO = opp_matcher(_W, fac)
 
 
 def _scan_path(p):
     im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
-    return os.path.basename(p), scan_frame(_W, im)
+    return os.path.basename(p), scan_frame(_W, im, _WO)
 
 
 def save_json(path, obj):
@@ -197,9 +258,11 @@ def scan_dir(m, d, jobs=1):
     frames = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=frame_time)
     t0 = time.time()
     todo = [p for p in frames if 'v3' not in (done.get(os.path.basename(p)) or {})]
+    fac = op_faction(m, d, frames, done, jobs) if todo and os.environ.get('HUD_OPP') != '0' else None   # HUD_OPP=0：对方半场用全库（对照）
+    opp = opp_matcher(m, fac)
     if jobs > 1 and len(todo) > 20:
         import multiprocessing as mp
-        with mp.Pool(jobs, _init_worker) as pool:
+        with mp.Pool(jobs, _init_worker, (fac,)) as pool:
             for i, (k, ent) in enumerate(pool.imap_unordered(_scan_path, todo, chunksize=4)):
                 done[k] = ent
                 if (i + 1) % 100 == 0:
@@ -238,7 +301,7 @@ def scan_dir(m, d, jobs=1):
                     e2['show'] = res[0][2][0]['name']
             done[k] = e2
         else:
-            done[k] = scan_frame(m, im)
+            done[k] = scan_frame(m, im, opp)
         if (i + 1) % 50 == 0:
             print(f'  扫描 {i + 1}/{len(frames)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
             save_json(cache, done)
@@ -312,7 +375,7 @@ class Tracker:
     一次扫描里一大半已知的牌同时不见（被窗口挡住、动画）先不算；ROUND_S 秒内出现过场画面 = 小局结束，清空；
     超过 ROUND_S 秒没有过场画面 = 真的离场，照常按迟滞记。
     展示框里认出的牌（对方刚打出）用来把对方的进场分成“打出”和“召唤/生成”。"""
-    IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S, MOVE_S = 2, 3, 2.5, 8.0, 10.0, 40.0, 4.0
+    IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S, MOVE_S = 2, 3, 2.5, 8.0, 10.0, 40.0, 6.0
     REENTER_TOKEN_S = 300.0
 
     def __init__(self):
@@ -483,7 +546,7 @@ class Tracker:
         # 同一方同名牌刚从另一排离场 = 移动
         for i in range(len(self.events) - 1, -1, -1):
             e = self.events[i]
-            if t - e[0] > 4:
+            if t - e[0] > self.MOVE_S:
                 break
             if e[1] == '离场' and e[2] == side and e[3] == name and e[4] != row:
                 if row == '手牌':  # 从场上回到手牌

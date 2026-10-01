@@ -1489,6 +1489,7 @@ def leader_from_glow(events, states, eps, cards_by_name=None, boost_max=None):
         return {k: statistics.median(v) for k, v in acc.items() if len(v) >= 2}
 
     info = []
+    round_ends = [e[0] for e in events if e[1] == '小局结束']
     for t0, t1 in eps:
         # 黄光常在加分之后才拍到（点选后很快就结算、光还在淡出）：黄光前的总分取开始前 1.5 秒以前的（2026-10-01 皇家激励 → 雷纳德）
         s0, s1 = score_at(t0 - 8, t0 - 1.5, 'last'), score_at(t1 + 1, t1 + 5, 'first', my_turn=True)
@@ -1506,12 +1507,26 @@ def leader_from_glow(events, states, eps, cards_by_name=None, boost_max=None):
         gains += [(p1[k] - int(base), k) for k in p1 if k not in p0 and k in present
                   and str(base := ((cards_by_name or {}).get(k[1]) or {}).get('power')).isdigit()]
         # 免疫的（布朗温）不能被指定；涨得最多的要比第二名多 2 以上才算（同时还有神赐、灌注、护盾金光读错，拿不准就问）
-        gains = sorted((g for g in gains if '免疫' not in ((cards_by_name or {}).get(g[1][1]) or {}).get('text', '')
-                        and (boost_max is None or g[0] <= boost_max)), reverse=True)   # 比卡面增益还多的是读错（护盾金光下的两位数）
+        gains = [g for g in gains if '免疫' not in ((cards_by_name or {}).get(g[1][1]) or {}).get('text', '')]
+        if boost_max is not None:
+            # 皇家激励 +5，每次刷新（触发神赐）-1：这一小局之前用过 n 次，这次至少 +(5 - n)；涨得比这少的是别的效果
+            # （2026-10-01 安赛斯 +2 是上一次神赐触发落难的少女“相邻 +2”，读数晚到）。读错差 1 放过。
+            # 增益只减不增、每次最多减 1：不低于这一小局上一次认准的增益 - 1（没有就按用过几次估，再放过 1 的读错）
+            r0 = max([te for te in round_ends if te < t0], default=-1e9)
+            prev = [it for it in info if it['used'] and it['t0'] > r0]
+            last_gain = next((it['gain'] for it in reversed(prev) if it.get('gain')), None)
+            prior = len(prev)
+            lower = last_gain - 1 if last_gain else boost_max - 1 - prior - 1
+            gains = [g for g in gains if g[0] >= lower]
+            # 比卡面增益还多的多半是读错（护盾金光下的两位数）；但黄光前的读数可能是旧的（上一次增益还没显示），
+            # 只剩这些时照样用
+            within = [g for g in gains if g[0] <= boost_max]
+            gains = within or gains
+        gains.sort(reverse=True)
         best = gains[0] if gains else (0, None)
         sure = best[0] >= 2 and (len(gains) < 2 or best[0] - gains[1][0] >= 2)
         info.append({'t0': t0, 't1': t1, 'used': s0 is not None and s1 is not None and s1 > s0,
-                     'tg': best[1] if sure else None})
+                     'tg': best[1] if sure else None, 'gain': best[0] if sure and best[0] <= (boost_max or 99) else None})
     out, taken = [], set()
     for e in events:
         if e[1] == '领袖' and e[2] == '我方':
