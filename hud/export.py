@@ -80,18 +80,25 @@ def synth_specials(events, states, my_deck, cards_by_name, runs):
         if any(e[2] == '我方' and e[1] == '离手' and cards_by_name.get(e[3], {}).get('type') == '特殊'
                and abs(e[0] - td) <= 8 for e in events):
             continue
-        gain = {n: pres(td - 20, td - 1, n) - pres(td + 1, td + 20, n) for n in specials}
+        # 卡组里只有 1 张、之后 2 分钟（本小局内）手牌区照样认得出的不算（识别时有时无；2026-10-01 滚油）
+        gain = {n: pres(td - 20, td - 1, n) - pres(td + 1, td + 20, n) for n in specials
+                if not (my_deck.get(n) == 1 and pres(td + 3, min([td + 120] + [e[0] - 1 for e in events if e[1] == '小局结束' and e[0] > td]), n)
+                         >= 0.5 * pres(td - 40, td - 3, n) > 0)}
         best = max(gain, key=gain.get, default=None)
-        if best is None or gain[best] < 0.3:
+        if best is None or gain[best] < 0.2:
             continue
         landed = [e for e in events if e[2] == '我方' and e[1] in ('打出', '进场') and e[4] in ('我方近战', '我方远程')
                   and abs(e[0] - td) <= 5]
         if landed:
             # 有单位落地：从牌组打出单位的特殊牌（水路突袭）也是这样。只有特殊牌在手牌区明显消失（≥ 0.5）、
-            # 落地那张在手牌区没少（< 0.2，卡组里的另一张、或者手里本来就没有）才算打出了特殊牌
+            # 落地那张在手牌区没少（< 0.2，卡组里的另一张、或者手里本来就没有）才算打出了特殊牌；
+            # 落地那张之前 60 秒从没在手牌区出现过、这张特殊牌卡面又是“从牌组打出”，掉 0.2 就够（特殊牌本来就时有时无）
             u = landed[0][3]
-            if gain[best] < 0.5 or pres(td - 20, td - 1, u) - pres(td + 1, td + 20, u) >= 0.2:
+            from_deck = DECK_PLAY.search(cards_by_name.get(best, {}).get('text') or '') and pres(td - 60, td - 1, u) < 0.05
+            if gain[best] < (0.2 if from_deck else 0.5) or pres(td - 20, td - 1, u) - pres(td + 1, td + 20, u) >= 0.2:
                 continue
+        elif gain[best] < 0.3:
+            continue
         # 效果先于手牌数更新：时间取它前面 6 秒内最早的对方离场 / 我方落地，没有就往前 1 秒
         tt = min([e[0] for e in events if e[2] == '对方' and e[1] == '离场' and td - 6 <= e[0] <= td]
                  + [e[0] for e in landed] + [td - 1]) - 0.3
@@ -257,14 +264,23 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
 
     def resolve_targets(t_after):
         """比较打出前后每个单位的战力：伤害 → 对方掉了的，增益 → 己方涨了的，摧毁 → 没了的；按卡面数值挑最匹配的。"""
+        claimed = set()   # 同一个核对点里几张牌各推各的目标，不抢同一个（玛哈坎麦酒 +5、致幻菌菇 -3+9）
         while pend_tgt:
             x, t, snap = pend_tgt.pop(0)
             if x.get('tgts'):
                 continue   # 卡面机制（抓捕、转变……）已经定了目标
-            text = target_text(cards_by_name.get(x['c'], {}))
+            text = target_text(cards_by_name.get(x.pop('tc', None) or x['c'], {}))
             nums = [int(v) for v in re.findall(r'(\d+)\s*点', text)][:1]   # 主数值（伤害 / 增益量），附带的护甲等不算
             want = int(m.group(1)) if (m := re.search(r'(\d+)\s*个', text)) else 1
             cands = []
+            # 前后窗口：打出后第一次总分变化到下一次总分变化之间（连着结算的几张牌各看各的一段，2026-10-01 三张炼金牌 4 秒内结算）
+            chg = [tt for tt, _sc in scores if tt > t + 0.3]
+            w0, w1 = (t - 3.0, t - 0.3), (t_after, t_after + 3.0)
+            # 我方特殊牌“离手”确认得晚（效果早出现了），只给对方（展示框时间准）用
+            if chg and chg[0] <= t_after + 0.5 and x['who'] == 'op':
+                prev_chg = max((tt for tt, _sc in scores if tt <= t + 0.3), default=t - 3.0)
+                w0 = (max(prev_chg, t - 3.0), chg[0] - 0.05)
+                w1 = (chg[0], (chg[1] - 0.05) if len(chg) > 1 and chg[1] - chg[0] < 3.0 else chg[0] + 3.0)
 
             def find(names, nm, k):  # 第 k 个叫 nm 的在 names 里的位置
                 idx = [j for j, v in enumerate(names) if v == nm]
@@ -272,8 +288,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             for rk, us in snap.items():
                 if not us:
                     continue
-                n0, p0 = row_med(t - 3.0, t - 0.3, rk)
-                n1, p1 = row_med(t_after, t_after + 3.0, rk)
+                n0, p0 = row_med(w0[0], w0[1], rk)
+                n1, p1 = row_med(w1[0], w1[1], rk)
                 if n0 is None or n1 is None:
                     continue
                 enemy = rk.startswith('对方') == (x['who'] == 'me')
@@ -281,24 +297,35 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 for u in us:  # 按牌名逐张对齐（同名按第几张），别的牌没认出来也不影响
                     k = seen[u[1]]
                     seen[u[1]] += 1
+                    if re.search(r'(^|/)\s*免疫', text_of(u[1])):
+                        continue   # 免疫的不能被指定（布朗温）
                     j0 = find(n0, u[1], k)
                     if j0 is None:
                         continue
                     j1 = find(n1, u[1], k)
                     if j1 is None:
-                        if enemy and ('摧毁' in text or '伤害' in text) and n0.count(u[1]) > n1.count(u[1]):
+                        if (enemy if '友军' not in text else not enemy) and ('摧毁' in text or '伤害' in text) and \
+                                n0.count(u[1]) > n1.count(u[1]):
                             cands.append((0, -99, u[0]))  # 没了：被摧毁
                         continue
                     a_, b_ = p0[j0] if j0 < len(p0) else None, p1[j1] if j1 < len(p1) else None
                     if a_ is None or b_ is None or a_ == b_:
                         continue
                     d = b_ - a_
-                    if ('伤害' in text and enemy and d < 0) or ('增益' in text and not enemy and d > 0) or \
-                            ('重置' in text and d != 0) or ('锁定' in text and enemy):
-                        fit = min((max(0, kk - abs(d)) for kk in nums), default=0)   # 达到主数值的都算 0，再按变化大小
-                        cands.append((fit, -abs(d), u[0]))
+                    side_ok = (not enemy) if '友军' in text else enemy if '敌军' in text else None   # 卡面写明哪一方（暴怒的熊：友军）
+                    if ('伤害' in text and d < 0 and (enemy if side_ok is None else side_ok)) or \
+                            ('增益' in text and d > 0 and ((not enemy) if side_ok is None else side_ok)) or \
+                            ('重置' in text and d != 0) or (re.search(r'(?<!移除其)锁定', text) and enemy):
+                        # 正好等于主数值的最好；超过的其次（还有别的加成），不到的按差多少
+                        fit = min(((0 if abs(d) == kk else 1 if abs(d) > kk else 1 + kk - abs(d)) for kk in nums), default=0)
+                        cands.append((fit + (10 if u[0] in claimed else 0), -abs(d), u[0]))
             if cands:
                 x['tgts'] = [{'uid': c[2]} for c in sorted(cands)[:want]]
+                claimed.update(c['uid'] for c in x['tgts'])
+                if any(y is not x and y['who'] == x['who'] and abs(y.get('ts', -99) - t) <= 4 and
+                       y['a'] in ('play', 'spawn', 'leader') and target_text(cards_by_name.get(y.get('c'), {}))
+                       for y in log):
+                    x['tgt_unsure'] = True   # 几张牌 4 秒内连着结算，战力数字刷新又慢，分不开各自的目标
                 x['hud'] = (x.get('hud', '') + ' 目标由战力变化推出').strip()
     sync_t = [s[0] for s in sync_states] if sync_states else []
 
@@ -392,11 +419,62 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}.get(x.get('row'), ''),
                            '打出' if x['a'] == 'play' else '进场'))
 
+    def op_power_drop(a, b):
+        """[a 之前 3 秒] 和 [b 之后 3 秒] 对方各单位读到的战力（整排牌名对得上的帧取中位数），掉得最多的 (排, 第几个, 掉了多少)。"""
+        import statistics
+
+        def med(lo, hi):
+            acc = {}
+            for tt, ent in (states or []):
+                if lo <= tt <= hi:
+                    for rk in ('对方近战', '对方远程'):
+                        names = [u[1] for u in units.get(rk, [])]
+                        if ent.get('rows', {}).get(rk, []) == names:
+                            for j, pv in enumerate((ent.get('pw') or {}).get(rk, [])):
+                                if pv is not None:
+                                    acc.setdefault((rk, j), []).append(pv)
+            return {k: statistics.median(v) for k, v in acc.items() if len(v) >= 2}
+        p0, p1 = med(a - 3, a), med(b, b + 3)
+        return max(((k[0], k[1], p0[k] - p1[k], p1[k]) for k in p0 if k in p1), key=lambda x: x[2], default=None)
+
+    def drop_order(prev, cur):
+        """我方回合对方总分掉了（≥ 3）、没有单位离场、我方这几秒没有带目标的动作：
+        我方场上有“指令：重置 / 伤害”、这回合能用（不是这回合进场的）的单位 → 记它的指令，目标是战力掉得最多的对方单位（赤红男爵）。"""
+        tc = cur[0]
+        d = prev[1][1] - cur[1][1]
+        ts0 = turn_start('me', tc)
+        if d < 3 or ts0 is None or prev[1][0] < cur[1][0] - 2:
+            return
+        if any(x['who'] == 'me' and -6 <= x.get('ts', -99) - tc <= 1 and
+               (x['a'] in ('order', 'leader') or target_text(cards_by_name.get(x.get('c'), {}))) for x in log):
+            return
+        if any(dd[1] == 'op' and abs(dd[0] - tc) <= 4 for dd in departed):
+            return
+        srcs = [u for _rk, u in side_units('me') if re.search(r'指令\s*[：:][^/]*(重置|伤害)', text_of(u[1]))
+                and order_used.get(u[0]) != ts0 and u[4] < ts0]
+        drop = op_power_drop(prev[0], tc)
+        if not srcs or not drop or drop[2] < 3:
+            return
+        tu = units.get(drop[0], [])[drop[1]] if drop[1] < len(units.get(drop[0], [])) else None
+        if tu is None:
+            return
+        if len(srcs) > 1:   # 几张都能用：重置的话目标正好回到基础战力
+            base = cards_by_name.get(tu[1], {}).get('power')
+            reset = [u for u in srcs if '重置' in text_of(u[1])]
+            srcs = reset if str(base).isdigit() and drop[3] == int(base) and len(reset) == 1 else srcs
+        if len(srcs) != 1:
+            return
+        order_used[srcs[0][0]] = ts0
+        push({'who': 'me', 'a': 'order', 'c': srcs[0][1], 'uid': srcs[0][0], 'tgts': [{'uid': tu[0]}],
+              'hud': f'我方回合对方总分 -{d}、没有单位离场：推测是这张的指令（{tu[1]} 战力 -{drop[2]:g}）'}, tc - 0.3)
+
     def flush_scores(upto):
         """把 upto 之前的稳定总分里、最后一个写成核对点（每一手之后一个）。"""
         nonlocal si, last_real, pending_step, round_score
         best = None
         while si < len(scores) and scores[si][0] <= upto:
+            if si > 0:
+                drop_order(scores[si - 1], scores[si])
             if scores[si][0] >= step_t[0] + 1.0:  # 这一手之后至少 1 秒读到的才算（总分更新有延迟）
                 best = scores[si]
             si += 1
@@ -556,7 +634,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 adv = re.search(r'每打出\s*1\s*(?:张|个)“([^”]+)”', text_of(u[1]))
                 pushed = adv and any(adv.group(1) in (cards_by_name.get(n2, {}).get('tags') or '') for t2, w2, n2, _r, k2 in recent
                                      if w2 == who and k2 == '打出' and 0 <= t - t2 <= 15 and t2 >= lo)
-                pushed = pushed or (adv and any(same(e) and e[1] in ('打出', '展示', '进场') and 0 <= e[0] - t <= 4 and
+                pushed = pushed or (adv and any(same(e) and e[1] in ('打出', '展示', '进场') and -8 <= e[0] - t <= 4 and
                                                 adv.group(1) in (cards_by_name.get(e[3], {}).get('tags') or '')
                                                 for e in events[max(0, ei - 30):ei + 30] if abs(e[0] - t) <= 8))
                 if via_uses.get(key) or not pushed:
@@ -587,11 +665,43 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         s1 = next((s for tt, s in reversed(scores) if tt <= b), None)
         return None if s0 is None or s1 is None else (s1[0] - s0[0], s1[1] - s0[1])
 
-    def in_hand(nm, a, b):
-        """[a, b] 秒里（正常对局画面）手牌区认出 nm 的帧占比。"""
-        fr = [nm in (ent.get('rows') or {}).get('手牌', []) for tt, ent in (states or [])
-              if a <= tt <= b and ent.get('sharp', 0) >= ent.get('smin', 40)]
+    def in_hand(nm, a, b, grow=None):
+        """[a, b] 秒里（正常对局画面）手牌区认出 nm 的帧占比；grow：帧太少（对方回合画面不变、存得少）时 b 往后放宽到 a + grow。"""
+        def frames(b_):
+            return [nm in (ent.get('rows') or {}).get('手牌', []) for tt, ent in (states or [])
+                    if a <= tt <= b_ and ent.get('sharp', 0) >= ent.get('smin', 40)]
+        fr = frames(b)
+        while grow and len(fr) < 8 and b < a + grow:
+            b += 20
+            fr = frames(b)
         return sum(fr) / len(fr) if len(fr) >= 5 else 0.0
+
+    def hand_drops(a, b):
+        """[a, b] 里我方手牌数（连续两帧一样才算）减少了几次。"""
+        vals = [(ent.get('cnt') or {}).get('hand', [None, None])[1] for tt, ent in (states or [])
+                if a <= tt <= b and ent.get('sharp', 0) >= ent.get('smin', 40)]
+        vals = [v for v in vals if v is not None]
+        st = [v for v, w in zip(vals, vals[1:]) if v == w]
+        st = [v for i, v in enumerate(st) if i == 0 or v != st[i - 1]]
+        # 回合中途手牌数不会变多：读数变多（“0/10”的 0 读成 8）说明这段读数不可靠
+        ok = len(st) > 0 and not any(w > v for v, w in zip(st, st[1:]))
+        return sum(1 for v, w in zip(st, st[1:]) if w == v - 1), ok
+
+    def flicker_special(t, name, row):
+        """我方特殊牌“离手”其实不是打出：
+        - 卡组里只有 1 张、之后 2 分钟（本小局内）手牌区照样认得出（不少于之前的一半）——识别时有时无；
+        - 前后 8 秒手牌数减少的次数，都被同时从手牌落地的单位用掉了（之前在手牌区认出过的才算从手牌打出；
+          从牌组打出 / 召唤的单位之前不在手里）——一回合只打一张，2026-10-01 一局手牌上方空地认出 46 帧“滚油”。"""
+        if row == '手牌数':
+            return False
+        before = in_hand(name, t - 40, t - 3)
+        if (my_deck or {}).get(name, 0) == 1 and before > 0 and \
+                in_hand(name, t + 3, min([t + 120] + [te - 1 for te in round_ends if te > t])) >= 0.5 * before:
+            return True
+        n_drop, seen = hand_drops(t - 8, t + 8)
+        landed = {e[3] for e in events if e[2] == '我方' and e[1] in ('打出', '进场') and abs(e[0] - t) <= 8
+                  and cards_by_name.get(e[3], {}).get('type') in ('单位', '神器') and in_hand(e[3], t - 60, t - 8) >= 0.05}
+        return seen and n_drop <= len(landed)
 
     def score_delta(t, lo=1.0, hi=10.0):
         before = next((s for tt, s in reversed(scores) if tt <= t - 0.3), None)
@@ -617,7 +727,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             if side != '我方' or name not in my_deck or c.get('set') == 'token':
                 continue
             key = (name, rnd if M_ECHO.search(c.get('text') or '') else None)   # 回响：每小局开始回到牌组，按小局计数
-            if kind == '离手' and c.get('type') == '特殊':
+            if kind == '离手' and c.get('type') == '特殊' and not flicker_special(t, name, row):
                 # 特殊牌的效果往往在“离手”确认之前就出现了（离手要连续几帧看不到）：比较离手前 6 秒和后 12 秒的比分
                 d = score_change(t - 6, t + 12)
                 occ.setdefault(key, []).append((0 if d and d != (0, 0) else 1, t, i, None))
@@ -659,11 +769,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         if my_deck and side == '我方' and name and name not in my_deck and \
                 (c.get('set') != 'token' or c.get('fac') not in (my_fac, 'NE')):
             continue  # 我方只认卡组里的牌，和本阵营 / 中立的衍生牌
-        if kind == '离手' and c.get('type') == '特殊' and side == '我方' and row != '手牌数' and \
-                (my_deck or {}).get(name, 0) == 1 and in_hand(name, t - 40, t - 3) > 0 and \
-                in_hand(name, t + 3, t + 40) >= 0.5 * in_hand(name, t - 40, t - 3):
-            # 卡组里只有 1 张、之后手牌区照样认得出（和之前差不多常见）：是识别时有时无，没打出（2026-10-01 滚油）
-            push({'who': 'me', 'a': 'note', 'c': f'画面：{name} 手牌里时有时无，之后还在，不算打出'}, t)
+        if kind == '离手' and c.get('type') == '特殊' and side == '我方' and flicker_special(t, name, row):
+            # 卡组里只有 1 张、之后 2 分钟（本小局内）手牌区照样认得出（和之前差不多常见）：是识别时有时无，没打出
+            # （2026-10-01 滚油；水路突袭在对方回合里连着 60 秒没认出来，之后又一直在，3 分钟后才真打出）
+            push({'who': 'me', 'a': 'note', 'c': f'画面：{name} 像是离手，但之后还在手牌里 / 手牌数没少，不算打出'}, t)
             continue
         if kind == '离手' and c.get('type') == '特殊' and side == '我方':
             # 我方手牌里的特殊牌消失（不是闪烁）：打出了特殊牌（特殊牌不上场，只能这样看）
@@ -740,6 +849,16 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
             note_mech(x, t, who)
             pending_step = True
             first_side = first_side or who
+        elif kind == '展示' and op_leader and refers(op_leader, name) and (ts0 := turn_start('op', t)) is not None and \
+                op_lead_drop(ts0, t + 2) > lead_used.get(ts0, 0):
+            # 对方领袖技能“生成并打出”这张（战斗狂热 → 致幻菌菇），这回合对方领袖次数在减少：记成领袖，目标按战力变化推
+            lead_used[ts0] = lead_used.get(ts0, 0) + 1
+            x = {'who': 'op', 'a': 'leader', 'c': op_leader, 'hud': f'对方领袖 {op_leader} 生成并打出 {name}（领袖次数减少）'}
+            push(x, t)
+            if target_text(cards_by_name.get(name, {})) and states:
+                x['tc'] = name   # 用生成的那张牌的卡面推目标
+                pend_tgt.append((x, t, {k: [u[:2] for u in v] for k, v in units.items()}))
+            pending_step = True
         elif kind == '展示':  # 对方特殊牌（或展示了但没看到落地）
             x = {'who': 'op', 'a': 'play', 'c': name, 'side': 'op', 'hud': '只看到展示'}
             if (ts_ := text_source(t, 'op', name, ei)):
@@ -807,7 +926,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                   'hud': '没看到手牌少一张'}, t)
             pending_step = True
             first_side = first_side or who
-        elif kind == '进场' and who == 'op' and c.get('set') != 'token' and (ts0 := turn_start('op', t)) is not None and \
+        elif False and kind == '进场' and who == 'op' and c.get('set') != 'token' and (ts0 := turn_start('op', t)) is not None and \
                 not any(x['who'] == 'op' and x['a'] == 'play' and not x.get('via') and x.get('ts', 0) >= ts0 - 0.5 for x in log) and \
                 not any(e[2] == '对方' and e[1] in ('打出', '展示') and 0 <= e[0] - t <= 4 and not explained('op', e[3])
                         for e in events[ei + 1:ei + 30]):
@@ -862,7 +981,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
                 # 对方单位在我方回合里离场，而我方这回合打出的牌解释不了（没有目标效果）：我方场上带伤害 / 对决指令的单位用了指令
                 mine = [x for x in log if x['who'] == 'me' and x.get('ts', 0) >= ts0 - 0.5 and x['a'] in ('play', 'order', 'leader')]
                 soon = any(e[2] == '我方' and e[1] == '离手' and cards_by_name.get(e[3], {}).get('type') == '特殊'
-                           and 0 <= e[0] - t <= 8 for e in events[ei + 1:ei + 40])
+                           and 0 <= e[0] - t <= 8 and not flicker_special(e[0], e[3], e[4]) for e in events[ei + 1:ei + 40])
                 if not soon and not any(x['a'] in ('order', 'leader') or target_text(cards_by_name.get(x.get('c'), {}))
                                         for x in mine):
                     cands = [u for _rk, u in side_units('me') if M_DMG_ORDER.search(text_of(u[1])) and order_used.get(u[0]) != ts0]
@@ -954,7 +1073,12 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         for i, x in enumerate(log):
             c, side = x.get('c') or '', '我方' if x['who'] == 'me' else '对方'
             item = None
-            if x['a'] == 'leader' and not x.get('tgts'):
+            if x.pop('tgt_unsure', False):
+                names = '、'.join((next((y.get('c') for y in log if y.get('id') == t_.get('uid')), None) or '?')
+                                  for t_ in x.get('tgts') or [])
+                item = ('效果目标', f'{side}{"用了领袖" if x["a"] == "leader" else "打出"} {c}：和别的带目标的牌几秒内连着结算，'
+                                   f'HUD 按战力变化猜是 {names}，拿不准，请核对')
+            elif x['a'] == 'leader' and not x.get('tgts'):
                 item = ('领袖目标', f'{side}用了领袖{"（" + c + "）" if c else ""}：HUD 看不出用在谁身上' +
                         ('（对方领袖也不知道是哪个技能）' if x['who'] == 'op' else ''))
             elif x['a'] in ('play', 'spawn') and target_text(cards_by_name.get(c, {})) and not x.get('tgts'):
@@ -996,7 +1120,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     }
 
 
-def leader_from_glow(events, states, eps):
+def leader_from_glow(events, states, eps, cards_by_name=None):
     """我方领袖：图标黄光（已点选、正在找目标）的每一段 [t0, t1]，看前后的证据——
     总分：黄光前稳定的我方总分 vs 黄光后（t1 + 1 ~ 4 秒）稳定的总分，涨了 = 真的用了（取消不会涨分）；
     目标：前后我方各单位战力（整排牌名对得上的帧取中位数），涨得最多（≥ 2）的那张。
@@ -1027,11 +1151,27 @@ def leader_from_glow(events, states, eps):
 
     info = []
     for t0, t1 in eps:
-        s0, s1 = score_at(t0 - 6, t0 - 0.1, 'last'), score_at(t1 + 1, t1 + 5, 'first')
+        # 黄光常在加分之后才拍到（点选后很快就结算、光还在淡出）：黄光前的总分取开始前 1.5 秒以前的（2026-10-01 皇家激励 → 雷纳德）
+        s0, s1 = score_at(t0 - 8, t0 - 1.5, 'last'), score_at(t1 + 1, t1 + 5, 'first')
         p0, p1 = powers(t0 - 4, t0 - 0.1), powers(t1 + 1, t1 + 5)
-        best = max(((p1[k] - p0[k], k) for k in p0 if k in p1), default=(0, None))
+        gains = [(p1[k] - p0[k], k) for k in p0 if k in p1]
+        # 黄光之前几秒才落地的（少女的盾牌）前面没有读数：按卡面基础战力算增益
+        present = set()   # 黄光期间场上已经有的（之后才生成的布朗温不算）
+        for t_, ent in states:
+            if t0 - 3 <= t_ <= t1 + 0.5:
+                for rk in ('我方近战', '我方远程'):
+                    seen = {}
+                    for n in ent.get('rows', {}).get(rk, []):
+                        seen[n] = seen.get(n, -1) + 1
+                        present.add((rk, n, seen[n]))
+        gains += [(p1[k] - int(base), k) for k in p1 if k not in p0 and k in present
+                  and str(base := ((cards_by_name or {}).get(k[1]) or {}).get('power')).isdigit()]
+        # 免疫的（布朗温）不能被指定；涨得最多的要比第二名多 2 以上才算（同时还有神赐、灌注、护盾金光读错，拿不准就问）
+        gains = sorted((g for g in gains if '免疫' not in ((cards_by_name or {}).get(g[1][1]) or {}).get('text', '')), reverse=True)
+        best = gains[0] if gains else (0, None)
+        sure = best[0] >= 2 and (len(gains) < 2 or best[0] - gains[1][0] >= 2)
         info.append({'t0': t0, 't1': t1, 'used': s0 is not None and s1 is not None and s1 > s0,
-                     'tg': best[1] if best[0] >= 2 else None})
+                     'tg': best[1] if sure else None})
     out, taken = [], set()
     for e in events:
         if e[1] == '领袖' and e[2] == '我方':
@@ -1157,7 +1297,7 @@ def main():
     tr = timeline.Tracker()
     for t, ent in states:
         tr.update(t, ent)
-    events = leader_from_glow(tr.finish(), states, tr.__dict__.get('glow_eps', []))
+    events = leader_from_glow(tr.finish(), states, tr.__dict__.get('glow_eps', []), {c['name']: c for c in m.cards})
     spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
     events = synth_specials(events, states, deck.load(spec, m.cards), {c['name']: c for c in m.cards}, turn_runs(states))
     scores = stable_scores(states)

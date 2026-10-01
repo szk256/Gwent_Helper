@@ -111,7 +111,10 @@ def mine_matcher(m):
     return _MINE[id(m)]
 
 
-CLS_VER = 10   # 分排规则（board.classify）、总分、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+CLS_VER = 11   # 分排规则（board.classify）、总分、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+
+
+HAND_MIN_V = 6   # 手牌区检测至少这么多票（假检测 4–5 票；真手牌低于 6 票的不到 5%，靠迟滞照样认得出）
 
 
 def derive(im, ent):
@@ -121,6 +124,8 @@ def derive(im, ent):
     rows = {r: [] for r in board.ROW_KEYS}
     for n, v, x, y, h in ent.get('det') or []:
         r = board.classify(L, x, y, h, v)
+        if r == '手牌' and v < HAND_MIN_V:
+            continue   # 手牌区只有几个特征点的是假检测（手牌上方空地、悬停说明框；2026-10-01 一局“滚油”100 帧，真手牌中位数 36 票）
         if r:
             rows[r].append((x, n, y, h))
     for cs in rows.values():
