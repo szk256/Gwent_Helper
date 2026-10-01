@@ -1129,9 +1129,11 @@ def leader_from_glow(events, states, eps, cards_by_name=None):
     返回新的事件表：领袖事件的 牌名 / 排 = 目标（没认出为空）。"""
     import statistics
 
-    def score_at(a, b, pick):
+    def score_at(a, b, pick, my_turn=False):
+        # my_turn：只看还在我方回合的帧——停牌那一下也结算回合结束效果（对局簿 2026-10-02 确认），
+        # 停牌后的加分不能当成领袖的证据
         vals = [ent['score'][1] for t, ent in states if a <= t <= b and ent.get('score') and ent['score'][1] is not None
-                and ent.get('sharp', 0) >= ent.get('smin', 40)]
+                and ent.get('sharp', 0) >= ent.get('smin', 40) and (not my_turn or ent.get('turn') != 'op')]
         runs = [v for v, w in zip(vals, vals[1:]) if v == w]   # 连续两帧一样的才算
         return (runs[-1] if pick == 'last' else runs[0]) if runs else None
 
@@ -1152,7 +1154,7 @@ def leader_from_glow(events, states, eps, cards_by_name=None):
     info = []
     for t0, t1 in eps:
         # 黄光常在加分之后才拍到（点选后很快就结算、光还在淡出）：黄光前的总分取开始前 1.5 秒以前的（2026-10-01 皇家激励 → 雷纳德）
-        s0, s1 = score_at(t0 - 8, t0 - 1.5, 'last'), score_at(t1 + 1, t1 + 5, 'first')
+        s0, s1 = score_at(t0 - 8, t0 - 1.5, 'last'), score_at(t1 + 1, t1 + 5, 'first', my_turn=True)
         p0, p1 = powers(t0 - 4, t0 - 0.1), powers(t1 + 1, t1 + 5)
         gains = [(p1[k] - p0[k], k) for k in p0 if k in p1]
         # 黄光之前几秒才落地的（少女的盾牌）前面没有读数：按卡面基础战力算增益
