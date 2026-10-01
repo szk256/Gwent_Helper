@@ -106,7 +106,7 @@ setTimeout(() => {
     w.eval(`GwentPatches.PATCHES.pop();document.getElementById("cdlg").close&&document.getElementById("cdlg").close();`);
     // 版本号：侧边栏显示构建号和卡牌数据版本；迁移导出带上
     ok(/构建 [0-9a-f]{7} · 卡牌数据 v14\.9\.0/.test(w.document.getElementById('verInfo').textContent), '版本：侧边栏显示构建号和卡牌数据版本');
-    ok(/^#GWMIG v2 ids=gwent build=[0-9a-f]{7} data=v14\.9\.0\n/.test(w.eval('migText()')), '版本：迁移导出带构建号');
+    ok(/^#GWMIG v2 ids=gwent build=[0-9a-f]{7} data=v14\.10\.0\n/.test(w.eval('migText()')), '版本：迁移导出带构建号');
     // 全部迁移 v2：纯 ASCII，牌名换成编号，导回和原来完全一致
     w.eval(`db.decks.push({id:901,name:'北境 赤诚',f:'NR',leader:'皇家激励',tactic:'战术优势',cards:{'雷纳德·奥多':1,'科德温骑士':2}});db.owned={'雷纳德·奥多':1,'科德温骑士':2};
       db.edits={'科德温骑士':{pw:6,tx:'改过的效果：增益 2',alias:'科骑',f2:['SY']}};db.tactics=['战术优势'];db.notePresets=['失误','该停牌'];
