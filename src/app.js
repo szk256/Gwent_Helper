@@ -256,8 +256,9 @@ function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];
   if(c&&a==="play"&&needsTarget(c,"play"))st.push({t:"target",id});
   {const m=c&&a==="play"&&(c.tx||"").match(/献金\s*(\d+)/);if(m)st.push({t:"tribute",id,n:+m[1]});}
   if(c&&a==="play"&&name==="拉尔维克的埃兰"&&(who==="op"||!deckById(g.deck)))st.push({t:"deckCount",id});
-  if(c&&a==="play"&&pulls(c,"play"))st.push({t:"pull",who,parent:name});
-  if(a==="play"&&spawns(c,"play")){let auto=false;try{const S=sim(g,VR());auto=Object.keys(S.key2u).some(k=>k.startsWith(id+"/"));}catch(e){}
+  if(c&&a==="play"&&pulls(c,"play"))st.push({t:"pull",who,parent:name,picks:spawnPicks(c)});
+  // 引擎已经自动生成了（不朽者骑兵复制自己），或这张特殊牌是引擎自动“生成并打出”的、生成的单位已经对应到上一张牌（艾克索 → 乌鸦眼块茎 → 乌鸦）：不再问
+  if(a==="play"&&spawns(c,"play")){let auto=false;try{const S=sim(g,VR());auto=Object.keys(S.key2u).some(k=>k.startsWith(id+"/"))||S.autoPlayed.has(id);}catch(e){}
     if(!auto)st.push(...spawnStep(c,"play",who,name));}
   // 引擎算不准战力的单位（卡牌标“需手动”或未建模）：最后问一步落地战力，一次记完
   if(c&&a==="play"&&c.t==="单位"&&needsPw(name))st.push({t:"pw",id});
@@ -536,7 +537,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         h+=`<h2>「${esc(e?e.c:"")}」：${sideN(e?e.who:"op")}牌组里还有几个单位？</h2><p class="note">用于推算牌组增益和之后指令转移的数值；不清楚就跳过，之后用改战力修正。</p>
         <div class="btns" style="margin-top:8px;flex-wrap:wrap">${[0,1,2,3,4,5,6,7,8,9,10,12,15].map(n=>`<button class="ghost" data-dn="${n}">${n}</button>`).join("")}</div>
         <div class="btns" style="margin-top:8px"><input id="dnIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="primary" data-dn="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
-      else if(step.t==="pull"){h+=`<h2>「${esc(step.parent)}」拉出了哪张？</h2>${searchBox("搜牌名")}<div id="resBox">${step.who==="me"&&!ui.q?deckGrid({deckOnly:true}):matchRes()}</div>
+      else if(step.t==="pull"){h+=`<h2>「${esc(step.parent)}」拉出了哪张？</h2>${(step.picks||[]).length?`<p class="note">根据卡牌效果推测：</p><div class="grid">${step.picks.map(n=>tile(n,"","",`data-nm="${esc(n)}"`)).join("")}</div>`:""}${searchBox("搜牌名")}<div id="resBox">${step.who==="me"&&!ui.q?deckGrid({deckOnly:true}):matchRes()}</div>
         <div class="btns" style="margin-top:8px"><button class="ghost" data-do="flowSkip">没拉出 / 跳过</button></div>`;}
       else if(step.t==="spawn"){h+=`<h2>「${esc(step.parent)}」生成了什么？</h2>${step.picks.length?`<p class="note">根据卡牌效果推测：</p><div class="grid">${step.picks.map(n=>tile(n,"","",`data-nm="${esc(n)}"`)).join("")}</div>`:""}
         ${searchBox("搜衍生牌或其他牌名")}<div id="resBox">${ui.q?matchRes():""}</div>
@@ -698,7 +699,8 @@ const SERN={"unmillable":"新手卡组","baseset":"核心卡牌","thronebreaker"
 const serName=k=>SERN[k]||k;
 const SERS=(()=>{const have=new Set(C.filter(c=>!c.token&&c.ser&&c.ser!=="basic").map(c=>c.ser));return[...Object.keys(SERN).filter(k=>have.has(k)),...[...have].filter(k=>!SERN[k])];})();
 ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};
-const collBase=()=>C.filter(c=>(ui.collF==="ALL"||inFac(c,ui.collF))&&!isLeader(c)&&!c.token);
+// 衍生牌（乌鸦、布朗温……）：默认不列，筛选里可以“包含”或“只看”（ui.collTok = ""/"with"/"only"）；不能登记拥有数
+const collBase=()=>C.filter(c=>(ui.collF==="ALL"||inFac(c,ui.collF))&&!isLeader(c)&&(ui.collTok==="only"?c.token:ui.collTok==="with"||!c.token));
 const TYPES=["单位","神器","特殊","战术"];
 // 词条：辞典里的关键词，只列出当前列表里出现过的，按出现次数排
 const KWS=["部署","指令","神赐","激励","列阵","狂热","遗愿","致死","护盾","护甲","坚韧","佚亡","免疫","卫士","遮蔽","活力","重伤","中毒","锁定","净化","治愈","召唤","生成","灌注","对决","交锋","吞噬","放逐","计时","冷却","充能","老兵","剧情","统御","威势","夜宴","壁垒","破甲","狂暴","亢奋","会师","先机","成长","和谐","同化","战狂","掠食","操控","翼守","耐性","血统","赤诚","共生","共谋","抓捕","创造","揭示","丢弃","不忠","伏击","回响","增兵","利润","献金","费用","囤积","恐吓","赏金","败德","破裂","癫狂","翻开","近战","远程"];
@@ -714,15 +716,15 @@ function collList(){let list=collFilter(collBase());const q=ui.collQ.trim().toLo
   if(q)list=list.filter(c=>c.n.toLowerCase().includes(q)||c.en.toLowerCase().includes(q)||(c.alias||"").toLowerCase().includes(q));if(ui.collOwned)list=list.filter(c=>db.owned[c.n]>0);
   list=list.slice().sort((a,b)=>((b.col==="金")-(a.col==="金"))||(b.pv-a.pv));
   const info=ui.collMode==="info";
-  return (list.length?`<div class="grid">${list.map(c=>{const k=db.owned[c.n]||0;return tile(c.n,k?"×"+k:"",(k?"":"gone")+(db.edits[c.n]?" edited":""),info?`data-cardb="${c.i}"`:`data-own="${c.i}"`);}).join("")}</div>`:`<p class="note">没有符合的牌。</p>`);}
-function rColl(){const f=ui.collF;const all=collBase().filter(c=>!isTactic(c));const own=all.filter(c=>db.owned[c.n]>0).length;
+  return (list.length?`<div class="grid">${list.map(c=>{const k=db.owned[c.n]||0;if(c.token)return tile(c.n,"衍生",db.edits[c.n]?"edited":"",`data-cardb="${c.i}"`);return tile(c.n,k?"×"+k:"",(k?"":"gone")+(db.edits[c.n]?" edited":""),info?`data-cardb="${c.i}"`:`data-own="${c.i}"`);}).join("")}</div>`:`<p class="note">没有符合的牌。</p>`);}
+function rColl(){const f=ui.collF;const all=collBase().filter(c=>!isTactic(c)&&!c.token);const own=all.filter(c=>db.owned[c.n]>0).length;
   const cp=all.filter(c=>c.ser!=="unmillable");const copies=cp.reduce((s,c)=>s+Math.min(db.owned[c.n]||0,maxCopy(c)),0),copTot=cp.reduce((s,c)=>s+maxCopy(c),0);
-  const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length+F.t.length+F.kw.length;
+  const F=ui.cfil,nF=F.pv.length+F.rar.length+F.col.length+F.ser.length+F.t.length+F.kw.length+(ui.collTok?1:0);
   const base=collBase();const kwc=KWS.map(k=>[k,base.filter(c=>(c.tx||"").includes(k)).length]).filter(([k,n])=>n>0||F.kw.includes(k)).sort((a,b)=>b[1]-a[1]);
   const grp=(lab,key,items)=>`<div class="row"><div class="lab">${lab}</div><div class="chips">${items.map(([v,t])=>`<button class="chip ${F[key].includes(v)?"on":""}" data-cfil="${key}|${esc(v)}">${esc(t)}</button>`).join("")}</div></div>`;
   let h=`<div class="chips" style="margin-bottom:10px"><button class="chip ${f==="ALL"?"on":""}" data-cf="ALL">全部</button>${["NR","NE","MO","NG","ST","SK","SY"].map(x=>`<button class="chip fac ${f===x?"on":""}" style="--c:var(--${x})" data-cf="${x}">${FN[x]}</button>`).join("")}</div>
    <div class="duo coll"><div class="colL"><details class="sheet" ${ui.cfilOpen?"open":""} id="cfilBox"><summary>筛选${nF?`（${nF} 项，<b>${collFilter(base).length}</b> 张）`:""}</summary>
-    ${grp("类型","t",TYPES.map(x=>[x,x]))}${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,serName(x)]))}${grp("词条（同时具备）","kw",kwc.map(([k,n])=>[k,k+" "+n]))}
+    ${grp("类型","t",TYPES.map(x=>[x,x]))}${grp("费用","pv",PVB.map(([k,t])=>[k,t]))}${grp("颜色","col",COLS.map(x=>[x,x]))}${grp("稀有度","rar",RARS.map(x=>[x,x]))}${grp("扩展包","ser",SERS.map(x=>[x,serName(x)]))}${grp("词条（同时具备）","kw",kwc.map(([k,n])=>[k,k+" "+n]))}<div class="row"><div class="lab">衍生牌</div><div class="chips">${[["","不含"],["with","包含"],["only","只看"]].map(([v,t])=>`<button class="chip ${(ui.collTok||"")===v?"on":""}" data-ctok="${v}">${t}</button>`).join("")}</div></div>
     ${nF?`<button class="ghost" data-do="cfilClear">清除筛选</button>`:""}</details></div><div class="colR">
    <div class="sheet"><div class="sum"><span>${f==="ALL"?"全部阵营":FN[f]} 已拥有 <b>${own}</b>/${all.length} 种</span><span>按游戏算法 <b>${copies}</b>/${copTot}</span></div>
    <p class="note">「按游戏算法」：铜卡算 2 份，不算初始卡、领袖和战术。数据库总数会比游戏多约 9，拥有数应该和游戏一致。</p>
@@ -757,6 +759,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
   if(D.delg){if(!confirm("删除这局记录？"))return;db.games=db.games.filter(x=>x.id!=D.delg);persist();render();return;}
   if(D.own){const c=C[+D.own];const k=((db.owned[c.n]||0)+1)%(maxCopy(c)+1);if(k)db.owned[c.n]=k;else delete db.owned[c.n];persist();rColl();return;}
   if(D.cf){ui.collF=D.cf;ui.collQ="";rColl();return;}
+  if(D.ctok!==undefined){ui.collTok=D.ctok;rColl();return;}
   if(D.cfil){const [k,v]=D.cfil.split("|");const a=ui.cfil[k];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);rColl();return;}
   if(D.cardb){openCard(C[+D.cardb]);return;}
   if(D.dp||D.dm){const d=deckById(ui.deckSel),n=D.dp||D.dm,c=BY[n];let k=d.cards[n]||0;
@@ -807,7 +810,7 @@ document.addEventListener("click",e=>{if(suppressClick){e.preventDefault();e.sto
       db.decks.push(d);ui.deckSel=d.id;persist();$("#dlg").close();rDeck();toast(miss.length?"有 "+miss.length+" 张没找到："+miss.slice(0,3).join("、"):"已导入");},{paste:true,auto:/^(【昆特卡组】|#GWDECK v2)/});},
     deckOwned(){ui.deckOwned=!ui.deckOwned;rDeck();},
     collOwned(){ui.collOwned=!ui.collOwned;rColl();},
-    cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};rColl();},
+    cfilClear(){ui.cfil={pv:[],rar:[],col:[],ser:[],t:[],kw:[]};ui.collTok="";rColl();},
     collCount(){ui.collMode="count";rColl();},collInfo(){ui.collMode="info";rColl();},
     exColl(){copyOut("牌库代码",GwentCodec.encodeColl(db.owned));},
     addCard(){if(ui.collF==="ALL")return toast("先选一个阵营");openDlg("新增卡牌","数据库里没有的牌，加到「"+FN[ui.collF]+"」。每行一张：名称 | 金或铜 | 单位/特殊/神器 | 粮草 | 战力 | 效果（战力、效果可省略）","","添加",txt=>{

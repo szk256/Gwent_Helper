@@ -387,7 +387,8 @@ class Game {
       deathwishOf: t => g.triggerDeathwish(t, u), drain: (t, n) => g.drain(u, t, n), swap: (a, b) => g.swap(a, b),
       frost: (side, row) => { const h = g.s.hazards[side][row]; return h && h.kind === '霜' ? h : null; },
       // 生成并打出：单位走“生成（算打出）”，特殊牌直接结算
-      spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
+      // 特殊牌：对局簿记了它放在哪排（乌鸦眼块茎“生成至己方单排”）就用记的排（g.viaRows，sim 每步设置）
+      spawnPlay: (name, row, pos) => g.def(name).type === 'special' ? g.play(u.side, name, null, null, { spawned: true, row: (g.viaRows && g.viaRows[name]) || row }) : g.spawn(name, u.side, row || (u.row || 'm'), pos, u, { andPlay: true }),
       leader: () => Object.values(g.s.sides[u.side].abilities || {}).find(h => h.def.type === 'leader') || null,
     };
   }
