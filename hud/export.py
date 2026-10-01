@@ -625,6 +625,60 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                                'id': f"{x['id']}s{_k}", 'ts': x['ts'] + 0.1, 'vt': x.get('vt'),
                                'hud': f"{x['c']} 卡面召唤同名牌：同排同时认出 {n} 张的帧不少（第二张特征点少、时有时无）"})
 
+    def infer_covered_special():
+        """画面被覆盖界面挡住（看牌组）时对方打出的特殊牌拍不到，但它带出的单位凭空出现了：按证据从对方阵营的牌里筛——
+        卡面能从墓场打出 / 召唤这个单位；同时有墓场能力回来的（乌鸦之母：打出炼金牌）→ 必须是那一类；
+        紧接着剧情推进了（盖迪尼斯的阴影下：每“打出”1 张德鲁伊推进）→ 必须是“打出”不是“召唤”。
+        只剩一张就记上（注明是推算的）。2026-10-01 弗蕾雅的祝福 → 鸦母布道者，和用户自己推的一致（茜格德莉法的仪式是召唤，不推进剧情）。"""
+        facs = Counter(cards_by_name.get(y.get('c'), {}).get('fac') for y in log if y['who'] == 'op' and y.get('c'))
+        facs.pop('NE', None)
+        facs.pop(None, None)
+        if not facs:
+            return
+        op_fac = facs.most_common(1)[0][0]
+        for x in list(log):
+            if x['who'] != 'op' or x['a'] != 'summon' or x.get('via') or 'ts' not in x:
+                continue
+            covered = bool(covered_hint(x))
+            in_grave = any(d[1] == 'op' and d[3][1] == x['c'] and d[0] < x['ts'] for d in departed)
+            if not covered and not in_grave:
+                continue
+            g = next((y for y in log if y['who'] == 'op' and '墓场能力' in (y.get('hud') or '') and abs(y.get('ts', -99) - x['ts']) <= 8), None)
+            km = g and re.search(r'每打出\s*1\s*张“([^”]+)”牌，便从墓场召唤', text_of(g.get('c')))
+            xtags = cards_by_name.get(x['c'], {}).get('tags') or ''
+            need_play = any(
+                z['who'] == 'op' and z.get('via') and 0 <= z.get('ts', -99) - x['ts'] <= 8 and re.search(r'第.章', z.get('hud') or '')
+                and (m_ := re.search(r'剧情[：:]\s*己方每打出\s*1\s*(?:张|个)“([^”]+)”', text_of(z['via']))) and m_.group(1) in xtags
+                for z in log)
+            cands = []
+            for nm, c in cards_by_name.items():
+                if c.get('type') != '特殊' or c.get('set') == 'token' or c.get('fac') not in (op_fac, 'NE'):
+                    continue
+                if km and km.group(1) not in (c.get('tags') or ''):
+                    continue
+                rf = refers(nm, x['c'])
+                if not rf or '墓场' not in rf[1] or (need_play and rf[0] != 'play'):
+                    continue
+                cands.append((nm, rf))
+            if len(cands) != 1 or not covered:
+                if 1 <= len(cands) <= 4:   # 不唯一、或者画面没被挡住（也可能是没认出展示的手牌打出）：候选写进清单
+                    x['cands'] = [c_ for c_, _rf in cands]
+                continue
+            nm, rf = cands[0]
+            why = (f"{g['c']} 从墓场回来 = 打出了“{km.group(1)}”牌；" if km else '') + ('紧接着剧情推进 = 是“打出”的；' if need_play else '')
+            j = log.index(x)
+            log.insert(j, {'who': 'op', 'a': 'play', 'c': nm, 'side': 'op', 'r': x.get('r'), 'id': f"{x['id']}c",
+                           'ts': x['ts'] - 0.2, 'vt': x.get('vt'),
+                           'hud': f'推算：画面被挡住时打出的（{why}{x["c"]} 凭空出现，对方阵营里只有这张对得上）'})
+            x['a'] = rf[0] if rf[0] != 'spawn' else 'play'
+            x['via'] = nm
+            x['hud'] = f'{nm} 带出（推算，卡面：{rf[1]}）'
+            if g and log.index(g) < log.index(x):   # 墓场能力是它触发的：挪到它带出的单位后面
+                log.remove(g)
+                log.insert(log.index(x) + 1, g)
+                g['ts'] = x['ts'] + 0.1
+                g['hud'] = f'墓场能力：打出 {nm} 后从墓场召唤（推算）'
+
     def covered_hint(x):
         """进场前 15 秒里画面被覆盖界面挡住过（看牌组 / 墓场 / 卡牌说明，左侧清晰度掉到几乎 0）：对方这时打出的牌拍不到，写进清单；
         同时有墓场能力回来的牌（乌鸦之母：打出炼金牌就从墓场回来）说明对方打出了哪类牌。"""
@@ -1089,6 +1143,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             r += 1
             last_real, round_score = None, None
             carry[:] = [(t, rk, u) for rk, us in units.items() for u in us if '坚韧' in text_of(u[1])]
+            # 小局结束时场上的牌进墓场（坚韧留场的除外），之后被死灵术之类带出来时要知道
+            departed.extend((t, 'me' if rk.startswith('我方') else 'op', rk, u) for rk, us in units.items() for u in us
+                            if '坚韧' not in text_of(u[1]))
             units.clear()
             continue
         if kind == '进场' and (cu := next((x for x in carry if 0 <= t - x[0] <= 90 and x[1] == row and x[2][1] == name), None)):
@@ -1342,6 +1399,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                 x['hud'] = (x.get('hud', '') + '；目标：场上唯一被锁定的单位（卡面会解除锁定）').strip('；')
     resolve_leader_chain()
     add_same_name_copies()
+    infer_covered_special()
     if review is not None:
         for i, x in enumerate(log):
             c, side = x.get('c') or '', '我方' if x['who'] == 'me' else '对方'
@@ -1358,7 +1416,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                 item = ('效果目标', f'{side}打出 {c}：目标没推出来（{target_text(cards_by_name[c])}）')
             elif x['a'] == 'summon' and x.get('hud', '').startswith('进场（召唤') and \
                     cards_by_name.get(c, {}).get('set') != 'token':   # 衍生牌只能是生成的
-                item = ('打出还是带出', f'{side} {c} 进场，没看到打出：是从手牌打出、还是被别的牌召唤 / 生成？' + covered_hint(x))
+                item = ('打出还是带出', f'{side} {c} 进场，没看到打出：是从手牌打出、还是被别的牌召唤 / 生成？' + covered_hint(x) +
+                        (f"（它之前进过墓场；对方阵营能从墓场带出它的：{'、'.join(cl_)}）" if (cl_ := x.pop('cands', None)) else ''))
             elif x['a'] == 'note' and re.search(r' 离场（', c) and not any(
                     y['a'] in ('play', 'order', 'leader') and y.get('tgts') and abs(y.get('ts', 0) - x.get('ts', 0)) <= 10
                     and re.search(r'伤害|摧毁|对决', target_text(cards_by_name.get(y.get('c'), {})) + text_of(y.get('c', '')))
@@ -1371,6 +1430,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             if 'step' not in it:   # 丢掉的记录：放在它之前最近的一步后面
                 it['after'] = max((i + 1 for i, x in enumerate(log) if x.get('ts', 0) <= it['ts']), default=0)
         review.sort(key=lambda it: it['ts'])
+    for x in log:
+        x.pop('cands', None)
     remap = {}
     for i, x in enumerate(log):
         if 'id' in x:
