@@ -131,21 +131,23 @@ def depart_reason(states, t, side):
 
 
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家激励', has_show=True, my_deck=None,
-               runs=None, extra=None, sync_states=None, states=None, deck_filter=True):
+               runs=None, extra=None, sync_states=None, states=None, deck_filter=True, t0=None, review=None):
     """has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
     sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
-    （对局簿棋盘就是每个单位的实际战力；偏差报告会因此几乎总是一致，核查规则时别开）。"""
+    （对局簿棋盘就是每个单位的实际战力；偏差报告会因此几乎总是一致，核查规则时别开）。
+    t0：录屏开始的时刻（秒），记录的“录屏”时间从它算（用户自己的录屏），默认从第一个事件算。
+    review：传一个列表进来，HUD 拿不准、需要人看录屏补的地方追加进去（write_review 写成 review.html）。"""
     log, rounds = [], []
     r, n = 0, 0
-    t_start = min([e[0] for e in events] + [s[0] for s in scores]) if events or scores else 0
+    t_start = t0 if t0 is not None else (min([e[0] for e in events] + [s[0] for s in scores]) if events or scores else 0)
     si = 0
     last_real = None
     pending_step = False
     round_score = None
 
     def vt(t):
-        s = int(t - t_start)
+        s = max(0, int(t - t_start))
         return f'{s // 60}:{s % 60:02d}'
 
     extra = extra or {}
@@ -271,6 +273,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     def push(x, t):
         nonlocal n
         if over_deck(x):
+            if review is not None:
+                review.append({'ts': t, 'cat': '丢掉的打出', 'who': x['who'], 'c': x['c'],
+                               'text': f"画面上像是又{'打出' if x['a'] == 'play' else '召唤'}了 {x['c']}，但卡组里只有 "
+                                       f"{my_deck[x['c']]} 张、已经记满，当成误认丢掉了；真的上场了请补记"})
             return
         ex = extra.get((t, x.get('c'), cur_row[0])) if x['a'] in ('play', 'summon') else None
         if ex:
@@ -469,6 +475,25 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
         i = next((i for i, x in enumerate(log) if x['r'] == rr and x.get('ts', 0) >= ts and x['a'] != 'real'), None)
         rec = {'who': who, 'a': 'pass', 'r': rr, 'vt': vt(ts), 'ts': ts, 'hud': '由回合顺序推出'}
         log.insert(i if i is not None else len(log), rec)
+    if review is not None:
+        for i, x in enumerate(log):
+            c, side = x.get('c') or '', '我方' if x['who'] == 'me' else '对方'
+            item = None
+            if x['a'] == 'leader':
+                item = ('领袖目标', f'{side}用了领袖{"（" + c + "）" if c else ""}：HUD 看不出用在谁身上（对方领袖也不知道是哪个技能）')
+            elif x['a'] == 'play' and target_text(cards_by_name.get(c, {})) and not x.get('tgts'):
+                item = ('效果目标', f'{side}打出 {c}：目标没推出来（{target_text(cards_by_name[c])}）')
+            elif x['a'] == 'summon' and x.get('hud', '').startswith('进场（召唤') and                     cards_by_name.get(c, {}).get('set') != 'token':   # 衍生牌只能是生成的
+                item = ('打出还是带出', f'{side} {c} 进场，没看到打出：是从手牌打出、还是被别的牌召唤 / 生成？')
+            elif x['a'] == 'note' and re.search(r' 离场（', c):
+                item = ('离场原因', f'{c[3:]}：看不出是被摧毁、放逐还是回手')
+            if item and 'ts' in x:
+                review.append({'ts': x['ts'], 'step': i + 1, 'cat': item[0], 'who': x['who'], 'c': c, 'text': item[1]})
+        for it in review:
+            it['vt'] = vt(it['ts'])
+            if 'step' not in it:   # 丢掉的记录：放在它之前最近的一步后面
+                it['after'] = max((i + 1 for i, x in enumerate(log) if x.get('ts', 0) <= it['ts']), default=0)
+        review.sort(key=lambda it: it['ts'])
     remap = {}
     for i, x in enumerate(log):
         if 'id' in x:
@@ -491,6 +516,63 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader='皇家�
     }
 
 
+def video_start(path):
+    """用户录屏的开始时刻（本地，当天秒数）：文件名里的 UTC 时间（如 20261001-0112-44.6374215.mp4 = 01:12:44.6 UTC），
+    没有就用“修改时间 − 时长”。2026-10-01 和 HUD 录的帧核对过，误差 3 秒内。"""
+    m = re.search(r'(\d{8})-(\d\d)(\d\d)-(\d\d(?:\.\d+)?)', os.path.basename(path))
+    off = time.localtime().tm_gmtoff
+    if m:
+        return (int(m.group(2)) * 3600 + int(m.group(3)) * 60 + float(m.group(4)) + off) % 86400
+    import cv2
+    v = cv2.VideoCapture(path)
+    dur = v.get(cv2.CAP_PROP_FRAME_COUNT) / max(1.0, v.get(cv2.CAP_PROP_FPS))
+    lt = time.localtime(os.path.getmtime(path))
+    return lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec - dur
+
+
+REVIEW_PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HUD 待确认</title><style>
+:root{--bg:#16181d;--panel:#20232a;--ink:#e6e1d6;--dim:#a9a395;--gold:#d8b25a}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:16px}
+main{max-width:1100px;margin:auto} h1{font-size:20px} .sum{color:var(--dim)}
+section{background:var(--panel);border-radius:8px;padding:12px 14px;margin:12px 0}
+h2{font-size:16px;margin:0 0 4px} .cat{color:var(--gold)} p{margin:4px 0 8px}
+.imgs{display:flex;gap:8px;flex-wrap:wrap} figure{margin:0;flex:1 1 320px} img{width:100%;border-radius:4px}
+figcaption{color:var(--dim);font-size:13px}
+</style><main><h1>HUD 待确认（@N@ 条）</h1><p class="sum">@SUM@</p>
+@BODY@</main></html>
+"""
+
+
+def write_review(d, review, video=None):
+    """review.html：HUD 拿不准、要人看录屏补的地方，每条附前后两帧截图（帧文件就在同一目录）。"""
+    import bisect
+    import glob
+    import html
+    frames = sorted(glob.glob(os.path.join(d, '*.jpg')) + glob.glob(os.path.join(d, '*.png')), key=timeline.frame_time)
+    ft = [timeline.frame_time(p) for p in frames]
+
+    def near(t):
+        i = min(bisect.bisect_left(ft, t), len(ft) - 1)
+        return html.escape(os.path.basename(frames[i])) if frames else ''
+    cards = []
+    for k, it in enumerate(review, 1):
+        where = f"对局簿第 {it['step']} 步" if 'step' in it else f"对局簿第 {it['after']} 步之后（没记）"
+        imgs = ''.join(f'<figure><img src="{near(it["ts"] + dt)}" loading="lazy"><figcaption>{lab}</figcaption></figure>'
+                       for dt, lab in ((-1.5, '之前'), (2.5, '之后')))
+        cards.append(f'<section><h2>{k}. <span class="cat">{html.escape(it["cat"])}</span> 录屏 {it["vt"]} · {where}</h2>'
+                     f'<p>{html.escape(it["text"])}</p><div class="imgs">{imgs}</div></section>')
+    summ = '、'.join(f'{c} {n}' for c, n in Counter(it['cat'] for it in review).most_common())
+    summ += '。' + (f'录屏时间按 {html.escape(os.path.basename(video))} 算' if video else '录屏时间从 HUD 录到的第一帧算')
+    summ += '；“对局簿第 N 步”是导入后记录列表里的序号。'
+    page = (REVIEW_PAGE.replace('@N@', str(len(review))).replace('@SUM@', summ)
+            .replace('@BODY@', '\n'.join(cards) or '<p>没有拿不准的地方。</p>'))
+    p = os.path.join(d, 'review.html')
+    with open(p, 'w', encoding='utf-8') as f:
+        f.write(page)
+    return p
+
+
 def to_v2(game_path):
     return subprocess.run(['node', os.path.join(HERE, 'to_v2.js'), game_path], capture_output=True, text=True,
                           encoding='utf-8', check=True).stdout
@@ -511,9 +593,12 @@ def main():
     spec = next((a[7:] for a in sys.argv if a.startswith('--deck=')), None)
     my_deck = deck.load(spec, m.cards)
     sync = '--sync-power' in sys.argv
+    video = next((a[8:] for a in sys.argv if a.startswith('--video=')), None)
+    review = []
     game = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
                       runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states,
-                      deck_filter='--no-deck-filter' not in sys.argv)
+                      deck_filter='--no-deck-filter' not in sys.argv, t0=video_start(video) if video else None,
+                      review=review)
     gp = os.path.join(d, 'game.json')
     with open(gp, 'w', encoding='utf-8') as f:
         json.dump(game, f, ensure_ascii=False, indent=1)
@@ -524,6 +609,9 @@ def main():
     print(f"{len(game['rounds'])} 小局，记录 {len(game['log'])} 条：{dict(kinds)}；对方 {game['fac']}，先后手 {game['coin']}")
     for i, R in enumerate(game['rounds']):
         print(f"  第 {i + 1} 小局 {R['res']} {R['me']}:{R['op']}")
+    rp = write_review(d, review, video)
+    print(f'待确认 {len(review)} 条（' + '、'.join(f'{c} {n}' for c, n in Counter(it['cat'] for it in review).most_common())
+          + f'）→ {rp}')
     print(code)
 
 

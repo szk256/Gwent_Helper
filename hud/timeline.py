@@ -242,7 +242,7 @@ class Tracker:
     一次扫描里一大半已知的牌同时不见（被窗口挡住、动画）先不算；ROUND_S 秒内出现过场画面 = 小局结束，清空；
     超过 ROUND_S 秒没有过场画面 = 真的离场，照常按迟滞记。
     展示框里认出的牌（对方刚打出）用来把对方的进场分成“打出”和“召唤/生成”。"""
-    IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S = 2, 3, 2.5, 8.0, 10.0, 40.0
+    IN_N, OUT_N, OUT_S, ROUND_S, SHOW_S, REENTER_S, MOVE_S = 2, 3, 2.5, 8.0, 10.0, 40.0, 4.0
 
     def __init__(self):
         self.count = {}      # (排, 名) -> 张数
@@ -445,7 +445,24 @@ class Tracker:
                       and ev[j][2:] == e[2:] and ev[j][0] - e[0] < transient), None)
             if j is not None:
                 drop |= {i, j}
-        return [e for i, e in enumerate(ev) if i not in drop]
+        ev = [e for i, e in enumerate(ev) if i not in drop]
+        # 换排：同一方同名牌 MOVE_S 秒内一离一进、排不同 = 移动（进场确认得比离场快，enter 里按“先离后进”合并不到）
+        out, used = [], set()
+        for i, e in enumerate(ev):
+            if i in used:
+                continue
+            if e[1] in ('进场', '离场') and e[4] in BOARD_ROWS:
+                other = '离场' if e[1] == '进场' else '进场'
+                j = next((j for j in range(i + 1, len(ev)) if j not in used and ev[j][0] - e[0] <= self.MOVE_S
+                          and ev[j][1] == other and ev[j][2:4] == e[2:4] and ev[j][4] in BOARD_ROWS and ev[j][4] != e[4]),
+                         None)
+                if j is not None:
+                    used.add(j)
+                    src, dst = (ev[j][4], e[4]) if e[1] == '进场' else (e[4], ev[j][4])
+                    out.append((e[0], '移动', e[2], e[3], f'{src}→{dst}'))
+                    continue
+            out.append(e)
+        return out
 
     def finish(self, transient=8.0):
         self.events = self.snapshot(transient)
