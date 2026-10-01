@@ -46,6 +46,8 @@ ok(g.score('me').total===0,'非坚韧单位清场');
     佚亡遗愿: {name:'佚亡遗愿', base:2, status:{doomed:true}, deathwish:c=>c.g.log('遗愿触发',{})},
     遗愿兵: {name:'遗愿兵', base:2, deathwish:c=>c.g.log('遗愿触发',{})},
     计时兵: {name:'计时兵', base:2, timer:{n:2, run:c=>c.boost(c.self,5)}},
+    重置兵: {name:'重置兵', base:2, timerReset:true, timer:{n:1, run:c=>c.boost(c.self,1)}},
+    神器: {name:'神器', base:0, type:'artifact'},
     灌注兵: {name:'灌注兵', base:3},
   };
   const q = new Game({cards:cs, first:'me'}); q.startRound();
@@ -66,6 +68,9 @@ ok(g.score('me').total===0,'非坚韧单位清场');
   const cm = q.play('me','乙','r'); const vic = q.play('op','乙','r'); q.consume(cm,vic); ok(cm.power===6&&!q.find(vic.uid), '吞噬：摧毁目标并获得其战力');
   const tm = q.play('me','计时兵','r'); q.endTurn(); q.endTurn(); ok(tm.power===2, '计时 2：第一个己方回合结束 -1');
   q.endTurn(); q.endTurn(); ok(tm.power===7, '计时归零触发');
+  q.endTurn(); q.endTurn(); q.endTurn(); q.endTurn(); ok(tm.power===7 && q.counters(tm).timer == null, '计时：触发一次就结束（卡面没写“重置计时”，千里镜）');
+  const rs = q.play('me','重置兵','r'); while(q.s.active!=='me') q.endTurn(); q.endTurn(); q.endTurn(); q.endTurn(); ok(rs.power===4, '计时：卡面写“重置计时”的重新计时（米薇女王）');
+  const art = q.play('me','神器','r'); q.damage(art,3); q.boost(art,2); ok(q.find(art.uid) && art.power===0 && !q.units('me').includes(art), '神器：不受伤害、不受增益（致死溅射打到相邻神器不摧毁）');
   q.lock(sh); sh.infused.push({on:'boosted', when:(c,d)=>d.unit===c.self&&d.src!=='inf', run:c=>c.g.boost(c.self,1,'inf')});
   q.boost(sh,1); ok(sh.power===5, '锁定：灌注效果不生效');
   const rp = q.play('me','甲','m'); q.addStatus(rp,'rupture'); q.boost(rp,3);

@@ -104,7 +104,7 @@
     const sideName = s => s === 'me' ? '我方' : '对方', rowName = { m: '近战', r: '远程', all: '整个半场' };
     for (const x of g.log) for (const t of x.tgts || []) {
       if (t.row) t.label = sideName(t.row.startsWith('me') ? 'me' : 'op') + (rowName[t.row.slice(-1)] || '') + '排';
-      else { const b = byId[String(t.uid).split('/')[0]]; t.label = b ? sideName(b.side || b.who) + ' ' + (String(t.uid).includes('/') ? b.c + ' 带出的单位' : b.c) : String(t.uid); }
+      else { const b = byId[String(t.uid).split('/')[0]]; t.label = b ? sideName(b.side || b.who) + ' ' + (String(t.uid).includes('/') ? (b.c || (b.a === 'end' ? '回合结束' : '这一步')) + ' 带出的单位' : b.c) : String(t.uid); }
     }
     g.nextE = g.log.reduce((m, x) => Math.max(m, +String(x.id).slice(1) || 0), 0) + 1;
     g.cur = g.rounds.filter(Boolean).length;

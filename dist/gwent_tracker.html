@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="a073a40";</script>
+<script>window.GWENT_BUILD="faf20b2";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -262,6 +262,8 @@ table th{color:#6E5C3E}
 .chip.unit .upw.up{color:#7CE07C;border-color:#7CE07C}.chip.unit .upw.dn{color:#FF7A6B;border-color:#FF7A6B}.chip.unit .ust{z-index:2}.chip.unit .uar,.chip.unit .unm{z-index:2}
 .uar{position:absolute;right:2px;top:2px;min-width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;background:#556;border:1px solid #aab;border-radius:3px}
 .unm{position:absolute;right:2px;top:20px;width:16px;height:16px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#111;background:#FFD24A;border-radius:50%}
+/* 目标步骤：同一单位选了几次（几张猫学派猎魔人都打它） */
+.selx{position:absolute;left:50%;bottom:2px;transform:translateX(-50%);z-index:3;padding:0 4px;font-size:11px;font-weight:700;color:var(--onInk);background:var(--on1);border-radius:6px}
 .uord{position:absolute;right:2px;top:38px;z-index:3;width:16px;height:16px;display:grid;place-items:center;font-size:10px;font-weight:700;border-radius:3px;color:#241B08;background:var(--gold);border:1px solid #241B08}
 .uord.wait{color:#E8E0CC;background:rgba(0,0,0,.72);border:1px dashed #BFB59C}
 .ust{position:absolute;left:0;right:0;top:26px;font-size:9px;text-align:center;color:#fff;background:rgba(0,0,0,.6);line-height:12px}
@@ -488,7 +490,7 @@ const DEFAULT_RULES = {
   resilienceKeepsArmor: false,// 坚韧留场时护甲（含卡面自带的）清零（英/俄/德/波/日/韩释义 + Steam 讨论；中文写“额外护甲”）
   resilienceKeepsDamage: false,// 坚韧留场时回到基础战力（资料有分歧，暂按 NamuWiki：伤害也恢复）
   knightSummonSelf: false,    // 骑士册封“己方每控制 1 名骑士”不算被拉出的骑士自己（已确认）
-  timerRepeats: true,         // 计时归零触发后重新计时（未确认）
+  timerRepeats: false,        // 计时归零触发后重新计时：只有卡面写“重置计时”的才重新计时（米薇女王、萨琪亚：指挥官；千里镜实测只生成 1 次）
   dragonDreamOnLast: true,    // 龙之梦在最后一个回合开始时爆炸（未确认）
   coinLimit: 9,               // 金币上限（词条辞典）
   autoTribute: true,          // 献金：没有记录时，金币够就当作付了（未确认，对局簿可逐次记录）
@@ -620,6 +622,7 @@ class Game {
       for (const seg of text.split(/\s*\/\s*/).map(x => x.replace(/[。.．\s]+$/, '').trim()).filter(Boolean)) {
         const tm = seg.match(/^计时\s*(\d+)\s*[：:]/);   // “计时 3：……”：先记下回合数，效果靠卡牌行为
         if (tm) d.timerN = +tm[1];
+        if (/重置计时/.test(seg)) d.timerReset = true;
         // 金币能力：先记下数额（付款由引擎处理），效果靠卡牌行为
         let mm;
         if ((mm = seg.match(/(?:^|、)\s*献金\s*(\d+)\s*[：:]/))) d.tributeN = +mm[1];
@@ -692,7 +695,9 @@ class Game {
     for (const sd of sides) for (const r of ROWS) out.push(...this.s.sides[sd].rows[r]);
     return out;
   }
-  units(side) { return this.allUnits(side).filter(u => u.def.type !== 'artifact' && !u.isTactic); }
+  units(side) { return this.allUnits(side).filter(u => !this.notUnit(u)); }
+  // 神器、战术牌：占位置、算相邻，但不是单位（不受伤害、不受增益；蟹蜘蛛毒液的致死伤害打到相邻的落难的少女不会摧毁它）
+  notUnit(u) { return u.def.type === 'artifact' || !!u.isTactic; }
   find(uid) { return this.allUnits().find(u => u.uid === uid) || null; }
   rowOf(u) { return this.s.sides[u.side].rows[u.row]; }
   adjacent(u) {
@@ -1086,7 +1091,8 @@ class Game {
       status: Object.assign({}, d.status || {}), infused: [], blessFired: {}, orderUsed: 0, cd: 0, zeal: !!d.zeal,
       timer: d.timer ? d.timer.n : (d.timerN || null), pat: d.patience ? (d.patInit || 0) : null });
     // 战力不变的变形（被诅咒的骑士）：基础战力也保留原来的（用户实测：变成 6 战力、显示为增益的被诅咒的骑士）
-    if (o.keepPower) { u.power = p; u.base = b0; } else u.power = u.base;
+    // 变成基础同名牌：护甲也是新牌卡面的（录像实测：杜度变成瑞达尼亚骑士带 2 点护甲，壁垒照样每回合 +1）
+    if (o.keepPower) { u.power = p; u.base = b0; } else { u.power = u.base; u.armor = d.armor || 0; }
     this.log('变形', { uid: u.uid, to: name, power: u.power, by: src && src.name, unmodeled: u.unmodeled });
     this.checkBless(u);
   }
@@ -1164,7 +1170,7 @@ class Game {
   }
 
   boost(u, n, src) {
-    if (!u || n <= 0 || !this.find(u.uid)) return;
+    if (!u || n <= 0 || !this.find(u.uid) || this.notUnit(u)) return;
     u.power += n;
     this.log('增益', { uid: u.uid, name: u.name, n, by: src && src.name, power: u.power });
     this.emit('boosted', { unit: u, n, src });
@@ -1173,7 +1179,7 @@ class Game {
 
   // 伤害：护盾 → 护甲 → 战力；返回实际扣除的战力
   damage(u, n, src, o = {}) {
-    if (!u || n <= 0 || !this.find(u.uid)) return 0;
+    if (!u || n <= 0 || !this.find(u.uid) || this.notUnit(u)) return 0;
     const shieldApplies = !(o.bleed && this.rules.bleedIgnoresShield);
     if (u.status.shield && shieldApplies && !o.ignoreShield) {
       u.status.shield = false;
@@ -1432,7 +1438,7 @@ class Game {
         this.log('计时触发', { uid: u.uid, name: u.name, unmodeled: !run }, !run);
         if (run) run(this.ctx(u));
         const n = u.def.timer ? u.def.timer.n : u.def.timerN;
-        u.timer = this.rules.timerRepeats ? n : null;
+        u.timer = this.rules.timerRepeats || u.def.timerReset ? n : null;
       }
     }
     // 耐性：己方回合结束时指令还没用过，则数值永久 +1（带“近战/远程”的只在那一排）
@@ -4498,7 +4504,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = M; else ro
     const sideName = s => s === 'me' ? '我方' : '对方', rowName = { m: '近战', r: '远程', all: '整个半场' };
     for (const x of g.log) for (const t of x.tgts || []) {
       if (t.row) t.label = sideName(t.row.startsWith('me') ? 'me' : 'op') + (rowName[t.row.slice(-1)] || '') + '排';
-      else { const b = byId[String(t.uid).split('/')[0]]; t.label = b ? sideName(b.side || b.who) + ' ' + (String(t.uid).includes('/') ? b.c + ' 带出的单位' : b.c) : String(t.uid); }
+      else { const b = byId[String(t.uid).split('/')[0]]; t.label = b ? sideName(b.side || b.who) + ' ' + (String(t.uid).includes('/') ? (b.c || (b.a === 'end' ? '回合结束' : '这一步')) + ' 带出的单位' : b.c) : String(t.uid); }
     }
     g.nextE = g.log.reduce((m, x) => Math.max(m, +String(x.id).slice(1) || 0), 0) + 1;
     g.cur = g.rounds.filter(Boolean).length;
@@ -4687,7 +4693,7 @@ function sim(g,r,excl,ov){
     else if(turnAct&&side!==E.s.active&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
     else if(turnAct&&side!==E.s.active){E.s.active=side;acted=false;}
     // 试验：界面切到另一方后记的修正，先结算上一方回合结束
-    if(E.rules.autoEndOnSwitch&&!turnAct&&["adj","kill","move"].includes(x.a)&&x.who!==E.s.active&&acted&&!justEnded&&!E.s.sides[E.s.active].passed&&!E.s.sides[x.who].passed){E.log("自动结束回合",{side:E.s.active,by:x.id});E.endTurn();acted=false;justEnded=true;}
+    if(E.rules.autoEndOnSwitch&&!turnAct&&["adj","kill","move"].includes(x.a)&&x.who!==E.s.active&&acted&&!justEnded&&!E.s.sides[E.s.active].passed&&!E.s.sides[x.who].passed){const sd=E.s.active;E.log("自动结束回合",{side:sd,by:x.id});E.endTurn();acted=false;justEnded=sd;}
     if(turnAct){effQ={};
       // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
       for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];
@@ -4731,7 +4737,12 @@ function sim(g,r,excl,ov){
         const before=S2.coins;S2.coins=/^\+/.test(v)?Math.min(E.rules.coinLimit,S2.coins+n):/^-/.test(v)?Math.max(0,S2.coins+n):n;E.log("手动金币",{side:x.side||side,from:before,to:S2.coins});break;}
       case "pass":{if(lastAbil&&lastAbil.side===side&&lastAbil.turn===E.s.turn)warns.push({id:x.id,m:"这一回合用过领袖/指令/战术就不能停牌（游戏规则），可能漏记了打出的牌"});E.pass(side);break;}
       // 结束回合：在这里结算回合结束效果（之后记的改战力就是回合结束之后看到的值）
-      case "end":{if(E.s.sides[side].passed)break;if(E.s.active!==side)E.s.active=side;E.endTurn();acted=false;justEnded=true;break;}
+      // 前面记的“触发效果”（只有回合结束能力的来源，如猫学派猎魔人）已经结束了这一方的回合：不再重复结算
+      case "end":{if(E.s.sides[side].passed||justEnded===side)break;if(E.s.active!==side)E.s.active=side;
+        // 回合结束效果的随机/手动目标：记在“结束回合”后面的触发效果（猫学派猎魔人的随机伤害）
+        for(let j=i+1;j<log.length&&!isTurnAct(log[j])&&log[j].a!=="end";j++){const y=log[j];
+          if(y.a==="effect"&&modeled(y.c)&&endOnly(y.c)&&!consumed.has(y.id)){(effQ[y.c]=effQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);}}
+        E.endTurn();acted=false;justEnded=side;break;}
       case "draw":{if(x.set&&x.who==="me"&&x.cards&&x.cards.length)E.s.sides.me.handCount=x.cards.length;break;}
       case "hand":{const S2=E.s.sides[x.side||side];const v=String(x.v).trim();const n=parseInt(v.replace(/^[=+]/,""));if(isNaN(n)){warns.push({id:x.id,m:"看不懂的手牌修正「"+v+"」"});break;}
         const before=S2.handCount;S2.handCount=Math.max(0,Math.min(E.rules.handLimit,/^\+/.test(v)?S2.handCount+n:/^-/.test(v)?S2.handCount+n:n));E.log("手动手牌",{side:x.side||side,from:before,to:S2.handCount});break;}
@@ -4743,7 +4754,7 @@ function sim(g,r,excl,ov){
         (effQ[x.c]=effQ[x.c]||[]).push(...tq);tq=[];
         // 回合结束效果：记录到它时，该方回合已结束
         const src=E.allUnits().find(u=>u.name===x.c);
-        if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){E.endTurn();acted=false;}
+        if(endOnly(x.c)&&src&&src.side===E.s.active&&acted&&!E.s.sides[E.s.active].passed){const sd=E.s.active;E.endTurn();acted=false;justEnded=sd;}
         break;}
     }}catch(err){warns.push({id:x.id,m:"推算出错："+err.message});}
     // 会生成整排效果的牌（刺骨冰霜、艾瑞汀等）：后面要有“整排效果”记录说明放在哪排
@@ -5057,7 +5068,8 @@ function flowDone(){const g=db.live;const ids=ui.recent||[];ui.recent=[];if(!g||
   const recs=ids.map(entry).filter(Boolean);
   for(const w of S.warns){if(!w.src||!ids.includes(w.id))continue;const x=entry(w.id);if(!x||w.src===x.c||(ENG.HAZARDS||{})[w.src])continue;
     if(st.some(s=>s.src===w.src&&s.of===w.id))continue;const su=S.E.allUnits().find(u=>u.name===w.src);
-    const i=pushLog({who:su?su.side:x.who,a:"effect",c:w.src,chain:1});ui.recent=[];st.push({t:"target",id:g.log[i].id,src:w.src,of:w.id,prompt:w.prompt});}
+    const n=S.warns.filter(v=>v.src===w.src&&v.id===w.id).length;   // 同名来源缺几次（几张猫学派猎魔人）：一次多选，按顺序
+    const i=pushLog({who:su?su.side:x.who,a:"effect",c:w.src,chain:1});ui.recent=[];st.push({t:"target",id:g.log[i].id,src:w.src,of:w.id,n,prompt:w.prompt+(n>1?"，共 "+n+" 次，按顺序选，同一单位可以点多次":"")});}
   for(const x of recs){if(x.a!=="leader")continue;const last=g.log.filter(y=>y.r===x.r&&y.a==="leader"&&y.who===x.who).pop();if(last!==x)continue;
     Object.keys(S.key2u).filter(k=>k.startsWith(x.id+"/")).forEach(k=>{const u=S.key2u[k];if(u&&S.E.find(u.uid))st.push({t:"place",a:"spawn",who:x.who,side:u.side,card:u.name,via:x.c});});}
   for(const x of recs){const sd=sameStep(g,S,x);if(sd)st.push(sd);}
@@ -5139,7 +5151,10 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     afterCard(i,step.card,step.a,step.who);return true;}
   if(D.side&&step&&step.t==="place"){step.side=D.side;rMatch();return true;}
   if(D.u!==undefined){const {all}=board(g,undefined,tgtExcl(step));const u=all[D.u]||all[+D.u];if(!u)return true;
-    if(D.umode==="multi"){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.uid===u.uid);if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
+    if(D.umode==="multi"){const s=ui.sel=ui.sel||[];const k=s.findIndex(x=>x.uid===u.uid);
+      // 几张同名来源一起结算（三张猫学派猎魔人）：同一单位可以被打几次，点一下记一次，“撤销一个”去掉最后一个
+      if(step&&step.n>1){if(s.length<step.n)s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});else toast("已经选够 "+step.n+" 次");}
+      else if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
     // 指令、触发效果属于点到的单位那一方（打完牌后界面已切到对方，我方接着用指令也不会记错）
     if(ui.act==="order"&&u.eu&&u.eu.isTactic){recTactic(u.side);return true;}   // 点场上的战术牌 = 用战术
     if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
@@ -5185,6 +5200,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
   if(D.hrm!==undefined&&step&&step.t==="hand"){const e=entry(step.id);e.cards.splice(+D.hrm,1);persist();rMatch();return true;}
   const sw=(d)=>{const e=entry(step.id);const i=g.log.indexOf(e);let j=i+d;while(j>=0&&j<g.log.length&&g.log[j].r!==e.r)j+=d;if(j<0||j>=g.log.length)return toast("已经到头了");g.log.splice(i,1);g.log.splice(j,0,e);persist();rMatch();};
   const A={
+    tgtUndo(){(ui.sel||[]).pop();rMatch();},
     tgtDone(){const e=entry(step.id);e.tgts=(ui.sel||[]).slice();delete e.tgt;
       const n=e.a==="leader"?(ui.rep||1):1;ui.rep=1;
       for(let k=1;k<n;k++){const y=Object.assign({},e,{tgts:e.tgts.map(t=>Object.assign({},t))});delete y.id;delete y.t;const i=pushLog(y);}
@@ -5196,8 +5212,9 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     leader(){const i=pushLog({who:"me",a:"leader",c:g.leader||null});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[g.leader],"leader","me"));rMatch();},
     tactic(){recTactic("me");},
     tacticOp(){recTactic("op");},
-    endTurn(){const sd=pendingEnd(g)||ui.who;const i=pushLog({who:sd,a:"end"});ui.recent=[];const other=sd==="me"?"op":"me";
-      if(!g.log.some(x=>x.r===VR()&&x.a==="pass"&&x.who===other))ui.who=other;ui.act="play";ui.flow=null;toast(logText(g.log[i]));rMatch();},
+    endTurn(){const sd=pendingEnd(g)||ui.who;const i=pushLog({who:sd,a:"end"});ui.recent=[g.log[i].id];const other=sd==="me"?"op":"me";
+      if(!g.log.some(x=>x.r===VR()&&x.a==="pass"&&x.who===other))ui.who=other;ui.act="play";ui.flow=null;toast(logText(g.log[i]));
+      flowDone();rMatch();},   // 回合结束效果缺的选择（猫学派猎魔人随机伤害打到谁）接着问
     adjNotEnd(){ui.endAsked=lastTurnActId(g);rMatch();},
     adjEnd(){const sd=pendingEnd(g);if(!sd)return;pushLog({who:sd,a:"end"});ui.recent=[];toast(sideN(sd)+"回合结束");rMatch();},   // 面板按回合结束后的新值显示
     pass(){const i=pushLog({who:ui.who,a:"pass"});ui.act="play";if(!ui.insertBefore&&ui.vr==null){ui.pendingSwitch=ui.who;doSwitch();}toast(logText(g.log[i]));rMatch();},
@@ -5304,7 +5321,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
     const lanes=(mode,only,R2)=>{const RR=R2||R;return `<div class="board" style="--mine:var(--${g.myF||"NR"});--theirs:var(--${g.fac||"MO"})">${[["op","r"],["op","m"],["me","m"],["me","r"]].filter(([s])=>!only||s===only).map(([s,r])=>{
       const us=RR[s][r];let inner="";
       if(mode==="slots"){inner=us.map((u,i)=>`<button class="slot" data-slot="${s}|${r}|${i}">＋</button><span class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} dim">${unitFace(u.n)}</span>`).join("")+`<button class="slot" data-slot="${s}|${r}|${us.length}">＋</button>`;}
-      else inner=us.map(u=>{const on=mode==="multi"&&(ui.sel||[]).some(t=>t.uid===u.uid);return `<button class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} ${on?"on":""}" data-u="${u.uid}" data-umode="${mode}" title="${esc(u.n)}">${unitFaceU(u)}</button>`;}).join("")||`<span class="note">空</span>`;
+      else inner=us.map(u=>{const k=mode==="multi"?(ui.sel||[]).filter(t=>t.uid===u.uid).length:0;return `<button class="chip unit ${s==="me"?"bm":"bo"} ${BY[u.n]?.col==="金"?"g":""} ${k?"on":""}" data-u="${u.uid}" data-umode="${mode}" title="${esc(u.n)}">${unitFaceU(u)}${k>1?`<span class="selx">×${k}</span>`:""}</button>`;}).join("")||`<span class="note">空</span>`;
       const lab=mode==="multi"?`<button class="bl rowpick ${(ui.sel||[]).some(t=>t.row===s+r)?"on":""}" data-rowpick="${s}${r}">${s==="me"?"我":"对"}·${ROWN[r]}</button>`:`<span class="bl">${s==="me"?"我":"对"}·${ROWN[r]}</span>`;
       const rsum=us.reduce((a,u)=>a+(u.eu?u.eu.power:0),0);
       const meta=(us.some(u=>u.eu)?`<span class="rsum">${rsum}</span>`:"")+fxTags(s,r);
@@ -5336,7 +5353,7 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         const L=e&&e.a==="leader"?leaderInfo(S,g,e.who):null;const rep=ui.rep||1;
         h+=`<h2>「${esc(e.c||ACT[e.a])}」的目标</h2><p class="note">${step.src?"由前一步连带触发"+(step.prompt?"（"+esc(step.prompt)+"）":"")+"。":""}可以多选单位或整排，没有目标就跳过。${ex?"场面是这一步结算之前的样子。":""}</p>${lanes("multi",null,Rt)}
         ${e&&e.a==="leader"?`<div class="btns" style="margin-top:8px;align-items:center"><span class="note">同一目标连用</span>${[1,2,3].map(k=>`<button class="${rep===k?"primary":"ghost"}" data-rep="${k}">${k} 次</button>`).join("")}${L&&L.next!=null?`<span class="note">这次 +${L.next}</span>`:""}</div>`:""}
-        <div class="btns" style="margin-top:8px"><button class="primary" data-do="tgtDone" style="flex:1">完成${(ui.sel||[]).length?"（"+ui.sel.length+"）":""}${rep>1&&e&&e.a==="leader"?" ×"+rep:""}</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
+        <div class="btns" style="margin-top:8px"><button class="primary" data-do="tgtDone" style="flex:1">完成${(ui.sel||[]).length?"（"+ui.sel.length+"）":""}${rep>1&&e&&e.a==="leader"?" ×"+rep:""}</button>${step.n>1&&(ui.sel||[]).length?`<button class="ghost" data-do="tgtUndo">撤销一个</button>`:""}<button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="adj"){const u=(board(g,vr).all||{})[step.uid];const eu=u&&u.eu;const P=eu?eu.power:+(BY[step.card]?.pw)||0;const st=eu?eu.status:{};
         const has=[st.shield?"盾":"",st.lock?"锁":"",st.resilience?"坚":"",st.veil?"遮":"",st.vitality?"活"+st.vitality:"",st.bleed?"伤"+st.bleed:""].filter(Boolean).join(" ");
         const pe=pendingEnd(g);const b=(v,l,cls)=>`<button class="${cls||"ghost"}" data-adjv="${esc(v)}">${esc(l||v)}</button>`;
