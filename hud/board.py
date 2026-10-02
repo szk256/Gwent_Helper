@@ -123,12 +123,13 @@ def classify(L, x, y, h, votes):
     return next(r for r, lim in L['row_cy'] if y < lim)
 
 
-def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=None, pre=None):
+def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=None, pre=None, opp=None):
     """返回 {排名: [(x, 卡图, 票数)]}，x 为画面宽度比例，从左到右。
     每个特征点反推卡牌中心和高度，按中心聚成一张张牌；高度大的是手牌，其余按中心高度分排。
     同一个中心、同一个大小上的几票互相印证，随机误匹配很难凑到一起，所以 4 票就够；高亮（金光）的牌票数少，
     card_h（扫描时把场上牌缩放到的高度）从 160 提到 220 能多认出来，代价是每帧约 1.1 → 1.8 秒。
     mine：我方半场（两排 + 手牌）改用这个匹配器（matcher.subset(卡组 + 衍生牌)）：候选少，高亮的牌也认得出来。
+    opp：对方半场改用这个匹配器（对方阵营 + 中立 + 我方卡组 + 衍生牌，timeline.opp_matcher），要和 mine 一起给。
     位置参数按画面比例取 layout（电脑 16:9 / iPad 4:3）。detail=True 时每项为 (x, 卡图, 票数, y, 高度)。
     raw：传一个列表进来，分排之前的每个检测 [牌名, 票数, x, y, 高度] 追加进去（存进缓存，改分排规则不用重扫）。"""
     L = layout.get(frame)
@@ -137,7 +138,7 @@ def scan(matcher, frame, card_h=220, min_votes=4, detail=False, mine=None, raw=N
     sx0, sy0, sx1 = L['scan']
     split = dict(L['row_cy'])['对方近战']          # 对方 / 我方的分界（牌中心）
     margin = L['card_h'] * 0.6                     # 两半各多扫半张牌高，边界上的牌完整
-    parts = [(matcher, sy0, split + margin, lambda y: y < split)] if mine is not None else [(matcher, sy0, 1.0, None)]
+    parts = [(opp or matcher, sy0, split + margin, lambda y: y < split)] if mine is not None else [(matcher, sy0, 1.0, None)]
     if mine is not None:
         parts.append((mine, split - margin, 1.0, lambda y: y >= split))
     rows = {r: [] for r in ROW_KEYS}
