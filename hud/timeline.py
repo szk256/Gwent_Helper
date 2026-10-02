@@ -181,7 +181,9 @@ def derive(im, ent):
     import layout
     L = layout.get(im)
     rows = {r: [] for r in board.ROW_KEYS}
-    for n, v, x, y, h in ent.get('det') or []:
+    # embed.fill 补上的对方牌（SIFT 漏认、按排的几何一定有牌的位置）和原始检测一起分排
+    extra = [[n, embed_mod().EMB_V, x, y, h] for n, _sim, x, y, h in ent.get('emb') or []]
+    for n, v, x, y, h in (ent.get('det') or []) + extra:
         r = board.classify(L, x, y, h, v)
         if r == '手牌' and v < HAND_MIN_V:
             continue   # 手牌区只有几个特征点的是假检测（手牌上方空地、悬停说明框；2026-10-01 一局“滚油”100 帧，真手牌中位数 36 票）
@@ -206,6 +208,43 @@ def derive(im, ent):
     ent['sh'] = sh
     ent['cls'] = CLS_VER
     return ent
+
+
+def embed_mod():
+    import embed
+    return embed
+
+
+def emb_fill(d, frames, done):
+    """对方半场漏认补位（embed.py）：需要对方阵营（scan_meta.json），定不了就不补。补上的帧重新 derive（分排、战力、护盾）。"""
+    import layout
+    import deck
+    meta_p = os.path.join(d, 'scan_meta.json')
+    fac = None
+    if os.path.exists(meta_p):
+        with open(meta_p, encoding='utf-8') as f:
+            fac = json.load(f).get('op_fac')
+    if not fac:
+        return
+    cards = list(CARDS.values())
+    dk = deck.load(DECK_SPEC, cards) or {}
+    cand = {c['name'] for c in cards if c.get('fac') in (fac, 'NE')} | set(dk) | deck_tokens(cards, dk)
+
+    def usable(e):
+        return (e.get('sharp', 0) >= e.get('smin', 40) and e.get('panel', 0) <= PANEL_MAX
+                and None not in (e.get('score') or [None]) and 'det' in e)
+
+    def read_im(p):
+        return cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
+
+    t0 = time.time()
+    changed = embed_mod().fill(d, frames, done, cards, cand, board.classify,
+                               lambda e: layout.PROFILES[e.get('prof', '16:9')], usable, frame_time, read_im)
+    by_name = {os.path.basename(p): p for p in frames}
+    for k in changed:
+        derive(read_im(by_name[k]), done[k])
+    if changed:
+        print(f'  补位：{len(changed)} 帧补上了 SIFT 漏认的对方牌（{time.time() - t0:.0f} 秒）', flush=True)
 
 
 def scan_frame(m, im, opp=None):
@@ -305,6 +344,8 @@ def scan_dir(m, d, jobs=1):
         if (i + 1) % 50 == 0:
             print(f'  扫描 {i + 1}/{len(frames)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
             save_json(cache, done)
+    if embed_mod().available():
+        emb_fill(d, frames, done)
     save_json(cache, done)
     # 看牌的大说明面板挡住了场面（里面的衍生牌小图会被认成场上的牌）：这些帧当没录到
     return fill_gaps([(frame_time(p), done[os.path.basename(p)]) for p in frames

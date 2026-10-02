@@ -1204,6 +1204,20 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
         elif kind == '进场' and (m := next((m for m in mech if m['k'] == 'seize' and m['who'] == who and m.get('u')
                                               and m['u'][1] == name and -2 <= t - m['t'] <= 8), None)):
             mech.remove(m)   # 被抓过来的单位到了（离场那一步已经挪进 units），不另记
+        elif kind == '进场' and (m := next((m for m in mech if m['k'] == 'seize' and m['who'] == who and not m.get('u')
+                                              and -2 <= t - m['t'] <= 8), None)) and \
+                (j := next((j for j in range(ei + 1, min(len(events), ei + 30)) if events[j][1] == '离场'
+                            and events[j][3] == name and (events[j][2] == '我方') != (who == 'me')
+                            and 0 <= events[j][0] - t <= 3), None)) is not None and \
+                (u := next((u for u in units.get(events[j][4], []) if u[1] == name), None)):
+            # 抓捕，但这边先认出来、被抓那边的离场晚一点才确认（补位让对方半场认得更早）：现在就挪过来，那条离场不再处理
+            mech.remove(m)
+            m['x']['tgts'] = [{'uid': u[0]}]
+            m['x']['hud'] = (m['x'].get('hud', '') + f' 抓捕 {name}').strip()
+            units[events[j][4]].remove(u)
+            units.setdefault(row, []).append(u)
+            drop.add(j)
+            push({'who': 'me' if who == 'op' else 'op', 'a': 'note', 'c': f"画面：{name} 被 {m['x']['c']} 抓走（{events[j][4]}）"}, t)
         elif kind == '进场' and (m := next((m for m in mech if m['k'] == 'transform' and m['who'] == who and m.get('u')
                                               and -1 <= t - m['t'] <= 6), None)):
             # 转变：原来那张（杜度）变成了这张敌军单位的同名牌；目标是敌方叫这个名字的单位，units 里改名
