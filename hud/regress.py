@@ -7,7 +7,7 @@ python hud/regress.py --rescan   先删掉 scan.json 重新认牌（改了认牌
 评估项（录像和标注都在 hud/cache/rec/，不提交）：
 - 真人局（森林棋盘，对松鼠党）20261001-091223：手记对照（check_record.py）、我方两排逐帧（eval.py board，truth.json）、
   时间线、战力评估集（eval_power.py，power_truth.json）、对方半场抽帧（op_truth.py，op_truth.json）、待确认条数
-- 真人局（北方营地棋盘，对斯凯利格乌鸦）20261001-221256：手记对照、对方半场抽帧、待确认条数；同一局 OBS 录屏抽帧 2026-10-01_22-13-10
+- 真人局（北方营地棋盘，对斯凯利格乌鸦）20261001-221256：手记对照、对方半场抽帧、战力评估集（39 张）、待确认条数；同一局 OBS 录屏抽帧 2026-10-01_22-13-10
 - 人机局 20261001-035648：游戏日志里 AI 的出牌认出几张（timeline.py）
 """
 import json
@@ -24,7 +24,7 @@ LAST = os.path.join(HERE, 'cache', 'regress_last.json')
 
 GAMES = {
     '20261001-091223': {'video': '20261001-0112-44.6374215.mp4', 'record': True, 'truth': True, 'op': True},
-    '20261001-221256': {'video': '2026-10-01 22-13-10.mp4', 'record': True, 'op': True},
+    '20261001-221256': {'video': '2026-10-01 22-13-10.mp4', 'record': True, 'op': True, 'power': True},
     '2026-10-01_22-13-10': {'record': True},   # 同一局的 OBS 录屏抽帧（source.json 里有视频路径）
     '20261001-035648': {'ai': True},
 }
@@ -68,6 +68,9 @@ def eval_game(name, cfg):
         m = re.search(r'对 (\d+)，多认 (\d+)，漏认 (\d+)', t)
         if m:
             out.update({'对方逐帧对': int(m.group(1)), '对方多认': int(m.group(2)), '对方漏认': int(m.group(3))})
+    if cfg.get('power'):
+        t = run([sys.executable, 'eval_power.py', d])
+        out['战力原始'] = num(r'原始读数对 (\d+)', t, int)
     if cfg.get('truth'):
         t = run([sys.executable, 'eval.py', 'board', d])
         out['逐帧准确率'] = num(r'准确率 ([\d.]+)%', t)
