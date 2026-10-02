@@ -1370,6 +1370,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
     # 推出来的停牌插到对应位置，重新编号；内部用的时间戳去掉
     for ts, who, rr in infer_passes(log, runs or []):
         i = next((i for i, x in enumerate(log) if x['r'] == rr and x.get('ts', 0) >= ts and x['a'] != 'real'), None)
+        # 同一方紧接着（3 秒内）的领袖 / 指令 / 战术是停牌之前用的（停了牌就不能再行动）
+        while i is not None and i < len(log) and log[i]['r'] == rr and log[i]['who'] == who and \
+                log[i]['a'] in ('leader', 'order', 'tactic', 'adj', 'note') and log[i].get('ts', 0) - ts <= 3:
+            i += 1
         rec = {'who': who, 'a': 'pass', 'r': rr, 'vt': vt(ts), 'ts': ts, 'hud': '由回合顺序推出'}
         log.insert(i if i is not None else len(log), rec)
     # 按卡面机制补目标（都是画面上能确定的）
