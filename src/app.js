@@ -148,7 +148,7 @@ function tile(n,badge,cls,attrs){const c=BY[n];return `<button class="tile ${c?(
   <span class="nm">${esc(n)}</span>${badge?`<span class="bd">${badge}</span>`:""}</button>`;}
 const segs=(c,kind)=>{if(!c)return[];const s=c.tx.split(" / ");if(kind==="order"||kind==="leader")return s.filter(x=>/指令/.test(x));if(c.t==="单位")return s.filter(x=>/部署/.test(x));return s;};
 const TGT=/1 ?(?:个|名)(?:敌军|友军)?单位|敌军单位|友军单位|伤害|锁定|中毒|重伤|摧毁 ?1|重置|交锋|对决/;
-const PULL=/从(?:己方)?(?:牌组|墓场)[^。/]{0,10}(?:打出|召唤)(?!自身)|生成并打出|创造并打出/;
+const PULL=/从(?:己方)?(?:牌组|墓场)[^。/]{0,10}(?:打出|召唤)(?!自身)|生成并打出|创造并打出|从手牌打出 1 张“(?:谋略|炸弹|特殊)”牌/;   // 从手牌打出的特殊牌（马格尼师等）也问，记成 via 这张
 const SPAWN=/生成|召唤(?!自身)/;
 // 生成整排效果（霜、雨……）不是生成单位，走“整排效果”记录
 const HZTXT=/(生成)+\s*(霜|雨|雾|风暴|龙之梦|血月|灾厄)|(霜|雨|雾|风暴|龙之梦|血月|灾厄)至/g;
@@ -285,6 +285,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     if(step&&step.t==="spawn"){const c=BY[n];if(c&&c.t==="特殊"){const i=pushLog({who:step.who,a:"spawn",c:n,via:step.parent});ui.flow=[{t:"target",id:g.log[i].id},...ui.flow.slice(1)];rMatch();return true;}
       ui.flow=[{t:"place",a:"spawn",who:step.who,side:step.who,card:n,via:step.parent},...ui.flow.slice(1)];ui.q="";rMatch();return true;}
     if(ui.act==="spawn"&&!step){startCard(n,"spawn",ui.who);return true;}
+    // 拉出的是和排无关的特殊牌（门诺 → 战前准备、马格尼师 → 帝国外交）：不用放位置，直接记 via 这张并接着问它的目标；乌鸦眼块茎这类“至己方单排”的仍问排
+    if(step&&step.t==="pull"&&BY[n]&&(BY[n].t==="特殊"||BY[n].t==="战术")&&!/排/.test(BY[n].tx||"")){ui.q="";startCard(n,"play",step.who,step.parent);return true;}
     if(step&&step.t==="pull"){ui.flow=[{t:"place",a:"play",who:step.who,side:step.who,card:n,via:step.parent},...ui.flow.slice(1)];ui.q="";rMatch();return true;}
     if(step&&step.t==="rename"){const e=entry(step.id);e.c=n;if(BY[n]&&BY[n].t==="特殊"){delete e.row;delete e.pos;}persist();nextStep();return true;}
     if(step&&step.t==="mullinto"){const e=entry(step.id);e.into=n;persist();nextStep();return true;}

@@ -341,6 +341,7 @@ class Game {
     // 只有 1 个候选时不用问（牌组里拉的牌除外）
     if (pick == null && req.kind !== 'deck' && req.from.length === 1 && !req.optional) pick = req.from[0];
     if (pick == null) {
+      if (req.quiet) return [];   // 可有可无的输入（马格尼师带出的牌没记）：不提示
       this.log('待选', { prompt: req.prompt, from: req.from.map(u => u.uid || u), source: req.source }, true);
       return [];
     }

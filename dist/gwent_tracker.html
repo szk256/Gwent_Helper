@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="d8602ff";</script>
+<script>window.GWENT_BUILD="19a62b2";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -809,6 +809,7 @@ class Game {
     // 只有 1 个候选时不用问（牌组里拉的牌除外）
     if (pick == null && req.kind !== 'deck' && req.from.length === 1 && !req.optional) pick = req.from[0];
     if (pick == null) {
+      if (req.quiet) return [];   // 可有可无的输入（马格尼师带出的牌没记）：不提示
       this.log('待选', { prompt: req.prompt, from: req.from.map(u => u.uid || u), source: req.source }, true);
       return [];
     }
@@ -2026,7 +2027,7 @@ B['拉多维德五世'] = { deploy: radovidV, order: radovidV };
 B['拉多维德：审判'] = { order: c => { const n = c.g.s.sides[c.side].vars.leaderUses || 0; const t = T(c, '拉多维德：审判 伤害', c.enemies()); if (t) c.damage(t, n); } };
 B['拉法达的复仇'] = {
   operateMages: true,
-  order: c => { const n = fromDeck(c, '拉法达：从手牌打出的铜色单位'); if (n) c.g.play(c.side, n, c.self.row, posRight(c)); },
+  order: c => { const n = fromDeck(c, '拉法达：从手牌打出的铜色单位'); if (n) { c.g.play(c.side, n, c.self.row, posRight(c)); c.g.draw(c.side, 1, c.self); } },
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && c.adjacent().includes(d.unit) && c.operate(), run: c => { const t = R(c, '拉法达：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }],
 };
 B['拉维南·金柏特'] = { deploy: noop };
@@ -2662,7 +2663,7 @@ B['冒牌希里'] = {
   abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => c.boost(c.self, 1) }],
   bless: [{ at: 8, run: c => { const to = c.foe; const row = c.g.rowOf(c.self); row.splice(row.indexOf(c.self), 1); c.g._place(c.self, to, c.self.row, null); c.purify(c.self); c.g.log('移到对面', { name: c.self.name }); } }],
 };
-B['费卡特'] = { deploy: noop, abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.special, run: c => { const t = R(c, '费卡特：随机潜伏', c.enemies().filter(u => !u.status.spying)); if (t) c.status(t, 'spying', true); } }] };
+B['费卡特'] = { deploy: c => handPlayDraw('费卡特：从手牌打出的特殊牌')(c), abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.special, run: c => { const t = R(c, '费卡特：随机潜伏', c.enemies().filter(u => !u.status.spying)); if (t) c.status(t, 'spying', true); } }] };
 B['佛古斯·瓦·恩瑞斯'] = { deploy: c => c.g.choose({ prompt: '佛古斯：潜伏', from: c.targets(c.enemies()), n: c.devotion() ? 3 : 1, upTo: true, source: c.self.name }).forEach(u => c.status(u, 'spying', true)) };
 B['费恩·瓦·盖内尔'] = { deploy: c => c.spawnPlay('战前准备') };
 B['芙琳吉拉·薇歌'] = { deploy: c => { const n = 1 + c.adjacent().filter(u => has(u, '法师') || has(u, '构造体')).length;
@@ -2839,7 +2840,9 @@ B['法师渗透者'] = {
   deathblow: c => { const to = c.foe; const row = c.g.rowOf(c.self); row.splice(row.indexOf(c.self), 1); c.g._place(c.self, to, c.self.row, null); c.self.status.spying = false; c.g.log('移到对面', { name: c.self.name }); },
 };
 B['法师折磨者'] = { deploy: c => { const t = T(c, '折磨者：潜伏', c.enemies()); if (t) c.status(t, 'spying', true); } };
-B['马格尼师'] = { deploy: noop };
+// 部署“从手牌打出 1 张××牌，随后抽 1 张”：带出的牌按记录（via 这张）单独结算（从手牌 -1），这里补上抽的 1 张，手牌净变化 0；没记带出的牌就不抽
+const handPlayDraw = prompt => c => { if (c.pick({ prompt, kind: 'deck', from: ['?'], quiet: true })) c.g.draw(c.side, 1, c.self); };
+B['马格尼师'] = { deploy: handPlayDraw('马格尼师：从手牌打出的谋略') };
 B['射石机'] = { order: c => { const t = T(c, '射石机：伤害', c.enemies()); if (t) c.damage(t, 1 + c.adjacent(t).filter(u => u.status.spying).length); } };
 B['伪装大师'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.enemies().some(u => u.status.lock), run: c => c.boost(c.self, 1) }] };
 B['傀儡大师'] = { order: c => { const t = T(c, '傀儡大师：抓捕铜色敌军', c.enemies().filter(bronze)); if (!t) return; const row = t.row; c.seize(t);
@@ -3479,7 +3482,7 @@ B['伦芙芮的手下'] = {};
 B['农民民兵'] = { abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && (d.unit.def.deploy || d.unit.def.deployRow), run: c => c.boost(c.self, 1) }] };
 B['变形怪'] = { deploy: noop };
 B['史帕拉流亡军'] = { deploy: c => c.boost(c.self, 4) };
-B['工兵'] = { deploy: noop, abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('炸弹') && c.self.armor > 0, run: c => { const t = R(c, '工兵：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } }] };
+B['工兵'] = { deploy: c => handPlayDraw('工兵：从手牌打出的炸弹')(c), abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('炸弹') && c.self.armor > 0, run: c => { const t = R(c, '工兵：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } }] };
 B['巫医'] = { deploy: c => { const t = T(c, '巫医：净化', allUnitsExcept(c)); if (t) c.purify(t); } };
 B['快刀手'] = { deploy: c => { const lim = c.g.cohort(c.self) ? 4 : 2; const t = T(c, '快刀手：摧毁', c.enemies().filter(u => u.power <= lim)); if (t) c.destroy(t); } };
 B['斥候'] = { deploy: c => { const t = T(c, '斥候：移排', allUnitsExcept(c)); if (t) c.move(t, otherRow(t.row)); } };
@@ -4398,7 +4401,7 @@ const RAW=[["不息虫群","MO","领袖","领袖能力","-","15","传奇","领�
 </script>
 <script>
 // 由 build.js 从 cards.js 注释生成，不要手改
-(function (root) { const F = {"神殿守卫":"推测","贝罗恒王":"推测","突变装置":"推测","禁术":"需手动","伊斯崔德":"需手动","狮鹫学派猎魔人游侠":"推测","舰载弩炮":"推测","红骑士":"需手动","薇瑞娜":"推测","女夜魔":"需手动","孽鬼战士":"推测","日轮之师":"需手动","哈吉的伊斯贝尔":"推测","寇格林姆":"需手动","瑟瑞特":"需手动","史提芬·史凯伦":"需手动","篡位者 - 军官":"需手动","瘟疫制造者":"需手动","异兽园看管":"需手动","奴隶步兵":"需手动","毒蛇学派猎魔人导师":"需手动","巨蝎煎药":"需手动","登舰作战":"需手动","群岛战争":"需手动","巨熊":"推测","布兰王":"需手动","索佛":"需手动","德拉蒙家族持盾女卫":"需手动","海巨蟒":"需手动","传送门":"需手动","华丽香炉":"需手动","恩荫之戒":"需手动","湖女之剑":"需手动","春分":"需手动","兰伯特":"需手动","维瑟米尔":"需手动","艾斯卡尔":"需手动","卡罗·凡瑞西":"需手动","安古兰":"需手动","希里：新星":"需手动","柯西莫·马拉斯宾那":"需手动","落雪":"推测","炸弹手":"需手动","幸运轮盘":"需手动","苏克鲁斯":"推测","尊宁夫人":"需手动","弗伦德号的船员":"需手动","波里斯":"需手动","赛勒斯·赫姆法特":"需手动","暗场保镖":"需手动","火蜥蜴帮异变体":"推测","烈焰守护者":"推测","自然法则":"推测","法兰茜丝卡·芬达贝":"推测","猫学派猎魔人导师":"推测","维里赫德旅先锋":"推测","棘手困境":"推测","校友会":"需手动"};
+(function (root) { const F = {"神殿守卫":"推测","贝罗恒王":"推测","突变装置":"推测","禁术":"需手动","伊斯崔德":"需手动","狮鹫学派猎魔人游侠":"推测","舰载弩炮":"推测","红骑士":"需手动","薇瑞娜":"推测","女夜魔":"需手动","孽鬼战士":"推测","日轮之师":"需手动","哈吉的伊斯贝尔":"推测","寇格林姆":"需手动","瑟瑞特":"需手动","史提芬·史凯伦":"需手动","篡位者 - 军官":"需手动","瘟疫制造者":"需手动","法师折磨者":"需手动","异兽园看管":"需手动","奴隶步兵":"需手动","毒蛇学派猎魔人导师":"需手动","巨蝎煎药":"需手动","登舰作战":"需手动","群岛战争":"需手动","巨熊":"推测","布兰王":"需手动","索佛":"需手动","德拉蒙家族持盾女卫":"需手动","海巨蟒":"需手动","传送门":"需手动","华丽香炉":"需手动","恩荫之戒":"需手动","湖女之剑":"需手动","春分":"需手动","兰伯特":"需手动","维瑟米尔":"需手动","艾斯卡尔":"需手动","卡罗·凡瑞西":"需手动","安古兰":"需手动","希里：新星":"需手动","柯西莫·马拉斯宾那":"需手动","落雪":"推测","炸弹手":"需手动","幸运轮盘":"需手动","苏克鲁斯":"推测","尊宁夫人":"需手动","弗伦德号的船员":"需手动","波里斯":"需手动","赛勒斯·赫姆法特":"需手动","暗场保镖":"需手动","火蜥蜴帮异变体":"推测","烈焰守护者":"推测","自然法则":"推测","法兰茜丝卡·芬达贝":"推测","猫学派猎魔人导师":"推测","维里赫德旅先锋":"推测","棘手困境":"推测","校友会":"需手动"};
 if (typeof module !== 'undefined' && module.exports) module.exports = F; else root.GwentCardFlags = F; })(this);
 
 </script>
@@ -4649,8 +4652,8 @@ function sim(g,r,excl,ov){
   const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
   // 手动记的召唤/生成（不带 via）晚于引擎自动产生的同名单位（例如朗维德回场后隔了几步才记）：对应到那个单位，不重复放
   const claimed=new Set();
-  // 带 via 的（HUD 记的“布朗温 由少女的盾牌带出”，记在皇家激励那条后面）：只对应这一回合里引擎自动产生的单位
-  const claimAuto=x=>{let near=null;if(x.via){const i=log.indexOf(x);near=new Set();for(let j=i-1;j>=0;j--){near.add(log[j].id);if(isTurnAct(log[j]))break;}}
+  // 带 via 的（HUD 记的“布朗温 由少女的盾牌带出”，记在皇家激励那条后面）：只对应同一方这一回合里引擎自动产生的单位
+  const claimAuto=x=>{let near=null;if(x.via){const i=log.indexOf(x);near=new Set();for(let j=i-1;j>=0;j--){const y=log[j];if(y.a==="end"||y.a==="pass"||(isTurnAct(y)&&y.who!==x.who))break;near.add(y.id);}}
     const sd=x.side||x.who;const u=E.allUnits(sd).find(v=>{const k=u2key.get(v)||"";return v.name===x.c&&!claimed.has(v)&&/\/\d+$/.test(k)&&(!near||near.has(k.split("/")[0]));});
     if(!u)return false;claimed.add(u);bind(x.id,u);relocate(u,x.row,x.pos);return true;};
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
@@ -4716,10 +4719,12 @@ function sim(g,r,excl,ov){
     tq=(x.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);
     // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
+    // 紧跟着的带出特殊牌，via 是场上的剧情神器等（HUD 记的“致幻菌菇 由盖迪尼斯的阴影下带出”，引擎在打出海之新娘这一步自动打出了它）：也拿来对应引擎自动打出的特殊牌
+    const chain=subs.slice();for(let j=i+1;j<log.length;j++){const y=log[j];if(!y.via)break;if(!chain.includes(y)&&y.who===x.who&&["spawn","play"].includes(y.a)&&!consumed.has(y.id)){const d=E.def(y.c);if(d&&d.type==="special")chain.push(y);}}
     dq=subs.map(y=>y.c);
     const before=curBefore=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
     // 带出的特殊牌记了排（乌鸦眼块茎生成乌鸦的那排）：引擎“生成并打出”时用
-    E.viaRows={};const effSnap={};for(const y of subs){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
+    E.viaRows={};const effSnap={};for(const y of chain){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
       // 它的目标（海之新娘从墓场打出的玛哈坎麦酒 +5 给谁）：引擎自动打出这张时用；没有自动打出就原样留给它自己那条记录
       const ts=(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);if(ts.length){if(!(y.c in effSnap))effSnap[y.c]=(effQ[y.c]||[]).slice();(effQ[y.c]=effQ[y.c]||[]).push(...ts);}}
     const def=x.c?E.def(x.c):null;
@@ -4791,9 +4796,9 @@ function sim(g,r,excl,ov){
     E.viaRows=null;
     // 带出的特殊牌引擎已经自动打出了（艾克索部署“生成并打出”乌鸦眼块茎）：那条记录不再重复打出，它带出的生成记录对应到这一步产生的单位
     const autoSp=E.trace.slice(t0).filter(t=>t.type==="打出"&&t.data&&t.data.special).map(t=>t.data.name);const bsubs=subs.slice();
-    for(const y of subs){const d=E.def(y.c);if(y.a==="play"&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
+    for(const y of chain){const d=E.def(y.c);if((y.a==="play"||(y.a==="spawn"&&!subs.includes(y)))&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
       for(let j=log.indexOf(y)+1;j<log.length;j++){const z=log[j];if(!z.via)break;if(z.via===y.c&&z.who===y.who&&["spawn","summon","play"].includes(z.a))bsubs.push(z);}}}
-    for(const y of subs)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
+    for(const y of chain)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
     for(const y of bsubs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
@@ -5033,7 +5038,7 @@ function tile(n,badge,cls,attrs){const c=BY[n];return `<button class="tile ${c?(
   <span class="nm">${esc(n)}</span>${badge?`<span class="bd">${badge}</span>`:""}</button>`;}
 const segs=(c,kind)=>{if(!c)return[];const s=c.tx.split(" / ");if(kind==="order"||kind==="leader")return s.filter(x=>/指令/.test(x));if(c.t==="单位")return s.filter(x=>/部署/.test(x));return s;};
 const TGT=/1 ?(?:个|名)(?:敌军|友军)?单位|敌军单位|友军单位|伤害|锁定|中毒|重伤|摧毁 ?1|重置|交锋|对决/;
-const PULL=/从(?:己方)?(?:牌组|墓场)[^。/]{0,10}(?:打出|召唤)(?!自身)|生成并打出|创造并打出/;
+const PULL=/从(?:己方)?(?:牌组|墓场)[^。/]{0,10}(?:打出|召唤)(?!自身)|生成并打出|创造并打出|从手牌打出 1 张“(?:谋略|炸弹|特殊)”牌/;   // 从手牌打出的特殊牌（马格尼师等）也问，记成 via 这张
 const SPAWN=/生成|召唤(?!自身)/;
 // 生成整排效果（霜、雨……）不是生成单位，走“整排效果”记录
 const HZTXT=/(生成)+\s*(霜|雨|雾|风暴|龙之梦|血月|灾厄)|(霜|雨|雾|风暴|龙之梦|血月|灾厄)至/g;
@@ -5170,6 +5175,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
     if(step&&step.t==="spawn"){const c=BY[n];if(c&&c.t==="特殊"){const i=pushLog({who:step.who,a:"spawn",c:n,via:step.parent});ui.flow=[{t:"target",id:g.log[i].id},...ui.flow.slice(1)];rMatch();return true;}
       ui.flow=[{t:"place",a:"spawn",who:step.who,side:step.who,card:n,via:step.parent},...ui.flow.slice(1)];ui.q="";rMatch();return true;}
     if(ui.act==="spawn"&&!step){startCard(n,"spawn",ui.who);return true;}
+    // 拉出的是和排无关的特殊牌（门诺 → 战前准备、马格尼师 → 帝国外交）：不用放位置，直接记 via 这张并接着问它的目标；乌鸦眼块茎这类“至己方单排”的仍问排
+    if(step&&step.t==="pull"&&BY[n]&&(BY[n].t==="特殊"||BY[n].t==="战术")&&!/排/.test(BY[n].tx||"")){ui.q="";startCard(n,"play",step.who,step.parent);return true;}
     if(step&&step.t==="pull"){ui.flow=[{t:"place",a:"play",who:step.who,side:step.who,card:n,via:step.parent},...ui.flow.slice(1)];ui.q="";rMatch();return true;}
     if(step&&step.t==="rename"){const e=entry(step.id);e.c=n;if(BY[n]&&BY[n].t==="特殊"){delete e.row;delete e.pos;}persist();nextStep();return true;}
     if(step&&step.t==="mullinto"){const e=entry(step.id);e.into=n;persist();nextStep();return true;}

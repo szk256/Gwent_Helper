@@ -67,8 +67,8 @@ function sim(g,r,excl,ov){
   const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
   // 手动记的召唤/生成（不带 via）晚于引擎自动产生的同名单位（例如朗维德回场后隔了几步才记）：对应到那个单位，不重复放
   const claimed=new Set();
-  // 带 via 的（HUD 记的“布朗温 由少女的盾牌带出”，记在皇家激励那条后面）：只对应这一回合里引擎自动产生的单位
-  const claimAuto=x=>{let near=null;if(x.via){const i=log.indexOf(x);near=new Set();for(let j=i-1;j>=0;j--){near.add(log[j].id);if(isTurnAct(log[j]))break;}}
+  // 带 via 的（HUD 记的“布朗温 由少女的盾牌带出”，记在皇家激励那条后面）：只对应同一方这一回合里引擎自动产生的单位
+  const claimAuto=x=>{let near=null;if(x.via){const i=log.indexOf(x);near=new Set();for(let j=i-1;j>=0;j--){const y=log[j];if(y.a==="end"||y.a==="pass"||(isTurnAct(y)&&y.who!==x.who))break;near.add(y.id);}}
     const sd=x.side||x.who;const u=E.allUnits(sd).find(v=>{const k=u2key.get(v)||"";return v.name===x.c&&!claimed.has(v)&&/\/\d+$/.test(k)&&(!near||near.has(k.split("/")[0]));});
     if(!u)return false;claimed.add(u);bind(x.id,u);relocate(u,x.row,x.pos);return true;};
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
@@ -134,10 +134,12 @@ function sim(g,r,excl,ov){
     tq=(x.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);
     // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
+    // 紧跟着的带出特殊牌，via 是场上的剧情神器等（HUD 记的“致幻菌菇 由盖迪尼斯的阴影下带出”，引擎在打出海之新娘这一步自动打出了它）：也拿来对应引擎自动打出的特殊牌
+    const chain=subs.slice();for(let j=i+1;j<log.length;j++){const y=log[j];if(!y.via)break;if(!chain.includes(y)&&y.who===x.who&&["spawn","play"].includes(y.a)&&!consumed.has(y.id)){const d=E.def(y.c);if(d&&d.type==="special")chain.push(y);}}
     dq=subs.map(y=>y.c);
     const before=curBefore=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
     // 带出的特殊牌记了排（乌鸦眼块茎生成乌鸦的那排）：引擎“生成并打出”时用
-    E.viaRows={};const effSnap={};for(const y of subs){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
+    E.viaRows={};const effSnap={};for(const y of chain){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
       // 它的目标（海之新娘从墓场打出的玛哈坎麦酒 +5 给谁）：引擎自动打出这张时用；没有自动打出就原样留给它自己那条记录
       const ts=(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);if(ts.length){if(!(y.c in effSnap))effSnap[y.c]=(effQ[y.c]||[]).slice();(effQ[y.c]=effQ[y.c]||[]).push(...ts);}}
     const def=x.c?E.def(x.c):null;
@@ -209,9 +211,9 @@ function sim(g,r,excl,ov){
     E.viaRows=null;
     // 带出的特殊牌引擎已经自动打出了（艾克索部署“生成并打出”乌鸦眼块茎）：那条记录不再重复打出，它带出的生成记录对应到这一步产生的单位
     const autoSp=E.trace.slice(t0).filter(t=>t.type==="打出"&&t.data&&t.data.special).map(t=>t.data.name);const bsubs=subs.slice();
-    for(const y of subs){const d=E.def(y.c);if(y.a==="play"&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
+    for(const y of chain){const d=E.def(y.c);if((y.a==="play"||(y.a==="spawn"&&!subs.includes(y)))&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
       for(let j=log.indexOf(y)+1;j<log.length;j++){const z=log[j];if(!z.via)break;if(z.via===y.c&&z.who===y.who&&["spawn","summon","play"].includes(z.a))bsubs.push(z);}}}
-    for(const y of subs)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
+    for(const y of chain)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
     for(const y of bsubs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
