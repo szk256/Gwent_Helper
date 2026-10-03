@@ -222,8 +222,9 @@ def depart_reason(states, t, side):
 
 def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, has_show=True, my_deck=None,
                runs=None, extra=None, sync_states=None, states=None, deck_filter=True, t0=None, review=None,
-               op_leader=None, chain=None):
+               op_leader=None, chain=None, pwfix=None):
     """chain（[(时间, 触发它的记录牌名, 来源牌名)]，chain_needs.js 列出的引擎里没有输入的连带选择）：在那条记录后面补连带效果记录。
+    pwfix（[(时间, 牌名, 落地战力 − 推算)]）：差值正好是场上没用过的“下一个打出的单位 +N”指令时，在这张牌前面补记这条指令。
     has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
     sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
@@ -556,6 +557,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
 
     def push(x, t):
         nonlocal n
+        for ft, fc, diff in pwfix or []:
+            if abs(ft - t) < 0.05 and fc == x.get('c') and x['a'] in ('play', 'summon', 'spawn'):
+                next_order(x, t, diff)
         if over_deck(x):
             if review is not None and cards_by_name.get(x['c'], {}).get('type') != '特殊':
                 review.append({'ts': t, 'cat': '丢掉的打出', 'who': x['who'], 'c': x['c'],
@@ -587,6 +591,18 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
         for ct, cc, src in chain or []:
             if abs(ct - t) < 0.05 and cc == x.get('c'):
                 add_chain(x, t, src)
+
+    def next_order(x, t, diff):
+        """骑士随从（指令：己方下一个打出的单位获得 2 点增益）：引擎说这张牌落地比推算多 diff，场上正好有一张没用过、
+        这回合之前就在场的这种指令 → 在它前面补记这条指令（2026-10-02 瑞达尼亚骑士落地 4、推算 2，录像里骑士随从的指令图标前一回合消失）。"""
+        ts0 = turn_start(x['who'], t)
+        cands = [u for _rk, u in side_units(x['who'])
+                 if (m_ := re.search(r'指令\s*[：:]\s*己方下一个打出的单位获得\s*(\d+)\s*点增益', text_of(u[1])))
+                 and int(m_.group(1)) == diff and not order_used.get(u[0]) and (ts0 is None or u[4] < ts0)]
+        if len(cands) == 1:
+            order_used[cands[0][0]] = ts0 or t
+            push({'who': x['who'], 'a': 'order', 'c': cands[0][1], 'uid': cands[0][0],
+                  'hud': f'{x["c"]} 落地比推算多 {diff}：{cands[0][1]} 的指令（下一个打出的单位 +{diff}）'}, t - 0.05)
 
     def add_chain(x, t, src):
         """引擎里由别的牌连带触发的目标选择（落难的少女第二章生成的疯狂的冲锋给谁、少女的盾牌神赐 14 给哪个布朗温）：
@@ -1982,12 +1998,12 @@ def main():
                        'who': 'op', 'c': '', 'text': '对方领袖技能没认出（徽章图案和 gwent.one 图标比不上）：是哪个？导入后在对方领袖处选'})
     review0 = list(review)
 
-    def build(chain=None):
+    def build(chain=None, pwfix=None):
         review[:] = list(review0)
         g_ = build_game(events, scores, date, {c['name']: c for c in m.cards}, has_show=has_show, my_deck=my_deck,
                         runs=turn_runs(states), extra=tr.extra, sync_states=states if sync else None, states=states,
                         deck_filter='--no-deck-filter' not in sys.argv, t0=t0,
-                        review=review, op_leader=op_leader, chain=chain)
+                        review=review, op_leader=op_leader, chain=chain, pwfix=pwfix)
         ids_ = g_.pop('_ids')
         with open(gp, 'w', encoding='utf-8') as f:
             json.dump(g_, f, ensure_ascii=False, indent=1)
@@ -1998,9 +2014,11 @@ def main():
     if os.environ.get('HUD_CHAIN') != '0':
         needs = chain_needs(code)
         chain = [(ids[nd['id']][0], ids[nd['id']][1], nd['src']) for nd in needs
-                 if nd['id'] in ids and ids[nd['id']][0] is not None and nd['src'] != ids[nd['id']][1]]
-        if chain:
-            game, ids, code = build(sorted(set(chain)))
+                 if nd.get('src') and nd['id'] in ids and ids[nd['id']][0] is not None and nd['src'] != ids[nd['id']][1]]
+        pwfix = [(ids[nd['id']][0], ids[nd['id']][1], nd['pw'] - nd['calc']) for nd in needs
+                 if 'pw' in nd and nd['id'] in ids and ids[nd['id']][0] is not None and nd['pw'] > nd['calc']]
+        if chain or pwfix:
+            game, ids, code = build(sorted(set(chain)), pwfix)
             print(f'连带选择：引擎要 {len(needs)} 处，按卡面补了 {sum(1 for x in game["log"] if x.get("chain"))} 处')
     with open(os.path.join(d, 'game_v2.txt'), 'w', encoding='utf-8') as f:
         f.write(code)
