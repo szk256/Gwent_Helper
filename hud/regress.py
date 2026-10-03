@@ -30,7 +30,7 @@ GAMES = {
     'Gwent_The_Witcher_Card_Game_2026_10_02_-_23_44_12_06': {'record': True, 'date': '20261002'},   # 2560×1440 NVIDIA 录屏，对尼弗迦德
 }
 # 指标：越大越好的 / 越小越好的
-HIGHER = {'对上', '逐帧准确率', '逐帧召回', '时间线对上', '战力原始', 'AI出牌', '对方逐帧对'}
+HIGHER = {'推算核对点', '对上', '逐帧准确率', '逐帧召回', '时间线对上', '战力原始', 'AI出牌', '对方逐帧对'}
 LOWER = {'漏', '多', '目标不同', '待确认', '多认', '漏认', '时间线多出', '时间线漏', '对方多认', '对方漏认'}
 
 
@@ -53,10 +53,18 @@ def eval_game(name, cfg):
         t = run([sys.executable, 'timeline.py', d, name[:8]])
         out['AI出牌'] = num(r'对上 (\d+)/\d+', t, int)
         return name, out
-    args = [sys.executable, 'export.py', d, cfg.get('date', name[:8]), '--jobs=6', '--deck=deck.txt', '--sync-power']
+    args = [sys.executable, 'export.py', d, cfg.get('date', name[:8]), '--jobs=6', '--deck=deck.txt']
     if cfg.get('video'):
         args.append('--video=' + os.path.join('cache', 'rec', cfg['video']))
-    t = run(args)
+    # 不同步战力的导出喂给对局簿推算引擎（TRACKER=别的 gwent_tracker.html 换引擎）：记录本身（落地战力、目标、来源）对不对，
+    # 核对点对上几个（同步战力会把偏差抹掉，所以单独导一次）
+    run(args)
+    t = run(['node', 'replay_check.js', os.path.join(d, 'game_v2.txt')])
+    m = re.search(r'合计核对点一致 (\d+)/(\d+)', t)
+    if m:
+        out['推算核对点'] = int(m.group(1))
+        out['核对点总数'] = int(m.group(2))
+    t = run(args + ['--sync-power'])
     out['待确认'] = num(r'待确认 (\d+) 条', t, int)
     out['比分'] = ' / '.join(re.findall(r'第 \d 小局 \w (\d+:\d+)', t))
     if cfg.get('record'):

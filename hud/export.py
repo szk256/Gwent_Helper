@@ -114,7 +114,12 @@ def target_text(card):
     """这张牌打出时要指定目标的那段效果文字（特殊牌第一段、单位的“部署”段），没有返回 ''。"""
     text = card.get('text') or ''
     segs = [s.strip() for s in text.split('/')]
-    seg = segs[0] if card.get('type') == '特殊' else next((s for s in segs if s.startswith('部署')), '')
+    if card.get('type') == '特殊':
+        seg = segs[0]
+    elif card.get('type') == '战术':   # 战术牌的指令（战术优势：使 1 个友军单位获得 5 点增益）
+        seg = next((s for s in segs if s.startswith('指令')), '')
+    else:
+        seg = next((s for s in segs if s.startswith('部署')), '')
     if not re.search(r'(对|使|将|摧毁|锁定|重置|放逐)\s*\d+\s*(个|名)', seg) or '所有' in seg or '每' in seg:
         return ''
     return seg
@@ -400,7 +405,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                 w0 = (max(prev_chg, t - 3.0), chg[0] - 0.05)
                 w1 = (chg[0], (chg[1] - 0.05) if len(chg) > 1 and chg[1] - chg[0] < 3.0 else chg[0] + 3.0)
             alt = None
-            if x['who'] == 'me' and x['a'] == 'play' and \
+            if x['who'] == 'me' and x['a'] in ('play', 'tactic') and \
                     (c0 := max((tt for tt, _sc in scores if t - 3.0 <= tt <= t + 0.3), default=None)) is not None:
                 # 我方特殊牌离手有时确认得比效果晚（2026-10-02 疯狂的冲锋 13:16.1 生效、13:16.8 才确认，原来的“之后”窗口
                 # 落到了对方下一张通敌的动画上），有时早（2026-10-01 9:49 确认后 0.7 秒才生效）：离手前 3 秒内最近一次总分变化也试一下
@@ -566,6 +571,40 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             # 特殊牌没有排，也记进来（水路突袭、骑士册封从牌组打出单位）
             recent.append((t, x['who'], x['c'], {'m': '近战', 'r': '远程'}.get(x.get('row'), ''),
                            '打出' if x['a'] == 'play' or cards_by_name.get(x.get('c'), {}).get('type') == '特殊' else '进场'))
+
+    def settle_pw():
+        """落地战力按这一步结算完的读数：对局簿用 pw 覆盖整步结算之后的战力，进场确认那一帧常常还没加上
+        这一步自己的增益（2026-10-02 水路突袭带出的科德温骑士确认时读 8，+5 之后 13；推算因此差 5）。
+        取进场后第一次总分变化起 2.5 秒内（不过下一条记录）后一半帧里这张牌位置上读数的众数——同一步可能分两次加分
+        （落难的少女召唤的科德温骑士落地 5、1 秒后 8）；回合结束效果一般在点“结束回合”之后，更晚。"""
+        rec_ts = sorted(y['ts'] for y in log if 'ts' in y and y['a'] not in ('real', 'adj', 'note'))
+        for x in log:
+            if x.get('pw') is None or not x.get('row') or 'ts' not in x or x['a'] not in ('play', 'summon', 'spawn'):
+                continue
+            ts = x['ts']
+            c1 = next((tt for tt, _sc in scores if tt >= ts - 0.5), None)
+            if c1 is None or c1 > ts + 3:
+                continue
+            nr = next((tt for tt in rec_ts if tt > ts + 0.05), None)
+            hi = min(c1 + 2.5, (nr - 0.05) if nr else c1 + 2.5)
+            rk = rowkey(x['who'], x['row'])
+            vals = []
+            for tt, ent in (states or []):
+                if c1 <= tt <= hi and ent.get('sharp', 0) >= ent.get('smin', 40):
+                    names = (ent.get('rows') or {}).get(rk, [])
+                    pws = (ent.get('pw') or {}).get(rk, [])
+                    idx = [j for j, nm in enumerate(names) if nm == x['c']]
+                    if idx:
+                        j = min(idx, key=lambda j: abs(j - x.get('pos', j)))
+                        if j < len(pws) and pws[j] is not None:
+                            vals.append(pws[j])
+            if len(vals) >= 4:
+                vals = vals[len(vals) // 2:]
+            if len(vals) >= 2:
+                v, cnt = Counter(vals).most_common(1)[0]
+                if cnt >= 2 and cnt >= len(vals) / 2 and v != x['pw']:
+                    x['hud'] = (x.get('hud', '') + f' 落地战力按这一步结算后的读数 {v}（进场时读到 {x["pw"]}）').strip()
+                    x['pw'] = v
 
     def op_power_drop(a, b):
         """[a 之前 3 秒] 和 [b 之后 3 秒] 对方各单位读到的战力（整排牌名对得上的帧取中位数），掉得最多的 (排, 第几个, 掉了多少)。"""
@@ -1148,9 +1187,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             continue
         cur_row[0] = row
         c = cards_by_name.get(name, {})
-        if my_deck and side == '我方' and name and name not in my_deck and \
+        if my_deck and side == '我方' and name and name not in my_deck and c.get('type') != '战术' and \
                 (c.get('set') != 'token' or c.get('fac') not in (my_fac, 'NE')):
-            continue  # 我方只认卡组里的牌，和本阵营 / 中立的衍生牌
+            continue  # 我方只认卡组里的牌，和本阵营 / 中立的衍生牌（战术牌在卡组代码的 tac= 里，不算张数）
         if kind == '离手' and c.get('type') == '特殊' and side == '我方' and flicker_special(t, name, row):
             # 卡组里只有 1 张、之后 2 分钟（本小局内）手牌区照样认得出（和之前差不多常见）：是识别时有时无，没打出
             # （2026-10-01 滚油；水路突袭在对方回合里连着 60 秒没认出来，之后又一直在，3 分钟后才真打出）
@@ -1188,7 +1227,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             # 战术牌离场 = 用了（指令）；它生成的牌（衔尾蛇面具的乌鸦）在 text_source 里找到它
             flush_scores(t)
             tw = 'me' if side == '我方' else 'op'
-            push({'who': tw, 'a': 'tactic', 'c': name, 'hud': '战术牌离场：用了战术'}, t - 0.1)
+            x = {'who': tw, 'a': 'tactic', 'c': name, 'hud': '战术牌离场：用了战术'}
+            push(x, t - 0.1)
+            if target_text(c) and states:
+                pend_tgt.append((x, t - 0.1, {k: [u[:2] for u in v] for k, v in units.items()}))
             recent.append((t - 0.1, tw, name, '', '打出'))
             pending_step = True
             continue
@@ -1522,6 +1564,24 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             if 'step' not in it:   # 丢掉的记录：放在它之前最近的一步后面
                 it['after'] = max((i + 1 for i, x in enumerate(log) if x.get('ts', 0) <= it['ts']), default=0)
         review.sort(key=lambda it: it['ts'])
+    settle_pw()
+    # 比分先变、带出的单位要连续看到两次才确认进场：核对点后面 3 秒内紧跟着的带出单位（via，有排；特殊牌的效果可能更晚）其实在核对点之前就落地了，
+    # 挪到核对点前面（2026-10-02 落难的少女带出的科德温骑士，核对点 13:7 排在它前面，推算差 5）
+    i = 0
+    while i < len(log) - 1:
+        x, y = log[i], log[i + 1]
+        if x['a'] == 'real' and y.get('via') and y.get('row') and 'ts' in x and 'ts' in y and 0 <= y['ts'] - x['ts'] <= 3 and \
+                any(z.get('c') == y['via'] and z['who'] == y['who'] for z in log[max(0, i - 4):i]):
+            log[i], log[i + 1] = y, x
+            # 核对点改成这一步结算完的比分（同一步可能分两次加分：落难的少女召唤的科德温骑士落地 5、1 秒后 8）
+            nr = next((z['ts'] for z in log[i + 2:] if 'ts' in z and z['a'] not in ('real', 'adj', 'note')), None)
+            hi = min(y['ts'] + 2.5, (nr - 0.05) if nr is not None else y['ts'] + 2.5)
+            fin = next((sc for tt, sc in reversed(scores) if tt <= hi), None)
+            if fin and not (i + 2 < len(log) and log[i + 2]['a'] == 'real'):
+                x['v'] = f'{fin[0]}:{fin[1]}'
+            i = max(0, i - 1)
+            continue
+        i += 1
     for x in log:
         x.pop('cands', None)
     remap = {}
