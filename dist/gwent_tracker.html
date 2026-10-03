@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script>window.GWENT_BUILD="3be69ca";</script>
+<script>window.GWENT_BUILD="09b699a";</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>昆特对局簿</title>
@@ -485,6 +485,7 @@ const DEFAULT_RULES = {
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
   reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
+  reynardGraceBoost: false,   // 雷纳德“神赐 12”是否也使受到增益的友军 +1（卡面写“神赐 12、指令”；录像两次：神赐触发了——皇家激励刷新——但受过增益的科德温骑士没变，2026-10-01 对松鼠党 17:4 → 22:4、2026-10-02 对尼弗迦德第一局 27:6。待用户确认；指令照常）
   spawnBanished: false,       // 生成的牌离场时一律放逐（未确认；衍生牌卡面都写了“佚亡”，按状态放逐）
   purifyKeepsDoomed: false,   // 净化会移除佚亡，之后离场进墓场（用户查证）
   resilienceKeepsArmor: false,// 坚韧留场时护甲（含卡面自带的）清零（英/俄/德/波/日/韩释义 + Steam 讨论；中文写“额外护甲”）
@@ -1634,7 +1635,8 @@ const B = {};
 // ================= 北方王国 · 用户卡组 =================
 B['雷纳德·奥多'] = {
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self, run: (c, d) => c.boost(d.unit, 1) }],
-  bless: [{ at: 12, run: c => boostAllBoosted(c) }],
+  // ASSUME：神赐 12 只算触发（皇家激励刷新、落难的少女第一章），不给其他单位 +1（rules.reynardGraceBoost，录像两次）；指令照常
+  bless: [{ at: 12, run: c => { if (c.g.rules.reynardGraceBoost) boostAllBoosted(c); } }],
   order: c => boostAllBoosted(c),
 };
 function boostAllBoosted(c) { c.allies().filter(u => c.g.isBoosted(u) && (c.g.rules.reynardSelf || u !== c.self)).forEach(u => c.boost(u, 1)); }
@@ -2852,7 +2854,8 @@ B['奴隶贩子'] = { deploy: c => { const t = T(c, '奴隶贩子：铜色友军
 B['奴隶猎人'] = { deploy: c => { const t = T(c, '奴隶猎人：伤害', c.enemies()); if (!t) return; c.damage(t, 1 + c.adjacent().filter(u => has(u, '士兵')).length);
   if (c.g.find(t.uid) && t.power === 1) { const u = c.g.spawn(t.name, c.side, c.self.row, posRight(c), c.self); if (u) { u.power = 1; c.lock(u); } } } };
 B['奴隶步兵'] = { deploy: c => { const t = T(c, '奴隶步兵：转变', c.allies().filter(u => u !== c.self)); if (t) c.transform(t, '奴隶步兵'); } };
-B['侦察员'] = { deploy: noop, order: noop };
+// 部署的护甲、指令的活力（铜色士兵改为增益）取决于牌组，用改战力（对局簿打出/指令后直接问）；指令先失去所有护甲
+B['侦察员'] = { deploy: noop, order: c => { const a = c.self.armor; c.self.armor = 0; if (a) c.g.log('失去护甲', { name: c.self.name, n: a }); } };
 B['军旗手'] = { deploy: c => { const n = c.enemies().filter(u => c.g.isBoosted(u)).length; if (n) c.boost(c.self, n); } };
 B['仙尼德变节者'] = {
   deploy: c => { const t = T(c, '变节者：潜伏', c.enemies()); if (t) c.status(t, 'spying', true); },
@@ -4390,7 +4393,7 @@ const RAW=[["不息虫群","MO","领袖","领袖能力","-","15","传奇","领�
 </script>
 <script>
 // 由 build.js 从 cards.js 注释生成，不要手改
-(function (root) { const F = {"神殿守卫":"推测","贝罗恒王":"推测","突变装置":"推测","禁术":"需手动","伊斯崔德":"需手动","狮鹫学派猎魔人游侠":"推测","舰载弩炮":"推测","红骑士":"需手动","薇瑞娜":"推测","女夜魔":"需手动","孽鬼战士":"推测","日轮之师":"需手动","哈吉的伊斯贝尔":"推测","寇格林姆":"需手动","瑟瑞特":"需手动","史提芬·史凯伦":"需手动","篡位者 - 军官":"需手动","瘟疫制造者":"需手动","异兽园看管":"需手动","毒蛇学派猎魔人导师":"需手动","巨蝎煎药":"需手动","登舰作战":"需手动","群岛战争":"需手动","巨熊":"推测","布兰王":"需手动","索佛":"需手动","德拉蒙家族持盾女卫":"需手动","海巨蟒":"需手动","传送门":"需手动","华丽香炉":"需手动","恩荫之戒":"需手动","湖女之剑":"需手动","春分":"需手动","兰伯特":"需手动","维瑟米尔":"需手动","艾斯卡尔":"需手动","卡罗·凡瑞西":"需手动","安古兰":"需手动","希里：新星":"需手动","柯西莫·马拉斯宾那":"需手动","落雪":"推测","炸弹手":"需手动","幸运轮盘":"需手动","苏克鲁斯":"推测","尊宁夫人":"需手动","弗伦德号的船员":"需手动","波里斯":"需手动","赛勒斯·赫姆法特":"需手动","暗场保镖":"需手动","火蜥蜴帮异变体":"推测","烈焰守护者":"推测","自然法则":"推测","法兰茜丝卡·芬达贝":"推测","猫学派猎魔人导师":"推测","维里赫德旅先锋":"推测","棘手困境":"推测","校友会":"需手动"};
+(function (root) { const F = {"雷纳德·奥多":"推测","神殿守卫":"推测","贝罗恒王":"推测","突变装置":"推测","禁术":"需手动","伊斯崔德":"需手动","狮鹫学派猎魔人游侠":"推测","舰载弩炮":"推测","红骑士":"需手动","薇瑞娜":"推测","女夜魔":"需手动","孽鬼战士":"推测","日轮之师":"需手动","哈吉的伊斯贝尔":"推测","寇格林姆":"需手动","瑟瑞特":"需手动","史提芬·史凯伦":"需手动","篡位者 - 军官":"需手动","瘟疫制造者":"需手动","异兽园看管":"需手动","奴隶步兵":"需手动","毒蛇学派猎魔人导师":"需手动","巨蝎煎药":"需手动","登舰作战":"需手动","群岛战争":"需手动","巨熊":"推测","布兰王":"需手动","索佛":"需手动","德拉蒙家族持盾女卫":"需手动","海巨蟒":"需手动","传送门":"需手动","华丽香炉":"需手动","恩荫之戒":"需手动","湖女之剑":"需手动","春分":"需手动","兰伯特":"需手动","维瑟米尔":"需手动","艾斯卡尔":"需手动","卡罗·凡瑞西":"需手动","安古兰":"需手动","希里：新星":"需手动","柯西莫·马拉斯宾那":"需手动","落雪":"推测","炸弹手":"需手动","幸运轮盘":"需手动","苏克鲁斯":"推测","尊宁夫人":"需手动","弗伦德号的船员":"需手动","波里斯":"需手动","赛勒斯·赫姆法特":"需手动","暗场保镖":"需手动","火蜥蜴帮异变体":"推测","烈焰守护者":"推测","自然法则":"推测","法兰茜丝卡·芬达贝":"推测","猫学派猎魔人导师":"推测","维里赫德旅先锋":"推测","棘手困境":"推测","校友会":"需手动"};
 if (typeof module !== 'undefined' && module.exports) module.exports = F; else root.GwentCardFlags = F; })(this);
 
 </script>
@@ -4794,7 +4797,10 @@ function sim(g,r,excl,ov){
         // 落地时已达到神赐阈值：游戏里进场就触发（引擎“进场已满足立即触发”），自身战力仍以填的为准
         if(up&&E.find(u.uid)){E.checkBless(u);if(E.find(u.uid))u.power=y.pw;}}}
     // 提示：未建模、待选
+    const FL0=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
     for(const t of E.trace.slice(t0)){
+      // 已建模、数值不靠手填的牌落地战力和推算不同：多半是前面漏记了指令或效果（2026-10-02 漏记骑士随从指令，瑞达尼亚骑士推算 2、记 4）
+      if(t.type==="录入战力"&&modeled(t.data.name)&&FL0[t.data.name]!=="需手动")warns.push({id:x.id,m:t.data.name+" 落地战力记 "+t.data.to+"，推算 "+t.data.from+"：可能漏记了前面的指令或效果（例如骑士随从的指令），或对方的效果没记"});
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
       if(t.type==="没有指令")warns.push({id:x.id,m:t.data.name+" 没有指令能力，这条没有结算（触发的效果请记成“效果”，神赐/部署会自动结算）"});
@@ -4816,7 +4822,7 @@ function sim(g,r,excl,ov){
   simCache.set(key,res);if(simCache.size>16)simCache.delete(simCache.keys().next().value);return res;}
 // ---------- 偏差报告：真实比分（录屏核对的 C 记录、R 行局末比分）和推算逐步对比 ----------
 // 规则对比里逐个反过来试的未确认规则
-const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["autoEndOnSwitch","切到另一方后的修正先结算回合结束"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"]];
+const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["autoEndOnSwitch","切到另一方后的修正先结算回合结束"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"],["reynardGraceBoost","雷纳德神赐 12 给受到增益的友军 +1"]];
 const NOTE_PRESETS=["失误","关键回合","该停牌","没算到","对面读牌","卡手","好操作","节奏亏"];
 function parseScore(v){const m=String(v||"").match(/(\d+)\s*[:：\s]\s*(\d+)/);return m?{me:+m[1],op:+m[2]}:null;}
 function stepLabel(st){return st?(st.who==="me"?"我":"对")+"第"+st.n+"手":"";}
@@ -5088,6 +5094,9 @@ function flowDone(){const g=db.live;const ids=ui.recent||[];ui.recent=[];if(!g||
   for(const x of recs){const sd=sameStep(g,S,x);if(sd)st.push(sd);}
   if(!st.length)return false;ui.flow=st;return true;}
 // 会从牌组召唤同名牌的单位（蓝衣铁卫突击队用指令、褐旗营受到增益）：问召唤了几张，自动放在它右边
+// 数值取决于对方/己方牌组的效果：打出或用指令后直接问看到的数值，记成改战力（J）
+const ASK={"侦察员":{play:{q:"部署获得了几点护甲？（拿到的那张单位牌的战力）",k:[["甲","护甲"]]},order:{q:"指令获得了几点活力？（拿到的单位牌的战力；铜色士兵改为增益）",k:[["活","活力"],["+","增益"]]}}};
+const askStep=(name,kind,uid,side)=>ASK[name]&&ASK[name][kind]?[{t:"ask",card:name,kind,uid,side}]:[];
 const SAME=/召唤\s*(?:所有)?(?:自身|其)?(?:的)?(?:所有)?同名牌/;
 function sameStep(g,S,x){const cand=[];
   if(x.a==="order"&&x.uid){const u=S.key2u[x.uid];if(u)cand.push(u);}
@@ -5129,7 +5138,7 @@ function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];
   if(a==="play"&&spawns(c,"play")){let auto=false;try{const S=sim(g,VR());auto=Object.keys(S.key2u).some(k=>k.startsWith(id+"/"))||S.autoPlayed.has(id);}catch(e){}
     if(!auto)st.push(...spawnStep(c,"play",who,name));}
   // 引擎算不准战力的单位（卡牌标“需手动”或未建模）：最后问一步落地战力，一次记完
-  if(c&&a==="play"&&c.t==="单位"&&needsPw(name))st.push({t:"pw",id});
+  if(c&&a==="play"&&c.t==="单位"){const ask=askStep(name,"play",id,g.log[idx].side||who);if(ask.length)st.push(...ask);else if(needsPw(name))st.push({t:"pw",id});}
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
   if(who==="me"&&(a==="play"||a==="summon"))returners(g,name).filter(n=>!(GwentCards.behaviors[n]&&GwentCards.behaviors[n].graveUnit)).forEach(n=>st.push({t:"ret",card:n}));
   ui.flow=[...st,...((ui.flow||[]).slice(1))];if(!ui.flow.length){ui.flow=null;if(!flowDone())doSwitch();}ui.q="";ui.sel=[];
@@ -5171,7 +5180,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
       else if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
     // 指令、触发效果属于点到的单位那一方（打完牌后界面已切到对方，我方接着用指令也不会记错）
     if(ui.act==="order"&&u.eu&&u.eu.isTactic){recTactic(u.side);return true;}   // 点场上的战术牌 = 用战术
-    if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
+    if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?[...spawnStep(c,"order",u.side),...askStep(u.n,"order",u.uid,u.side)]:[]));toast(logText(g.log[i]));rMatch();return true;}
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){ui.flow=[{t:"adj",uid:u.uid,side:u.side,card:u.n}];rMatch();return true;}
     if(ui.act==="kill"){const i=pushLog({who:ui.who,a:"kill",c:u.n,uid:u.uid,side:u.side});toast(logText(g.log[i]));flowDone();rMatch();return true;}
@@ -5198,6 +5207,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=ui.flow&&ui.flow[0]&&ui.flow[0].t==="edit"&&ui.flow[0].id===D.edit?null:[{t:"edit",id:D.edit}];rMatch();return true;}   // 在记录里原地展开，不跳到顶部
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
+  if(D.askv!==undefined&&step&&step.t==="ask"){let v=D.askv;if(v.startsWith("?")){const n=parseInt($("#askIn")?.value);if(isNaN(n)||n<0)return toast("填一个不小于 0 的数"),true;v=v.slice(1)+n;}
+    if(/^\+0$/.test(v))return toast("增益要大于 0"),true;const i=pushLog({who:step.side,a:"adj",c:step.card,uid:step.uid,side:step.side,v});toast(logText(g.log[i]));nextStep();return true;}
   if(D.pwset!==undefined&&step&&step.t==="pw"){const e=entry(step.id);const v=D.pwset==="?"?parseInt($("#pwIn")?.value):+D.pwset;if(e&&!isNaN(v)&&v>=0){e.pw=v;persist();}nextStep();return true;}
   if(D.fz!==undefined&&step&&step.t==="frenzy"){const e=entry(step.id);if(e){e.fz=D.fz==="1";persist();}nextStep();return true;}
   if(D.dn!==undefined&&step&&step.t==="deckCount"){const e=entry(step.id);const v=D.dn==="?"?parseInt($("#dnIn")?.value):+D.dn;if(e&&!isNaN(v)){e.dn=v;persist();}nextStep();return true;}
@@ -5398,6 +5409,10 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。<br>填<b>刚放下时</b>的数值：回合结束时的成长（壁垒、活力、灌注等）推算会自己加，别算进去。</p>
         <div class="btns" style="margin-top:8px;flex-wrap:wrap">${vals.map(v=>`<button class="${v===n?"primary":"ghost"}" data-pwset="${v}">${v}</button>`).join("")}</div>
         <div class="btns" style="margin-top:8px"><input id="pwIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="ghost" data-pwset="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
+      else if(step.t==="ask"){const A=ASK[step.card][step.kind];
+        h+=`<h2>「${esc(step.card)}」${esc(A.q)}</h2><p class="note">引擎推算不了（取决于牌组），按游戏里看到的填，记成改战力。</p>
+        <div class="btns" style="margin-top:8px;flex-wrap:wrap">${[1,2,3,4,5,6,7,8,9,10].map(v=>`<button class="ghost" data-askv="${esc(A.k[0][0])}${v}">${v}</button>`).join("")}</div>
+        <div class="btns" style="margin-top:8px"><input id="askIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1" data-enter='[data-askv="?${esc(A.k[0][0])}"]'>${A.k.map(([p,l])=>`<button class="${p===A.k[0][0]?"primary":"ghost"}" data-askv="?${esc(p)}">记为${esc(l)}</button>`).join("")}<button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="frenzy"){const e=entry(step.id);
         h+=`<h2>「${esc(e?e.c:"")}」亢奋 ${step.n}：成立吗？</h2><p class="note">打出后手牌不多于 ${step.n} 张即成立（游戏里效果会高亮）。</p>
         <div class="btns" style="margin-top:8px"><button class="primary" data-fz="1" style="flex:1">成立</button><button class="ghost" data-fz="0" style="flex:1">不成立</button><button class="ghost" data-do="flowSkip">不清楚</button></div>`;}

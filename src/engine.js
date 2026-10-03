@@ -17,6 +17,7 @@ const DEFAULT_RULES = {
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
   reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
+  reynardGraceBoost: false,   // 雷纳德“神赐 12”是否也使受到增益的友军 +1（卡面写“神赐 12、指令”；录像两次：神赐触发了——皇家激励刷新——但受过增益的科德温骑士没变，2026-10-01 对松鼠党 17:4 → 22:4、2026-10-02 对尼弗迦德第一局 27:6。待用户确认；指令照常）
   spawnBanished: false,       // 生成的牌离场时一律放逐（未确认；衍生牌卡面都写了“佚亡”，按状态放逐）
   purifyKeepsDoomed: false,   // 净化会移除佚亡，之后离场进墓场（用户查证）
   resilienceKeepsArmor: false,// 坚韧留场时护甲（含卡面自带的）清零（英/俄/德/波/日/韩释义 + Steam 讨论；中文写“额外护甲”）

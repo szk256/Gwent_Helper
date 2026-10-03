@@ -102,6 +102,18 @@ setTimeout(() => {
     w.__rec = REC1001; w.eval('window.__g=GwentCodec.decodeGame(__rec).game;__g.id=1001');
     const sc = r => w.eval(`(()=>{const s=sim(__g,${r}).score;return s.me.total+":"+s.op.total})()`);
     ok(sc(0) === '13:0' && sc(1) === '85:66', '回放 2026-10-01 对松鼠党：13:0、85:66（推算 ' + sc(0) + '、' + sc(1) + '）');
+    // 2026-10-02 对尼弗迦德（录像核对）：第一局 27:6（雷纳德神赐 12 不给科德温骑士 +1）、第二局 99:57（侦察员指令失去护甲）
+    const REC1002 = "#GWLOG v2 ids=gwent\nG date=2026-10-02 me=NR ld=202116 op=NG old=200164 coin=1 res=W tac=1 hand=1 build=3be69ca data=v14.10.0 deck=%E5%8C%97%E5%A2%83%E8%B5%A4%E8%AF%9A%E9%AA%91%E5%A3%AB%E5%B0%91%E5%A5%B3%E6%94%B9\nD f=NR ld=202116 tac=202140 203075x1 202646x1 202151x1 202251x1 122101x1 203076x1 202262x1 202112x1 202647x1 202506x1 202254x1 201648x1 202509x1 203078x2 202511x1 202420x1 201622x2 202421x1 203079x1 202259x1 202372x1 122308x2\nR1 res=W hm=8 sec=925\n1 A D cards=203075,202646,202262,202112,202254,201648,203079,202420,122308,202506 x.set=true\n2 A P c=202646\n3 A P c=201622 row=m pos=1 via=202646\n4 A Z\n5 B P c=200044 row=r pos=0\n6 B P c=162315\n7 B P c=202920 row=m pos=0 via=162315\n8 B Z\n9 A P c=202112 row=r pos=0\n10 A T c=202140 tg=9\n11 A Z\n12 B -\n13 A -\nR2 res=W hm=0 sec=2348\n14 A D cards=203075,202262,202254,201648,203079,202420,122308,202646,203076,202509 x.set=true\n15 A P c=202509 row=m pos=0\n16 A Z\n17 B P c=162102 row=r pos=0\n18 B P c=202454 via=162102 tg=17\n19 B Z\n20 A P c=203075 row=m pos=0\n21 A P c=201622 row=m pos=3 via=203075\n22 A Z\n23 B P c=200044 row=r pos=1\n24 B E c=200044 uid=23\n25 B P c=163201 side=B\n26 B P c=202151 row=m pos=0 side=B via=163201\n27 B Z\n28 A P c=201648 row=m pos=4 tg=26\n29 A Z\n30 B P c=201639 row=m pos=0\n31 B P c=162303 row=r pos=2 via=201639\n32 B N c=%E5%BD%93%E6%97%B6%E6%9C%896%E7%82%B9%E6%8A%A4%E7%94%B2\n33 B Z\n34 A P c=203079 row=r pos=0\n35 A Z\n36 B P c=202454 tg=23\n37 B O c=162303 tg=31 uid=31\n38 B J c=162303 side=B v=~vi5 uid=31\n39 B Z\n40 A P c=202254 row=r pos=1\n41 A E c=202420 tg=40 x.chain=1\n42 A Z\n43 B P c=202447 row=m pos=1\n44 B P c=162303 row=r pos=3 via=202447\n45 B J c=162303 side=B v=~ar6 uid=44\n46 B Z\n47 A P c=122308 row=r pos=2 pw=4\n48 A J c=122308 side=A v=4 uid=47\n49 A Z\n50 A J c=122308 side=A v=6 uid=47\n51 B O c=162303 uid=44\n52 B J c=162303 side=B v=~vi4 uid=44\n53 B P c=112204 row=m pos=2 pw=4\n54 B P c=112203 row=m pos=3 via=112204 pw=4\n55 B P c=112202 row=m pos=4 via=112203 pw=4\n56 B Z\n57 A P c=202646\n58 A P c=203078 row=r pos=2 via=202646\n59 A Z\n60 B J c=122308 side=A v=8 uid=47\n61 B N c=11%2015%206%206\n62 A N c=11%2017%208%208\n63 A N c=11%2017%209%208\n64 A N c=11%2017%209%2010\n65 A N c=11%2019%2011%2010\n66 A J c=122308 side=A v=10 uid=47\n67 B O c=201639 tg=31,44 uid=30\n68 B P c=202666 row=m pos=2 side=A\n69 A P c=203076 row=r pos=4\n70 A L c=202116 tg=69\n71 A L c=202116 tg=69\n72 A Z\n73 B J c=122308 side=A v=14 uid=47\n74 B P c=202666 row=r pos=5 side=A\n75 A P c=202262\n76 A P c=203078 row=r pos=3 via=202262\n77 A Z\n78 B J c=122308 side=A v=18 uid=47\n79 B L c=200164\n80 B Y c=202707 row=m pos=6 via=200164\n81 B Z\n82 B P c=202454 tg=44\n83 A J c=162303 side=B v=14 uid=44\n84 A J c=162303 side=B v=13 uid=44\n85 A J c=162303 side=B v=~ar3 uid=44\n86 A J c=162303 side=B v=~vi1 uid=44\n87 B P c=200226 tg=47\n88 B Z\n89 A P c=202420 tg=47\n90 A Z\n91 B J c=122308 side=A v=9 uid=47\n92 B P c=163101 tg=40,34";
+    w.__rec2 = REC1002; w.eval('window.__g2=GwentCodec.decodeGame(__rec2).game;__g2.id=1002');
+    const sc2 = r => w.eval(`(()=>{const s=sim(__g2,${r}).score;return s.me.total+":"+s.op.total})()`);
+    ok(sc2(0) === '27:6' && sc2(1) === '99:57', '回放 2026-10-02 对尼弗迦德：27:6、99:57（推算 ' + sc2(0) + '、' + sc2(1) + '）');
+    ok(w.eval('sim(__g2,1).warns.some(x=>x.id==="e47"&&/落地战力记 4，推算 2/.test(x.m))'), '落地战力和推算不同（已建模的牌）：提示可能漏记了指令');
+    // 按录像补上漏记的骑士随从指令（第 41 步后）：瑞达尼亚骑士不用手动改，落地 4、每个己方回合结束 +2
+    w.eval(`(()=>{const g=JSON.parse(JSON.stringify(__g2));g.id=10021;g.log=g.log.filter(x=>!(x.a==="adj"&&x.c==="瑞达尼亚骑士"));delete g.log.find(x=>x.id==="e47").pw;
+      const i=g.log.findIndex(x=>x.id==="e41");g.log.splice(i+1,0,{id:"e201",r:1,who:"me",a:"order",c:"骑士随从",uid:"e34"});window.__g3=g;})()`);
+    const rk = id => w.eval(`(()=>{const g=__g3;const i=g.log.findIndex(x=>x.id==="${id}");const S=sim(Object.assign({},g,{id:"c${id}",log:g.log.slice(0,i),rounds:g.rounds.slice(0,1)}),1);const u=S.key2u.e47;return u?u.power:null;})()`);
+    const rks = ['e49', 'e51', 'e74', 'e79'].map(rk).join('/');
+    ok(rks === '4/6/14/18', '补上骑士随从指令：瑞达尼亚骑士不用手动改，4 → 6 → … → 14 → 18（推算 ' + rks + '）');
     // 月度补丁：对局按日期用当时的版本
     w.eval(`GwentPatches.PATCHES.push({date:'2099-01-01',title:'测试补丁',cards:[{n:'科德温骑士',pw:[5,6]}]});GwentPatches.applyAll(RAW);`);
     live([{ id: 'e1', who: 'me', a: 'play', c: '寒冰巨人', row: 'm', side: 'me' }, { id: 'e2', who: 'me', a: 'play', c: '科德温骑士', row: 'm', side: 'me' }], { date: '2098-12-31' });
@@ -187,6 +199,18 @@ setTimeout(() => {
     ok(w.eval('db.live.log[db.live.log.length-1].pw') === 4 && w.eval('sim(db.live,0).score.me.total') === 4, '落地战力：选的数值写进记录并用于推算');
     live([]); w.eval('startCard("科德温骑士","play","me")'); w.document.querySelector('[data-slot^="me|m|"]').click();
     ok(!(w.eval('ui.flow') || []).some(x => x.t === 'pw'), '落地战力：已建模的牌不多问');
+    // 侦察员：打出后问部署护甲，指令后问活力（取决于牌组，记成改战力）
+    live([]); w.eval('ui.who="op";startCard("侦察员","play","op")'); w.document.querySelector('[data-slot^="op|r|"]').click();
+    guard = 0; while (w.eval('ui.flow&&ui.flow[0]&&ui.flow[0].t') && w.eval('ui.flow[0].t') !== 'ask' && guard++ < 5) w.document.querySelector('[data-do="flowSkip"]').click();
+    ok(w.eval('ui.flow&&ui.flow[0].t') === 'ask' && /护甲/.test(w.document.querySelector('.sheet.flow').textContent) && !(w.eval('ui.flow') || []).some(x => x.t === 'pw'), '侦察员：打出后问部署获得的护甲（不问落地战力）');
+    w.document.querySelector('[data-askv="甲6"]').click();
+    ok(w.eval('db.live.log[db.live.log.length-1].v') === '甲6' && w.eval('sim(db.live,0).E.allUnits("op")[0].armor') === 6, '侦察员：护甲记成改战力 甲6');
+    w.eval('ui.flow=null;ui.who="op";ui.act="order";rMatch()'); [...w.document.querySelectorAll('.board [data-u]')].find(b => b.title === '侦察员').click();
+    guard = 0; while (w.eval('ui.flow&&ui.flow[0]&&ui.flow[0].t') && w.eval('ui.flow[0].t') !== 'ask' && guard++ < 5) w.document.querySelector('[data-do="flowSkip"]').click();
+    ok(w.eval('ui.flow&&ui.flow[0].t') === 'ask' && /活力/.test(w.document.querySelector('.sheet.flow').textContent), '侦察员：指令后问获得的活力');
+    w.document.querySelector('#askIn').value = '5'; w.document.querySelector('[data-askv="?活"]').click();
+    { const u = w.eval('(()=>{const u=sim(db.live,0).E.allUnits("op")[0];return {a:u.armor,v:u.status.vitality}})()');
+      ok(u.a === 0 && u.v === 5, '侦察员：指令失去护甲，活力 5 记成改战力（推算 甲' + u.a + ' 活' + u.v + '）'); }
     // ---- 2026-09-30 用户反馈 ----
     const Q = s => w.document.querySelector(s), QA = s => [...w.document.querySelectorAll(s)];
     const ub = n => QA('.board [data-u]').filter(b => b.dataset.umode !== 'none').find(b => b.title === n);

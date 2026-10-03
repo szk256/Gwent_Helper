@@ -26,7 +26,8 @@ const B = {};
 // ================= 北方王国 · 用户卡组 =================
 B['雷纳德·奥多'] = {
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self, run: (c, d) => c.boost(d.unit, 1) }],
-  bless: [{ at: 12, run: c => boostAllBoosted(c) }],
+  // ASSUME：神赐 12 只算触发（皇家激励刷新、落难的少女第一章），不给其他单位 +1（rules.reynardGraceBoost，录像两次）；指令照常
+  bless: [{ at: 12, run: c => { if (c.g.rules.reynardGraceBoost) boostAllBoosted(c); } }],
   order: c => boostAllBoosted(c),
 };
 function boostAllBoosted(c) { c.allies().filter(u => c.g.isBoosted(u) && (c.g.rules.reynardSelf || u !== c.self)).forEach(u => c.boost(u, 1)); }
@@ -1244,7 +1245,8 @@ B['奴隶贩子'] = { deploy: c => { const t = T(c, '奴隶贩子：铜色友军
 B['奴隶猎人'] = { deploy: c => { const t = T(c, '奴隶猎人：伤害', c.enemies()); if (!t) return; c.damage(t, 1 + c.adjacent().filter(u => has(u, '士兵')).length);
   if (c.g.find(t.uid) && t.power === 1) { const u = c.g.spawn(t.name, c.side, c.self.row, posRight(c), c.self); if (u) { u.power = 1; c.lock(u); } } } };
 B['奴隶步兵'] = { deploy: c => { const t = T(c, '奴隶步兵：转变', c.allies().filter(u => u !== c.self)); if (t) c.transform(t, '奴隶步兵'); } };
-B['侦察员'] = { deploy: noop, order: noop };
+// 部署的护甲、指令的活力（铜色士兵改为增益）取决于牌组，用改战力（对局簿打出/指令后直接问）；指令先失去所有护甲
+B['侦察员'] = { deploy: noop, order: c => { const a = c.self.armor; c.self.armor = 0; if (a) c.g.log('失去护甲', { name: c.self.name, n: a }); } };
 B['军旗手'] = { deploy: c => { const n = c.enemies().filter(u => c.g.isBoosted(u)).length; if (n) c.boost(c.self, n); } };
 B['仙尼德变节者'] = {
   deploy: c => { const t = T(c, '变节者：潜伏', c.enemies()); if (t) c.status(t, 'spying', true); },

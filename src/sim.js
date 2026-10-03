@@ -220,7 +220,10 @@ function sim(g,r,excl,ov){
         // 落地时已达到神赐阈值：游戏里进场就触发（引擎“进场已满足立即触发”），自身战力仍以填的为准
         if(up&&E.find(u.uid)){E.checkBless(u);if(E.find(u.uid))u.power=y.pw;}}}
     // 提示：未建模、待选
+    const FL0=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
     for(const t of E.trace.slice(t0)){
+      // 已建模、数值不靠手填的牌落地战力和推算不同：多半是前面漏记了指令或效果（2026-10-02 漏记骑士随从指令，瑞达尼亚骑士推算 2、记 4）
+      if(t.type==="录入战力"&&modeled(t.data.name)&&FL0[t.data.name]!=="需手动")warns.push({id:x.id,m:t.data.name+" 落地战力记 "+t.data.to+"，推算 "+t.data.from+"：可能漏记了前面的指令或效果（例如骑士随从的指令），或对方的效果没记"});
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
       if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
       if(t.type==="没有指令")warns.push({id:x.id,m:t.data.name+" 没有指令能力，这条没有结算（触发的效果请记成“效果”，神赐/部署会自动结算）"});
@@ -242,7 +245,7 @@ function sim(g,r,excl,ov){
   simCache.set(key,res);if(simCache.size>16)simCache.delete(simCache.keys().next().value);return res;}
 // ---------- 偏差报告：真实比分（录屏核对的 C 记录、R 行局末比分）和推算逐步对比 ----------
 // 规则对比里逐个反过来试的未确认规则
-const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["autoEndOnSwitch","切到另一方后的修正先结算回合结束"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"]];
+const CAL_RULES=[["passedTurnsTick","停牌方回合照常推进"],["autoEndOnSwitch","切到另一方后的修正先结算回合结束"],["passTurnEnd","停牌那一下结算回合结束"],["resilienceKeepsDamage","坚韧留场保留受到的伤害"],["resilienceKeepsArmor","坚韧留场保留卡面护甲"],["reynardGraceBoost","雷纳德神赐 12 给受到增益的友军 +1"]];
 const NOTE_PRESETS=["失误","关键回合","该停牌","没算到","对面读牌","卡手","好操作","节奏亏"];
 function parseScore(v){const m=String(v||"").match(/(\d+)\s*[:：\s]\s*(\d+)/);return m?{me:+m[1],op:+m[2]}:null;}
 function stepLabel(st){return st?(st.who==="me"?"我":"对")+"第"+st.n+"手":"";}

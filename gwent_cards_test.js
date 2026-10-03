@@ -387,5 +387,22 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   ok(d.name === '瑞达尼亚骑士' && d.power === 2 && d.armor === 2, '杜度：变成瑞达尼亚骑士 2 战力 2 护甲');
   g.endTurn(); ok(d.power === 3, '杜度变成的瑞达尼亚骑士：壁垒回合结束 +1');
 }
+{ // 2026-10-02 对尼弗迦德：侦察员指令先失去所有护甲（之后军营 +1、战前准备 +2 → 3，录像也是 3）
+  const g = game(); const sc = P(g, 'op', '侦察员', 'r'); sc.armor = 6;
+  g.s.active = 'op'; g.endTurn(); g.endTurn(); g.order(sc.uid, { force: true });
+  ok(sc.armor === 0 && sc.power === 3, '侦察员：指令失去所有护甲');
+}
+{ // 骑士随从指令：下一个打出的骑士 +2 并灌注“己方回合结束 +1”（瑞达尼亚骑士落地 4、每回合 +2：壁垒 +1 + 灌注 +1）
+  const g = game(); const sq = P(g, 'me', '骑士随从', 'r'); g.endTurn(); g.endTurn(); g.order(sq.uid);
+  const k = P(g, 'me', '瑞达尼亚骑士', 'r'); ok(k.power === 4, '骑士随从：下一个打出的瑞达尼亚骑士落地 4');
+  g.endTurn(); ok(k.power === 6, '瑞达尼亚骑士：壁垒 +1 + 骑士随从灌注 +1');
+}
+{ // 雷纳德神赐 12：录像两次没给受到增益的友军 +1（rules.reynardGraceBoost 默认关）；指令照常
+  const g = game(); const kd = P(g, 'me', '科德温骑士', 'm'); g.boost(kd, 3); const r = P(g, 'me', '雷纳德·奥多', 'r');
+  g.boost(r, 5); ok(r.blessFired[12] && kd.power === 8, '雷纳德：神赐 12 触发，但科德温骑士不变');
+  const g2 = new E.Game({ first: 'me', rules: { reynardGraceBoost: true } }); g2.loadData(RAW); g2.loadBehaviors(B); g2.startRound();
+  const kd2 = P(g2, 'me', '科德温骑士', 'm'); g2.boost(kd2, 3); const r2 = P(g2, 'me', '雷纳德·奥多', 'r'); g2.boost(r2, 5);
+  ok(kd2.power === 9, '雷纳德：reynardGraceBoost 打开时神赐给受到增益的友军 +1');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

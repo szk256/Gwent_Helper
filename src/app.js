@@ -220,6 +220,9 @@ function flowDone(){const g=db.live;const ids=ui.recent||[];ui.recent=[];if(!g||
   for(const x of recs){const sd=sameStep(g,S,x);if(sd)st.push(sd);}
   if(!st.length)return false;ui.flow=st;return true;}
 // 会从牌组召唤同名牌的单位（蓝衣铁卫突击队用指令、褐旗营受到增益）：问召唤了几张，自动放在它右边
+// 数值取决于对方/己方牌组的效果：打出或用指令后直接问看到的数值，记成改战力（J）
+const ASK={"侦察员":{play:{q:"部署获得了几点护甲？（拿到的那张单位牌的战力）",k:[["甲","护甲"]]},order:{q:"指令获得了几点活力？（拿到的单位牌的战力；铜色士兵改为增益）",k:[["活","活力"],["+","增益"]]}}};
+const askStep=(name,kind,uid,side)=>ASK[name]&&ASK[name][kind]?[{t:"ask",card:name,kind,uid,side}]:[];
 const SAME=/召唤\s*(?:所有)?(?:自身|其)?(?:的)?(?:所有)?同名牌/;
 function sameStep(g,S,x){const cand=[];
   if(x.a==="order"&&x.uid){const u=S.key2u[x.uid];if(u)cand.push(u);}
@@ -261,7 +264,7 @@ function afterCard(idx,name,a,who){const g=db.live;const c=BY[name];const st=[];
   if(a==="play"&&spawns(c,"play")){let auto=false;try{const S=sim(g,VR());auto=Object.keys(S.key2u).some(k=>k.startsWith(id+"/"))||S.autoPlayed.has(id);}catch(e){}
     if(!auto)st.push(...spawnStep(c,"play",who,name));}
   // 引擎算不准战力的单位（卡牌标“需手动”或未建模）：最后问一步落地战力，一次记完
-  if(c&&a==="play"&&c.t==="单位"&&needsPw(name))st.push({t:"pw",id});
+  if(c&&a==="play"&&c.t==="单位"){const ask=askStep(name,"play",id,g.log[idx].side||who);if(ask.length)st.push(...ask);else if(needsPw(name))st.push({t:"pw",id});}
   if(a==="play"&&!g.log[idx].via&&!ui.insertBefore&&ui.vr==null)ui.pendingSwitch=who;
   if(who==="me"&&(a==="play"||a==="summon"))returners(g,name).filter(n=>!(GwentCards.behaviors[n]&&GwentCards.behaviors[n].graveUnit)).forEach(n=>st.push({t:"ret",card:n}));
   ui.flow=[...st,...((ui.flow||[]).slice(1))];if(!ui.flow.length){ui.flow=null;if(!flowDone())doSwitch();}ui.q="";ui.sel=[];
@@ -303,7 +306,7 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
       else if(k>=0)s.splice(k,1);else s.push({uid:u.uid,label:sideN(u.side)+" "+u.n});rMatch();return true;}
     // 指令、触发效果属于点到的单位那一方（打完牌后界面已切到对方，我方接着用指令也不会记错）
     if(ui.act==="order"&&u.eu&&u.eu.isTactic){recTactic(u.side);return true;}   // 点场上的战术牌 = 用战术
-    if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?spawnStep(c,"order",u.side):[]));toast(logText(g.log[i]));rMatch();return true;}
+    if(ui.act==="order"||ui.act==="effect"){const i=pushLog({who:u.side,a:ui.act,c:u.n,uid:u.uid});const c=BY[u.n];queue({t:"target",id:g.log[i].id},...(ui.act==="order"?[...spawnStep(c,"order",u.side),...askStep(u.n,"order",u.uid,u.side)]:[]));toast(logText(g.log[i]));rMatch();return true;}
     if(ui.act==="move"){queue({t:"place",move:true,card:u.n,uid:u.uid,side:u.side});rMatch();return true;}
     if(ui.act==="adj"){ui.flow=[{t:"adj",uid:u.uid,side:u.side,card:u.n}];rMatch();return true;}
     if(ui.act==="kill"){const i=pushLog({who:ui.who,a:"kill",c:u.n,uid:u.uid,side:u.side});toast(logText(g.log[i]));flowDone();rMatch();return true;}
@@ -330,6 +333,8 @@ function liveClick(t,D){const g=db.live;if(!g)return false;
   if(D.fixtgt){const e=entry(D.fixtgt);ui.sel=(e.tgts||[]).slice();ui.flow=[{t:"target",id:e.id}];rMatch();window.scrollTo(0,0);return true;}
   if(D.edit){ui.flow=ui.flow&&ui.flow[0]&&ui.flow[0].t==="edit"&&ui.flow[0].id===D.edit?null:[{t:"edit",id:D.edit}];rMatch();return true;}   // 在记录里原地展开，不跳到顶部
   if(D.oplead){g.opLeader=D.oplead;const i=pushLog({who:"op",a:"leader",c:D.oplead});ui.act="play";queue({t:"target",id:g.log[i].id},...spawnStep(BY[D.oplead],"leader","op"));rMatch();return true;}
+  if(D.askv!==undefined&&step&&step.t==="ask"){let v=D.askv;if(v.startsWith("?")){const n=parseInt($("#askIn")?.value);if(isNaN(n)||n<0)return toast("填一个不小于 0 的数"),true;v=v.slice(1)+n;}
+    if(/^\+0$/.test(v))return toast("增益要大于 0"),true;const i=pushLog({who:step.side,a:"adj",c:step.card,uid:step.uid,side:step.side,v});toast(logText(g.log[i]));nextStep();return true;}
   if(D.pwset!==undefined&&step&&step.t==="pw"){const e=entry(step.id);const v=D.pwset==="?"?parseInt($("#pwIn")?.value):+D.pwset;if(e&&!isNaN(v)&&v>=0){e.pw=v;persist();}nextStep();return true;}
   if(D.fz!==undefined&&step&&step.t==="frenzy"){const e=entry(step.id);if(e){e.fz=D.fz==="1";persist();}nextStep();return true;}
   if(D.dn!==undefined&&step&&step.t==="deckCount"){const e=entry(step.id);const v=D.dn==="?"?parseInt($("#dnIn")?.value):+D.dn;if(e&&!isNaN(v)){e.dn=v;persist();}nextStep();return true;}
@@ -530,6 +535,10 @@ const unitPw=n=>{const c=BY[n];return c&&c.t==="单位"&&c.pw!=="-"?`<small clas
         h+=`<h2>「${esc(e?e.c:"")}」落地战力？</h2><p class="note">这张牌${F[e.c]==="需手动"?"的数值取决于手牌、牌组等，":"效果还没建模，"}引擎算不准，按游戏里看到的填。推算是 <b>${n}</b>，直接回车就用推算值。<br>填<b>刚放下时</b>的数值：回合结束时的成长（壁垒、活力、灌注等）推算会自己加，别算进去。</p>
         <div class="btns" style="margin-top:8px;flex-wrap:wrap">${vals.map(v=>`<button class="${v===n?"primary":"ghost"}" data-pwset="${v}">${v}</button>`).join("")}</div>
         <div class="btns" style="margin-top:8px"><input id="pwIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1"><button class="ghost" data-pwset="?">确定</button><button class="ghost" data-do="flowSkip">跳过</button></div>`;}
+      else if(step.t==="ask"){const A=ASK[step.card][step.kind];
+        h+=`<h2>「${esc(step.card)}」${esc(A.q)}</h2><p class="note">引擎推算不了（取决于牌组），按游戏里看到的填，记成改战力。</p>
+        <div class="btns" style="margin-top:8px;flex-wrap:wrap">${[1,2,3,4,5,6,7,8,9,10].map(v=>`<button class="ghost" data-askv="${esc(A.k[0][0])}${v}">${v}</button>`).join("")}</div>
+        <div class="btns" style="margin-top:8px"><input id="askIn" type="number" min="0" inputmode="numeric" placeholder="其他" style="flex:1" data-enter='[data-askv="?${esc(A.k[0][0])}"]'>${A.k.map(([p,l])=>`<button class="${p===A.k[0][0]?"primary":"ghost"}" data-askv="?${esc(p)}">记为${esc(l)}</button>`).join("")}<button class="ghost" data-do="flowSkip">跳过</button></div>`;}
       else if(step.t==="frenzy"){const e=entry(step.id);
         h+=`<h2>「${esc(e?e.c:"")}」亢奋 ${step.n}：成立吗？</h2><p class="note">打出后手牌不多于 ${step.n} 张即成立（游戏里效果会高亮）。</p>
         <div class="btns" style="margin-top:8px"><button class="primary" data-fz="1" style="flex:1">成立</button><button class="ghost" data-fz="0" style="flex:1">不成立</button><button class="ghost" data-do="flowSkip">不清楚</button></div>`;}
