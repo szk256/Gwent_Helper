@@ -224,7 +224,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                runs=None, extra=None, sync_states=None, states=None, deck_filter=True, t0=None, review=None,
                op_leader=None, chain=None, pwfix=None):
     """chain（[(时间, 触发它的记录牌名, 来源牌名)]，chain_needs.js 列出的引擎里没有输入的连带选择）：在那条记录后面补连带效果记录。
-    pwfix（[(时间, 牌名, 落地战力 − 推算)]）：差值正好是场上没用过的“下一个打出的单位 +N”指令时，在这张牌前面补记这条指令。
+    pwfix（[(时间, 牌名, 落地战力 − 推算)]）：差值正好是场上没用过的“下一个打出的单位 +N”指令时，在这张牌前面补记这条指令；
+    落地战力比推算小的不写落地战力（读早了）。
     has_show=False（iPad 录屏没有右侧展示）时，对方可收集单位的进场也按打出记。
     my_deck（{牌名: 张数}）：我方只认卡组里的牌和衍生牌，其余当误识别丢掉。
     sync_states（[(时间, 扫描结果)]）：给了就在每个核对点前，把画面上读到、和上次不同的单位战力写成改战力记录
@@ -558,7 +559,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
     def push(x, t):
         nonlocal n
         for ft, fc, diff in pwfix or []:
-            if abs(ft - t) < 0.05 and fc == x.get('c') and x['a'] in ('play', 'summon', 'spawn'):
+            if abs(ft - t) < 0.05 and fc == x.get('c') and x['a'] in ('play', 'summon', 'spawn') and diff > 0:
                 next_order(x, t, diff)
         if over_deck(x):
             if review is not None and cards_by_name.get(x['c'], {}).get('type') != '特殊':
@@ -637,8 +638,9 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             ts = x['ts']
             c1 = next((tt for tt, _sc in scores if tt >= ts - 0.5), None)
             if c1 is None or c1 > ts + 3:
-                continue
-            # 同一步的来源不算下一条（水路突袭离手确认得晚，时间戳在它带出的科德温骑士之后）
+                c1 = ts + 0.5   # 3 秒内没读到总分变化（总分读不出 / 帧稀）：从落地后 0.5 秒读起
+            # 同一步的来源不算下一条（水路突袭离手确认得晚，时间戳在它带出的科德温骑士之后）；它带出的记录算
+            # （门诺·库霍恩带出的战前准备在引擎里是单独一步，落地战力不含它的 +6）
             nr = next((tt for tt, y in recs if tt > ts + 0.05 and not (y.get('c') == x.get('via') and y['who'] == x['who'])), None)
             # 这一步带连带效果（落难的少女第二章生成的疯狂的冲锋）：要等创造、选目标，2026-10-02 温德哈姆落地 6 秒后才 +5
             span = 10.0 if any(y.get('chain') and y.get('ts') == ts for y in log) else 2.5
@@ -1024,8 +1026,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
         etext, etags = e.get('text') or '', set(re.split(r'[,，、\s]+', e.get('tags') or '')) - {''}
         for seg in text_of(src).split('/'):
             body = re.sub(r'(每(?:打出|有|控制)|若)[^，。]*[，。]', '', seg)   # 去掉触发条件
-            # “从手牌打出”（马格尼师）打出的是手牌，对局簿记成单独打出，不算带出
-            vm = re.search(r'生成|召唤|创造|从(?!手牌)[^，。]*?打出|检视己方牌组[^。]*?打出', body)
+            # “从手牌打出 1 张谋略牌，随后抽 1 张”（马格尼师）也记成带出：对局簿按带出的不算从手牌打出、部署抽 1，手牌数才对
+            vm = re.search(r'生成|召唤|创造|从[^，。]*?打出|检视己方牌组[^。]*?打出', body)
             if not vm:
                 continue
             obj = body[vm.start():]
@@ -1635,6 +1637,11 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                 it['after'] = max((i + 1 for i, x in enumerate(log) if x.get('ts', 0) <= it['ts']), default=0)
         review.sort(key=lambda it: it['ts'])
     settle_pw()
+    # 引擎说落地战力比推算小（画面上的增益显示得晚，读早了；2026-10-01 瑞达尼亚骑士读 2、推算 6）：不写落地战力，让引擎自己算
+    for x in log:
+        if x.get('pw') is not None and 'ts' in x and any(abs(ft - x['ts']) < 0.05 and fc == x.get('c') and diff < 0
+                                                         for ft, fc, diff in pwfix or []):
+            x['hud'] = (x.get('hud', '') + f' 落地战力读到 {x.pop("pw")}，比推算小：按推算').strip()
     # 比分先变、带出的单位要连续看到两次才确认进场：核对点后面 3 秒内紧跟着的带出单位（via，有排；特殊牌的效果可能更晚）其实在核对点之前就落地了，
     # 挪到核对点前面（2026-10-02 落难的少女带出的科德温骑士，核对点 13:7 排在它前面，推算差 5）
     # 直接打出的单位也一样：核对点比上一个核对点在它那一方正好多出它的落地战力（2026-10-02 瑞达尼亚骑士 4，核对点 43:23 排在它前面）
@@ -1657,6 +1664,38 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                (z['who'] == y['who'] and z['a'] == 'play' and not z.get('row')) for z in log[k0 + 1:i]):
             return False   # 这段里已经有别的效果，分不清
         return int(log[i]['v'].split(':')[k]) - int(log[k0]['v'].split(':')[k]) > landed
+
+    # 剧情章节带出的（盖迪尼斯的阴影下第一章生成并打出乌鸦眼块茎 → 3 只乌鸦）：引擎在推进剧情的那张牌（弗蕾雅的祝福，炼金牌）
+    # 打出时就自动结算了；HUD 记得晚、中间隔着别的记录，引擎对不上就会再放一遍（2026-10-01 对方近战排因此满 9 张）。
+    # 整组（它和它带出的）挪到推进剧情的那张牌和它自己带出的记录后面
+    def chapter_group_move():
+        moved = set()
+        k = 0
+        while k < len(log):
+            y = log[k]
+            rf = refers(y['via'], y.get('c') or '', y['who']) if y.get('via') and id(y) not in moved else None
+            adv = re.search(r'每打出\s*1\s*(?:张|个)“([^”]+)”', text_of(y['via'])) if rf and rf[3] == 'chapter' else None
+            if not adv:
+                k += 1
+                continue
+            trig = next((j for j in range(k - 1, -1, -1) if log[j]['who'] == y['who'] and log[j]['a'] == 'play'
+                         and adv.group(1) in (cards_by_name.get(log[j].get('c'), {}).get('tags') or '')
+                         and 0 <= y.get('ts', 0) - log[j].get('ts', -99) <= 15), None)
+            moved.add(id(y))
+            if trig is None:
+                k += 1
+                continue
+            grp = [y] + [z for z in log[k + 1:] if z.get('via') == y.get('c') and z['who'] == y['who']
+                         and 0 <= z.get('ts', 0) - y.get('ts', 0) <= 10]
+            for z in grp:
+                log.remove(z)
+                moved.add(id(z))
+            at = trig + 1
+            while at < len(log) and log[at].get('via') == log[trig].get('c') and log[at]['who'] == log[trig]['who']:
+                at += 1
+            log[at:at] = grp
+            k = 0 if at <= k else k
+    chapter_group_move()
 
     # 带出的记录排在它的来源前面（衔尾蛇面具：乌鸦先进场，战术牌离场确认得晚）：挪到来源后面，引擎才能对应到它自动生成的那个
     i = 0
@@ -2016,7 +2055,7 @@ def main():
         chain = [(ids[nd['id']][0], ids[nd['id']][1], nd['src']) for nd in needs
                  if nd.get('src') and nd['id'] in ids and ids[nd['id']][0] is not None and nd['src'] != ids[nd['id']][1]]
         pwfix = [(ids[nd['id']][0], ids[nd['id']][1], nd['pw'] - nd['calc']) for nd in needs
-                 if 'pw' in nd and nd['id'] in ids and ids[nd['id']][0] is not None and nd['pw'] > nd['calc']]
+                 if 'pw' in nd and nd['id'] in ids and ids[nd['id']][0] is not None and nd['pw'] != nd['calc']]
         if chain or pwfix:
             game, ids, code = build(sorted(set(chain)), pwfix)
             print(f'连带选择：引擎要 {len(needs)} 处，按卡面补了 {sum(1 for x in game["log"] if x.get("chain"))} 处')
