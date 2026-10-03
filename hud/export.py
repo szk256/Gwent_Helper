@@ -25,7 +25,7 @@ import timeline  # noqa: E402
 from matcher import Matcher  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TGT_WORDS = re.compile(r'伤害|增益|锁定|摧毁|重置')
+TGT_WORDS = re.compile(r'伤害|增益|锁定|摧毁|重置|设为')
 
 
 def has_shield_kw(card):
@@ -115,7 +115,7 @@ def target_text(card):
     text = card.get('text') or ''
     segs = [s.strip() for s in text.split('/')]
     seg = segs[0] if card.get('type') == '特殊' else next((s for s in segs if s.startswith('部署')), '')
-    if not re.search(r'(对|使|摧毁|锁定|重置|放逐)\s*\d+\s*(个|名)', seg) or '所有' in seg or '每' in seg:
+    if not re.search(r'(对|使|将|摧毁|锁定|重置|放逐)\s*\d+\s*(个|名)', seg) or '所有' in seg or '每' in seg:
         return ''
     return seg
 ROW = {'对方远程': 'r', '对方近战': 'm', '我方近战': 'm', '我方远程': 'r'}
@@ -390,61 +390,79 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                 m2 = re.search(r'会师[：:]\s*改为获得\s*(\d+)\s*点增益', ut)
                 return int(m2.group(1)) if m2 and side_units_names.count(uname) >= 2 else int(m_.group(2))
             want = int(m.group(1)) if (m := re.search(r'(\d+)\s*个', text)) else 1
-            cands = []
+            setv = int(m.group(1)) if (m := re.search(r'战力设为\s*(\d+)', text)) else None   # 附子草：战力设为 1
             # 前后窗口：打出后第一次总分变化到下一次总分变化之间（连着结算的几张牌各看各的一段，2026-10-01 三张炼金牌 4 秒内结算）
             chg = [tt for tt, _sc in scores if tt > t + 0.3]
             w0, w1 = (t - 3.0, t - 0.3), (t_after, t_after + 3.0)
-            # 我方特殊牌“离手”确认得晚（效果早出现了），只给对方（展示框时间准）用
+            # 对方展示框时间准：展示之后第一次总分变化前后；我方特殊牌“离手”确认得晚（效果早出现了），看离手前的变化
             if chg and chg[0] <= t_after + 0.5 and x['who'] == 'op':
                 prev_chg = max((tt for tt, _sc in scores if tt <= t + 0.3), default=t - 3.0)
                 w0 = (max(prev_chg, t - 3.0), chg[0] - 0.05)
                 w1 = (chg[0], (chg[1] - 0.05) if len(chg) > 1 and chg[1] - chg[0] < 3.0 else chg[0] + 3.0)
+            alt = None
+            if x['who'] == 'me' and x['a'] == 'play' and \
+                    (c0 := max((tt for tt, _sc in scores if t - 3.0 <= tt <= t + 0.3), default=None)) is not None:
+                # 我方特殊牌离手有时确认得比效果晚（2026-10-02 疯狂的冲锋 13:16.1 生效、13:16.8 才确认，原来的“之后”窗口
+                # 落到了对方下一张通敌的动画上），有时早（2026-10-01 9:49 确认后 0.7 秒才生效）：离手前 3 秒内最近一次总分变化也试一下
+                prev_chg = max((tt for tt, _sc in scores if tt < c0 - 0.05), default=c0 - 3.0)
+                nxt = min((tt for tt, _sc in scores if tt > c0 + 0.05), default=None)
+                alt = ((max(prev_chg, c0 - 3.0), c0 - 0.05), (c0, (nxt - 0.05) if nxt is not None and nxt - c0 < 3.0 else c0 + 3.0))
 
             def find(names, nm, k):  # 第 k 个叫 nm 的在 names 里的位置
                 idx = [j for j, v in enumerate(names) if v == nm]
                 return idx[k] if k < len(idx) else None
-            for rk, us in snap.items():
-                if not us:
-                    continue
-                n0, p0 = row_med(w0[0], w0[1], rk)
-                n1, p1 = row_med(w1[0], w1[1], rk)
-                if n0 is None or n1 is None:
-                    continue
-                enemy = rk.startswith('对方') == (x['who'] == 'me')
-                seen = Counter()
-                for u in us:  # 按牌名逐张对齐（同名按第几张），别的牌没认出来也不影响
-                    k = seen[u[1]]
-                    seen[u[1]] += 1
-                    if re.search(r'(^|/)\s*免疫', text_of(u[1])):
-                        continue   # 免疫的不能被指定（布朗温）
-                    j0 = find(n0, u[1], k)
-                    if j0 is None:
+            def collect(w0, w1):
+                cands = []
+                for rk, us in snap.items():
+                    if not us:
                         continue
-                    j1 = find(n1, u[1], k)
-                    if j1 is None:
-                        if (enemy if '友军' not in text else not enemy) and ('摧毁' in text or '伤害' in text) and \
-                                n0.count(u[1]) > n1.count(u[1]):
-                            cands.append((0, -99, u[0]))  # 没了：被摧毁
+                    n0, p0 = row_med(w0[0], w0[1], rk)
+                    n1, p1 = row_med(w1[0], w1[1], rk)
+                    if n0 is None or n1 is None:
                         continue
-                    a_, b_ = p0[j0] if j0 < len(p0) else None, p1[j1] if j1 < len(p1) else None
-                    if a_ is None or b_ is None or a_ == b_:
-                        continue
-                    d = b_ - a_
-                    if not enemy:   # 扣掉自己卡面的被动增益（同一方打出炼金牌时鸦母布道者各 +2）
-                        d -= passive(u[1], [w[1] for w in sum((v for k_, v in snap.items() if k_[:2] == rk[:2]), [])])
-                        if d == 0:
+                    enemy = rk.startswith('对方') == (x['who'] == 'me')
+                    seen = Counter()
+                    for u in us:  # 按牌名逐张对齐（同名按第几张），别的牌没认出来也不影响
+                        k = seen[u[1]]
+                        seen[u[1]] += 1
+                        if re.search(r'(^|/)\s*免疫', text_of(u[1])):
+                            continue   # 免疫的不能被指定（布朗温）
+                        j0 = find(n0, u[1], k)
+                        if j0 is None:
                             continue
-                    side_ok = (not enemy) if '友军' in text else enemy if '敌军' in text else None   # 卡面写明哪一方（暴怒的熊：友军）
-                    if net is not None and (enemy or d <= 0):
-                        continue   # 先伤害再增益（致幻菌菇）净效果是加分，只会用在自己一方
-                    if ('伤害' in text and d < 0 and (enemy if side_ok is None else side_ok)) or \
-                            ('增益' in text and d > 0 and ((not enemy) if side_ok is None else side_ok)) or \
-                            ('重置' in text and d != 0) or (re.search(r'(?<!移除其)锁定', text) and enemy):
-                        # 正好等于主数值的最好；超过的其次（还有别的加成），不到的按差多少
-                        fit = min(((0 if abs(d) == kk else 1 if abs(d) > kk else 1 + kk - abs(d)) for kk in nums), default=0)
-                        if net is not None and not enemy:
-                            fit = 0 if d == net else fit + 1
-                        cands.append((fit + (10 if u[0] in claimed else 0), -abs(d), u[0]))
+                        j1 = find(n1, u[1], k)
+                        if j1 is None:
+                            if (enemy if '友军' not in text else not enemy) and ('摧毁' in text or '伤害' in text) and \
+                                    n0.count(u[1]) > n1.count(u[1]):
+                                cands.append((0, -99, u[0]))  # 没了：被摧毁
+                            continue
+                        a_, b_ = p0[j0] if j0 < len(p0) else None, p1[j1] if j1 < len(p1) else None
+                        if a_ is None or b_ is None or a_ == b_:
+                            continue
+                        d = b_ - a_
+                        if not enemy:   # 扣掉自己卡面的被动增益（同一方打出炼金牌时鸦母布道者各 +2）
+                            d -= passive(u[1], [w[1] for w in sum((v for k_, v in snap.items() if k_[:2] == rk[:2]), [])])
+                            if d == 0:
+                                continue
+                        side_ok = (not enemy) if '友军' in text else enemy if '敌军' in text else None   # 卡面写明哪一方（暴怒的熊：友军）
+                        if net is not None and (enemy or d <= 0):
+                            continue   # 先伤害再增益（致幻菌菇）净效果是加分，只会用在自己一方
+                        if ('伤害' in text and d < 0 and (enemy if side_ok is None else side_ok)) or \
+                                ('增益' in text and d > 0 and ((not enemy) if side_ok is None else side_ok)) or \
+                                ('重置' in text and d != 0) or (re.search(r'(?<!移除其)锁定', text) and enemy) or \
+                                (setv is not None and b_ == setv and (enemy if side_ok is None else side_ok)):
+                            # 正好等于主数值的最好；超过的其次（还有别的加成），不到的按差多少
+                            fit = 0 if setv is not None else \
+                                min(((0 if abs(d) == kk else 1 if abs(d) > kk else 1 + kk - abs(d)) for kk in nums), default=0)
+                            if net is not None and not enemy:
+                                fit = 0 if d == net else fit + 1
+                            cands.append((fit + (10 if u[0] in claimed else 0), -abs(d), u[0]))
+                return cands
+            cands = collect(w0, w1)
+            if alt and not any(c_[0] == 0 for c_ in cands):
+                c2 = collect(*alt)
+                if any(c_[0] == 0 for c_ in c2) or not cands:
+                    cands = c2
             if cands:
                 x['tgts'] = [{'uid': c[2]} for c in sorted(cands)[:want]]
                 claimed.update(c['uid'] for c in x['tgts'])
@@ -656,7 +674,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                     continue
                 if km and km.group(1) not in (c.get('tags') or ''):
                     continue
-                rf = refers(nm, x['c'])
+                rf = refers(nm, x['c'], 'op')
                 if not rf or '墓场' not in rf[1] or (need_play and rf[0] != 'play'):
                     continue
                 cands.append((nm, rf))
@@ -893,7 +911,17 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             p_ = text.find(name, p_ + 1)
         return False
 
-    def refers(src, name):
+    def side_fac(who):
+        """这一方的阵营：我方按卡组，对方按记录里出现最多的非中立牌。"""
+        if who == 'me':
+            return my_fac
+        facs = Counter(cards_by_name.get(y.get('c'), {}).get('fac') for y in log if y['who'] == 'op' and y.get('c'))
+        facs.pop('NE', None)
+        facs.pop(None, None)
+        facs.pop(my_fac, None)   # 对方用帝国外交 / 买通打出的我方阵营的牌不算
+        return facs.most_common(1)[0][0] if facs else None
+
+    def refers(src, name, who=None):
         """src 的卡面有没有“生成 / 召唤 / 从某处打出”name 这张牌的效果（点名、类别“炼金”、会师单位、墓场里的铜色单位……）。
         触发条件（“每打出 1 张“炼金”牌”“若手牌中有……”）不算。返回 (动作, 那一段, 几张, 时机) 或 None；
         时机：'order' 指令、'chapter' 剧情的章节（场上的牌在之后触发），否则 None（打出时）。"""
@@ -901,7 +929,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
         etext, etags = e.get('text') or '', set(re.split(r'[,，、\s]+', e.get('tags') or '')) - {''}
         for seg in text_of(src).split('/'):
             body = re.sub(r'(每(?:打出|有|控制)|若)[^，。]*[，。]', '', seg)   # 去掉触发条件
-            vm = re.search(r'生成|召唤|从[^，。]*?打出', body)
+            # “从手牌打出”（马格尼师）打出的是手牌，对局簿记成单独打出，不算带出
+            vm = re.search(r'生成|召唤|创造|从(?!手牌)[^，。]*?打出|检视己方牌组[^。]*?打出', body)
             if not vm:
                 continue
             obj = body[vm.start():]
@@ -910,13 +939,19 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                    any(kw in etext for kw in re.findall(r'(会师|坚韧|狂热|列阵|卫士)单位', obj)))
             if not hit and e.get('type') == '单位' and re.search(r'墓场(?:中)?(?:召唤|打出)\s*1\s*(?:个|张)[^，。]*单位', obj):
                 hit = ('非中立' not in obj or e.get('fac') != 'NE') and ('铜色' not in obj or e.get('color') == '铜')
+            if not hit and who and '对方阵营' in obj:   # 帝国外交：创造并打出对方阵营的 1 张铜色牌
+                hit = e.get('fac') == side_fac('op' if who == 'me' else 'me') and ('铜色' not in obj or e.get('color') == '铜')
+            if not hit and who == 'op' and '对方起始牌组' in obj:   # 买通：创造并打出对方起始牌组的 1 张单位牌
+                hit = name in (my_deck or {}) and ('单位' not in obj or e.get('type') == '单位')
+            if not hit and obj.startswith('检视己方牌组') and re.search(r'打出其中', obj):   # 军事会议：检视牌组顶端 3 张并打出其中 1 张
+                hit = e.get('set') != 'token' and ('单位' not in obj or e.get('type') == '单位')
             if not hit and re.search(r'所选牌', obj):   # 幻觉：展示几张（写在前一句），生成并打出所选的
                 pre = body[:vm.start()]
                 hit = any(f'“{tg}”' in pre for tg in etags)
             if hit and e.get('set') == 'token' and not named(name, obj):
                 hit = False   # 衍生牌只能是卡面点名生成的（幻觉展示的是可收集牌，不会是乌鸦）
             if hit:
-                kind = 'summon' if '召唤' in vm.group(0) else 'spawn' if '生成' in vm.group(0) else 'play'   # 看第一个动词（佛卡夏：打出…随后生成雨）
+                kind = 'summon' if '召唤' in vm.group(0) else 'spawn' if '生成' in vm.group(0) else 'play'   # 看第一个动词（佛卡夏：打出…随后生成雨）；创造并打出 = 带 via 的打出
                 nums_ = [int(v) for v in re.findall(r'(\d+)\s*(?:张|个|只)', obj)]
                 n = 99 if '所有' in obj else max(nums_) if nums_ else 1   # “若控制德鲁伊，改为生成 3 只”：取上限
                 when = 'order' if re.match(r'\s*指令', seg) else 'chapter' if re.match(r'\s*第.章', seg) else None
@@ -926,22 +961,23 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
     via_uses = {}
 
     def text_source(t, who, name, ei, future=True):
-        """进场 / 展示的 name 是谁带出来的：同一回合里 15 秒内（要选牌的 20 秒内；future 时也看之后 4 秒内才确认的展示、
+        """进场 / 展示的 name 是谁带出来的：同一回合里 15 秒内（要选牌的 20 秒内，创造的同一回合 45 秒内；future 时也看之后 4 秒内才确认的展示、
         战术牌离场）同一方打出的牌，或场上的牌的指令 / 剧情章节，卡面写着生成 / 召唤 / 打出它；每个来源按卡面张数封顶，
         剧情每章只触发一次、而且要刚打出过推进剧情的那类牌。返回 (来源, 动作, 那一段, 来源单位 or None)。"""
         ts0 = turn_start(who, t)
         lo = -1e9 if ts0 is None else ts0 - 1.0
         same = lambda e: (e[2] == '我方') == (who == 'me')
-        cands = [(t - t2, t2, n2) for t2, w2, n2, _r2, k2 in recent if w2 == who and k2 == '打出' and 0 <= t - t2 <= 20 and t2 >= lo]
+        cands = [(t - t2, t2, n2) for t2, w2, n2, _r2, k2 in recent if w2 == who and k2 == '打出' and 0 <= t - t2 <= 45 and t2 >= lo]
         if future:
             cands += [(e[0] - t, e[0], e[3]) for e in events[ei + 1:ei + 30] if 0 <= e[0] - t <= 4 and same(e) and
                       (e[1] in ('打出', '展示') or (e[1] == '离场' and cards_by_name.get(e[3], {}).get('type') == '战术'))
-                      and not refers(name, e[3])]   # 反过来是它带出那张（莫斯萨克 → 幻觉）就不是来源
+                      and not refers(name, e[3], who)]   # 反过来是它带出那张（莫斯萨克 → 幻觉）就不是来源
         for dt, t2, n2 in sorted(cands):
-            rf = refers(n2, name) if n2 != name else None
+            rf = refers(n2, name, who) if n2 != name else None
             tactic = cards_by_name.get(n2, {}).get('type') == '战术'   # 战术牌的指令就是打出它
             if not rf or (rf[3] and not (tactic and rf[3] == 'order')) or \
-                    (dt > 15 and '选择' not in rf[1] and '所选' not in rf[1]):
+                    (dt > 15 and not re.search(r'选择|所选|创造', rf[1])) or (dt > 20 and '创造' not in rf[1]):
+                # 要选牌的给 20 秒；创造（三选一，对方可能想很久，2026-10-02 帝国外交 18 秒）同一回合里都算
                 continue
             key = (n2, round(t2, 1))
             if via_uses.get(key, 0) >= rf[2]:
@@ -949,7 +985,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             via_uses[key] = via_uses.get(key, 0) + 1
             return n2, rf[0], rf[1], None
         for _rk, u in side_units(who):   # 场上的牌：指令（伤感松露酒馆）、剧情章节（盖迪尼斯的阴影下）
-            if u[1] == name or not (rf := refers(u[1], name)) or not rf[3]:
+            if u[1] == name or not (rf := refers(u[1], name, who)) or not rf[3]:
                 continue
             if rf[3] == 'chapter':
                 key = (u[0], rf[1])
@@ -967,8 +1003,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
 
     def explained(who, nm):
         """nm 有没有卡面来源（场上的牌的指令 / 剧情章节，或这一方最近打出的牌写着带出它）：不算从手牌打出。"""
-        return any(refers(u[1], nm) for _rk, u in side_units(who) if u[1] != nm) or \
-            any(refers(n2, nm) for t2, w2, n2, _r, k2 in recent[-6:] if w2 == who and k2 == '打出' and n2 != nm)
+        return any(refers(u[1], nm, who) for _rk, u in side_units(who) if u[1] != nm) or \
+            any(refers(n2, nm, who) for t2, w2, n2, _r, k2 in recent[-6:] if w2 == who and k2 == '打出' and n2 != nm)
 
     def grave_trigger(t, who, name, ei):
         """name 自己卡面上的墓场能力：“己方每打出 1 张“炼金”牌，便从墓场召唤自身”，前后几秒同一方打出过这类牌。"""
@@ -1020,6 +1056,10 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
         if (my_deck or {}).get(name, 0) == 1 and before > 0 and \
                 in_hand(name, t + 3, min([t + 120] + [te - 1 for te in round_ends if te > t])) >= 0.5 * before:
             return True
+        after = [tt for tt, ent in (states or []) if t + 1 <= tt <= t + 8 and ent.get('sharp', 0) >= ent.get('smin', 40)
+                 and ((ent.get('cnt') or {}).get('hand') or [None, None])[1] is not None]
+        if len(after) < 2:
+            return False   # 之后没有正常画面（打完最后一张直接进结算）：手牌数没法核对，不能当闪烁
         n_drop, seen = hand_drops(t - 8, t + 8)
         landed = {e[3] for e in events if e[2] == '我方' and e[1] in ('打出', '进场') and abs(e[0] - t) <= 8
                   and cards_by_name.get(e[3], {}).get('type') in ('单位', '神器') and in_hand(e[3], t - 60, t - 8) >= 0.05}
@@ -1082,9 +1122,29 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                     if end is not None and events[end][1] == '离场':
                         drop.add(end)
 
+    # 一回合只打一张：我方两张特殊牌 3 秒内一起“离手”，留下有证据的那张（水路突袭之后有单位从牌组落地），另一张是误认
+    two = {}
+    sp = [(i, e[0], e[3]) for i, e in enumerate(events) if i not in drop and e[1] == '离手' and e[2] == '我方' and
+          cards_by_name.get(e[3], {}).get('type') == '特殊' and (not my_deck or e[3] in my_deck)]
+    for (i, ta, na), (j, tb, nb) in zip(sp, sp[1:]):
+        if tb - ta > 3 or na == nb or i in two or flicker_special(ta, na, events[i][4]) or flicker_special(tb, nb, events[j][4]):
+            continue
+
+        def pulls(k, tk, nk):
+            tx = text_of(nk)
+            return bool(DECK_PLAY.search(tx) or '召唤' in tx) and any(
+                e[2] == '我方' and e[1] in ('打出', '进场') and 0 <= e[0] - tk <= 6 and
+                cards_by_name.get(e[3], {}).get('type') == '单位' for e in events[k + 1:k + 20])
+        pa, pb = pulls(i, ta, na), pulls(j, tb, nb)
+        if pa != pb:
+            two[j if pa else i] = na if pa else nb
+
     cur_row = [None]
     for ei, (t, kind, side, name, row) in enumerate(events):
         if ei in drop:
+            continue
+        if ei in two:
+            push({'who': 'me', 'a': 'note', 'c': f'画面：{name} 和 {two[ei]} 同时离手，一回合只打一张：算 {two[ei]}（之后有单位从牌组落地）'}, t)
             continue
         cur_row[0] = row
         c = cards_by_name.get(name, {})
@@ -1160,7 +1220,8 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             continue   # 重复识别：这一排已经记的同名牌不少于画面上同时看到的（识别抖动、展示框里放大的被选目标）
         if kind == '离场' and row in ROW and (have_ := sum(1 for u in units.get(row, []) if u[1] == name)) and \
                 sum(1 for tt, ent in (states or []) if t + 2 <= tt <= min([t + 40] + [te for te in round_ends if te > t])
-                    and ent.get('sharp', 0) >= ent.get('smin', 40) and (ent.get('rows') or {}).get(row, []).count(name) >= have_) >=                 (1 if weak_copy(row, name) else 3) and \
+                    and ent.get('sharp', 0) >= ent.get('smin', 40) and (ent.get('rows') or {}).get(row, []).count(name) >= have_) >= \
+                            (1 if weak_copy(row, name) else 3) and \
                 not any(e[1] in ('打出', '进场') and e[3] == name and e[4] == row and 0 < e[0] - t <= 40 for e in events[ei + 1:ei + 80]):
             continue   # 之后 40 秒内这一排又反复认出同样张数、又没有同名牌新进场：识别闪烁，不是离场（并排的第二张信鸦）
         if kind == '打出' and who == 'me' and (src := summoner(t, who, name, row)) and src[0] != name:
@@ -1179,7 +1240,7 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
             note_mech(x, t, who)
             pending_step = True
             first_side = first_side or who
-        elif kind == '展示' and op_leader and refers(op_leader, name) and (ts0 := turn_start('op', t)) is not None and \
+        elif kind == '展示' and op_leader and refers(op_leader, name, 'op') and (ts0 := turn_start('op', t)) is not None and \
                 op_lead_drop(ts0, t + 2) > lead_used.get(ts0, 0):
             # 对方领袖技能“生成并打出”这张（战斗狂热 → 致幻菌菇），这回合对方领袖次数在减少：记成领袖，目标按战力变化推
             lead_used[ts0] = lead_used.get(ts0, 0) + 1
@@ -1284,9 +1345,22 @@ def build_game(events, scores, date, cards_by_name, my_fac='NR', leader=None, ha
                   'hud': '对方这回合唯一的进场、没有卡面来源：按从手牌打出（没认出展示）'}, t)
             pending_step = True
             first_side = first_side or who
+        elif kind == '进场' and who == 'op' and op_leader and refers(op_leader, name, 'op') and \
+                (ts0 := turn_start('op', t)) is not None and op_lead_drop(ts0, t + 2) > lead_used.get(ts0, 0):
+            # 对方领袖技能生成并打出的单位（战术决策 → 莫尔凡·符里斯），这回合对方领袖次数在减少
+            lead_used[ts0] = lead_used.get(ts0, 0) + 1
+            push({'who': 'op', 'a': 'leader', 'c': op_leader, 'hud': f'对方领袖 {op_leader} 生成并打出 {name}（领袖次数减少）'}, t - 0.1)
+            rf = refers(op_leader, name, 'op')
+            push({'who': 'op', 'a': rf[0] if rf[0] != 'play' else 'spawn', 'c': name, 'row': ROW.get(row, 'm'), 'side': 'op',
+                  'via': op_leader, 'hud': f'{op_leader} 带出（卡面：{rf[1]}）'}, t)
+            pending_step = True
         elif kind == '进场':
-            push({'who': who, 'a': 'summon', 'c': name, 'row': ROW.get(row, 'm'), 'side': who,
-                  'hud': '进场（召唤/生成，或没看到打出）'}, t)
+            x = {'who': who, 'a': 'summon', 'c': name, 'row': ROW.get(row, 'm'), 'side': who,
+                 'hud': '进场（召唤/生成，或没看到打出）'}
+            if who == 'op' and (ts_ := text_source(t, who, name, ei, future=False)) and ts_[3] is None:
+                # 刚打出的牌卡面写着带出它（军事会议：检视牌组顶端 3 张并打出其中 1 张）
+                x.update(a=ts_[1], via=ts_[0], hud=f'{ts_[0]} 带出（卡面：{ts_[2]}）')
+            push(x, t)
             pending_step = True
         elif kind == '领袖?':
             ltext = text_of(leader) if leader else ''
@@ -1571,8 +1645,8 @@ def leader_from_glow(events, states, eps, cards_by_name=None, boost_max=None):
 
 def identify_op_leader(frame_paths, fac, cards, every=8):
     """对方领袖技能：抽样的帧里对方徽章纹章和该阵营各领袖技能图标比，取各自分数的中位数；
-    最高的 ≥ 0.45、比第二名高 0.12 以上才算认出（返回牌名），否则 None（清单里问一次）。
-    游击战术 0.79 / 0.35；战斗狂热（蘑菇）0.52 / 0.39——游戏里蘑菇柄是暗褐色、不算金色，只比得上伞盖（2026-10-01）。"""
+    最高的 ≥ 0.40、比第二名高 0.12 以上才算认出（返回牌名），否则 None（清单里问一次）。
+    游击战术 0.79 / 0.35；战斗狂热（蘑菇）0.52 / 0.39；战术决策 0.42 / 0.28（2026-10-02）——游戏里蘑菇柄是暗褐色、不算金色，只比得上伞盖（2026-10-01）。"""
     import statistics
     import cv2
     import detect
@@ -1586,7 +1660,7 @@ def identify_op_leader(frame_paths, fac, cards, every=8):
             for k, v in sc.items():
                 acc[k].append(v)
     med = sorted(((statistics.median(v), k) for k, v in acc.items() if len(v) >= 5), reverse=True)
-    if med and med[0][0] >= 0.45 and (len(med) < 2 or med[0][0] - med[1][0] >= 0.12):
+    if med and med[0][0] >= 0.40 and (len(med) < 2 or med[0][0] - med[1][0] >= 0.12):
         return leaders[med[0][1]], med[:3]
     return None, med[:3]
 

@@ -105,6 +105,8 @@ def classify(L, x, y, h, votes):
         return None
     if y >= L['hand_y']:
         return '手牌'
+    if y >= L.get('hand_edge', 9) and votes < 8:
+        return None
     if 'board_h' in L and y < dict(L['row_cy'])['对方近战']:
         # 对方半场：透视和我方不一样（远程 y 0.22 → 牌高 0.15，近战 y 0.38 → 0.14），也不会有手牌，只挡住特别大 / 特别小的
         if h >= L['hand_h']:

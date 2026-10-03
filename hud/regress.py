@@ -27,6 +27,7 @@ GAMES = {
     '20261001-221256': {'video': '2026-10-01 22-13-10.mp4', 'record': True, 'op': True, 'power': True},
     '2026-10-01_22-13-10': {'record': True},   # 同一局的 OBS 录屏抽帧（source.json 里有视频路径）
     '20261001-035648': {'ai': True},
+    'Gwent_The_Witcher_Card_Game_2026_10_02_-_23_44_12_06': {'record': True, 'date': '20261002'},   # 2560×1440 NVIDIA 录屏，对尼弗迦德
 }
 # 指标：越大越好的 / 越小越好的
 HIGHER = {'对上', '逐帧准确率', '逐帧召回', '时间线对上', '战力原始', 'AI出牌', '对方逐帧对'}
@@ -52,7 +53,7 @@ def eval_game(name, cfg):
         t = run([sys.executable, 'timeline.py', d, name[:8]])
         out['AI出牌'] = num(r'对上 (\d+)/\d+', t, int)
         return name, out
-    args = [sys.executable, 'export.py', d, name[:8], '--jobs=6', '--deck=deck.txt', '--sync-power']
+    args = [sys.executable, 'export.py', d, cfg.get('date', name[:8]), '--jobs=6', '--deck=deck.txt', '--sync-power']
     if cfg.get('video'):
         args.append('--video=' + os.path.join('cache', 'rec', cfg['video']))
     t = run(args)

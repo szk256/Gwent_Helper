@@ -98,21 +98,37 @@ def deck_tokens(cards, dk):
         texts = [c.get('text') or '' for c in toks if c['name'] in new]
 
 
-def mine_matcher(m):
-    """我方半场用的子库：hud/deck.txt 里的卡组 + 卡面点名的衍生牌。没有卡组返回 None（用全库）。"""
-    if id(m) not in _MINE:
+def my_faction(cards, dk):
+    from collections import Counter
+    by = {c['name']: c for c in cards}
+    f = Counter(by.get(n, {}).get('fac') for n in dk)
+    f.pop('NE', None)
+    f.pop(None, None)
+    return f.most_common(1)[0][0] if f else None
+
+
+def mine_matcher(m, fac=None):
+    """我方半场用的子库：hud/deck.txt 里的卡组 + 卡面点名的衍生牌；知道对方阵营（fac）时再加对方的“不忠”牌
+    （法师渗透者：对方打在我方半场）。没有卡组返回 None（用全库）。"""
+    key = (id(m), fac)
+    if key not in _MINE:
         import deck
         dk = deck.load(DECK_SPEC, m.cards)
         if not dk:
-            _MINE[id(m)] = None
+            _MINE[key] = None
         else:
             names = set(dk) | deck_tokens(m.cards, dk)
-            _MINE[id(m)] = m.subset(names)
-    return _MINE[id(m)]
+            tac = deck.tactic(DECK_SPEC if DECK_SPEC and DECK_SPEC.startswith('#GWDECK') else None, m.cards)
+            if tac:
+                names.add(tac)   # 先手时第一局开局在我方近战排最左边（战术优势没有它会被认成长得像的法利波）
+            if fac:
+                names |= {c['name'] for c in m.cards if c.get('fac') == fac and '不忠' in (c.get('text') or '')}
+            _MINE[key] = m.subset(names)
+    return _MINE[key]
 
 
 def opp_matcher(m, fac):
-    """对方半场用的子库：对方阵营 + 中立 + 衍生牌，再加我方卡组（被抓过去的、我方打出的潜伏牌也在对方半场）。
+    """对方半场用的子库：对方阵营 + 中立 + 衍生牌，再加我方阵营的牌（被抓过去的、我方打出的潜伏牌、帝国外交 / 买通创造的）。
     候选少一大半，误配少、也快一些。fac 为 None 时返回 None（用全库）。"""
     if not fac:
         return None
@@ -120,7 +136,7 @@ def opp_matcher(m, fac):
     if key not in _OPP:
         import deck
         dk = deck.load(DECK_SPEC, m.cards) or {}
-        names = {c['name'] for c in m.cards if c.get('fac') in (fac, 'NE')}
+        names = {c['name'] for c in m.cards if c.get('fac') in (fac, 'NE', my_faction(m.cards, dk))}   # 我方阵营：帝国外交创造的
         names |= set(dk) | deck_tokens(m.cards, dk)
         _OPP[key] = m.subset(names)
     return _OPP[key]
@@ -170,7 +186,7 @@ def op_faction(m, d, frames, done, jobs=1):
     return fac
 
 
-CLS_VER = 11   # 分排规则（board.classify）、总分、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
+CLS_VER = 12   # 分排规则（board.classify）、总分、战力、护盾读法的版本：变了就从缓存的原始检测重新算，不用重新认牌
 
 
 HAND_MIN_V = 6   # 手牌区检测至少这么多票（假检测 4–5 票；真手牌低于 6 票的不到 5%，靠迟滞照样认得出）
@@ -228,7 +244,7 @@ def emb_fill(d, frames, done):
         return
     cards = list(CARDS.values())
     dk = deck.load(DECK_SPEC, cards) or {}
-    cand = {c['name'] for c in cards if c.get('fac') in (fac, 'NE')} | set(dk) | deck_tokens(cards, dk)
+    cand = {c['name'] for c in cards if c.get('fac') in (fac, 'NE', my_faction(cards, dk))} | set(dk) | deck_tokens(cards, dk)
 
     def usable(e):
         return (e.get('sharp', 0) >= e.get('smin', 40) and e.get('panel', 0) <= PANEL_MAX
@@ -247,10 +263,10 @@ def emb_fill(d, frames, done):
         print(f'  补位：{len(changed)} 帧补上了 SIFT 漏认的对方牌（{time.time() - t0:.0f} 秒）', flush=True)
 
 
-def scan_frame(m, im, opp=None):
+def scan_frame(m, im, opp=None, mine=None):
     import layout
     raw = []
-    board.scan(m, im, detail=True, mine=mine_matcher(m), raw=raw, opp=opp)
+    board.scan(m, im, detail=True, mine=mine or mine_matcher(m), raw=raw, opp=opp)
     ent = {'sharp': sharpness(im), 'show': None,
            'score': reader().scores(im), 'smin': layout.get(im)['sharp_min'], 'prof': layout.name(im),
            'lead': reader().leader(im), 'turn': reader().turn(im), 'cnt': reader().counts(im), 'det': raw,
@@ -267,17 +283,19 @@ def scan_frame(m, im, opp=None):
 
 _W = None
 _WO = None
+_WM = None
 
 
 def _init_worker(fac=None):
-    global _W, _WO
+    global _W, _WO, _WM
     _W = Matcher()
     _WO = opp_matcher(_W, fac)
+    _WM = mine_matcher(_W, fac)
 
 
 def _scan_path(p):
     im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)
-    return os.path.basename(p), scan_frame(_W, im, _WO)
+    return os.path.basename(p), scan_frame(_W, im, _WO, _WM)
 
 
 def save_json(path, obj):
@@ -340,7 +358,7 @@ def scan_dir(m, d, jobs=1):
                     e2['show'] = res[0][2][0]['name']
             done[k] = e2
         else:
-            done[k] = scan_frame(m, im, opp)
+            done[k] = scan_frame(m, im, opp, mine_matcher(m, fac))
         if (i + 1) % 50 == 0:
             print(f'  扫描 {i + 1}/{len(frames)}  {(time.time() - t0) / (i + 1):.2f}s/帧', flush=True)
             save_json(cache, done)
@@ -430,6 +448,7 @@ class Tracker:
         self.extra = {}      # (时间, 牌名, 排) -> {'pos': 排内第几个（从 0 数）, 'pw': 落地战力}
         self.cur = None
         self.shows = []      # [(时间, 名)] 还没对上进场的展示
+        self.show_last = None
         self.events = []     # [(时间, 类型, 方, 名, 排)]
 
     def emit(self, t, kind, row, name):
@@ -443,14 +462,19 @@ class Tracker:
 
     def update(self, t, ent):
         self.cur = ent
-        if ent.get('show') and (not self.shows or self.shows[-1][1] != ent['show'] or t - self.shows[-1][0] > 3):
-            self.shows.append((t, ent['show']))
         sc = ent.get('score') or (None, None)
+        # 右键查看卡牌 / 看牌组的全屏界面（背景模糊、挡住比分）右边也有一张大卡，不是展示框：比分读不出时不认
+        # 同一张展示框停留好几秒（对方在选目标；创造时中间换成三选一界面）：和上一次看到的间隔不到 6 秒算同一次
+        if ent.get('show') and sc[0] is not None and sc[1] is not None:
+            if not self.shows or self.shows[-1][1] != ent['show'] or t - self.show_last > 6:
+                self.shows.append((t, ent['show']))
+            self.show_last = t
         if ent['sharp'] >= ent.get('smin', 300) and sc[0] is not None and sc[1] is not None:
             self.update_leader(t, ent.get('lead') or (None, None))
             self.update_glow(t, ent.get('lglow'))
             # 双方总分从大于 0 回到 0:0（连续两帧）= 新小局开始（场上牌少时“一大半消失”的规则触发不了）
-            if sc[0] == 0 and sc[1] == 0 and self.last_score and sum(self.last_score) >= 5 and self.score_run >= 3                     and not any(e[1] == '小局结束' and t - e[0] < 60 for e in self.events):
+            if sc[0] == 0 and sc[1] == 0 and self.last_score and sum(self.last_score) >= 5 and self.score_run >= 3 \
+                    and not any(e[1] == '小局结束' and t - e[0] < 60 for e in self.events):
                 self.zero_n += 1
                 if self.zero_n >= 2:
                     if not any(e[1] == '小局结束' and t - e[0] < 30 for e in self.events):
