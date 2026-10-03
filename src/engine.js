@@ -17,7 +17,6 @@ const DEFAULT_RULES = {
   bleedIgnoresShield: false,  // 重伤是否无视护盾（未确认）
   roundWinnerGoesFirst: true, // 上一局胜者先手
   reynardSelf: false,         // 雷纳德神赐/指令“所有受到增益的友军”是否包括他自己（已确认：不包括）
-  reynardGraceBoost: false,   // 雷纳德“神赐 12”是否也使受到增益的友军 +1（卡面写“神赐 12、指令”；录像两次：神赐触发了——皇家激励刷新——但受过增益的科德温骑士没变，2026-10-01 对松鼠党 17:4 → 22:4、2026-10-02 对尼弗迦德第一局 27:6。待用户确认；指令照常）
   spawnBanished: false,       // 生成的牌离场时一律放逐（未确认；衍生牌卡面都写了“佚亡”，按状态放逐）
   purifyKeepsDoomed: false,   // 净化会移除佚亡，之后离场进墓场（用户查证）
   resilienceKeepsArmor: false,// 坚韧留场时护甲（含卡面自带的）清零（英/俄/德/波/日/韩释义 + Steam 讨论；中文写“额外护甲”）
@@ -111,6 +110,8 @@ class Game {
     if (d.assimilate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.spawned || (e.unit && e.unit.origin === 'spawn')), run: c => c.boost(c.self, d.assimilate) });
     // 增兵：己方打出“战争”牌时冷却 -1
     if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
+    // 神赐解锁指令：神赐本身没有效果，只算触发（皇家激励刷新、落难的少女第一章）
+    if (d.graceOrder != null && !(d.bless || []).some(b => b.at === d.graceOrder)) d.bless = [...(d.bless || []), { at: d.graceOrder, run: () => {} }];
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
     if (!data) d.unknown = true;
     this.cards[name] = d;
@@ -909,8 +910,11 @@ class Game {
   }
 
   // ---------- 指令 ----------
+  // “神赐 X、指令”（英文 Order (Grace X)）：神赐达到后才给一次指令机会，不是立即结算（用户确认；录像里图标从沙漏变成指令）
+  graceLocked(u) { return u.def.graceOrder != null && !u.blessFired[u.def.graceOrder]; }
   canOrder(u) {
     if (!u.def.order || u.status.lock) return false;
+    if (this.graceLocked(u)) return false;
     if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return false; }
     else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return false;
     // 进场当回合不能用；狂热例外
@@ -920,6 +924,7 @@ class Game {
   orderBlock(u) {
     if (!u.def.order) return 'none';
     if (u.status.lock) return 'lock';
+    if (this.graceLocked(u)) return 'grace';
     if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return 'cd'; }
     else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return 'used';
     return u.zeal || this.s.turn > u.enteredTurn ? null : 'new';

@@ -108,6 +108,10 @@ setTimeout(() => {
     const sc2 = r => w.eval(`(()=>{const s=sim(__g2,${r}).score;return s.me.total+":"+s.op.total})()`);
     ok(sc2(0) === '27:6' && sc2(1) === '99:57', '回放 2026-10-02 对尼弗迦德：27:6、99:57（推算 ' + sc2(0) + '、' + sc2(1) + '）');
     ok(w.eval('sim(__g2,1).warns.some(x=>x.id==="e47"&&/落地战力记 4，推算 2/.test(x.m))'), '落地战力和推算不同（已建模的牌）：提示可能漏记了指令');
+    { // HUD 记录：皇家激励使少女的盾牌神赐生成布朗温之后，又记了一条“布朗温 由少女的盾牌带出”：对应到引擎生成的那个，不重复放
+      const g = JSON.parse(JSON.stringify(w.__g2)); g.id = 10022; const i = g.log.findIndex(x => x.id === 'e70');
+      g.log.splice(i + 1, 0, { id: 'e202', r: 1, who: 'me', a: 'spawn', c: '“无畏者”布朗温', via: '少女的盾牌', row: 'r', pos: 5, pw: 4 }); w.__g4 = g;
+      ok(w.eval('sim(__g4,1).E.allUnits("me").filter(u=>u.name==="“无畏者”布朗温").length') === 1 && w.eval('(()=>{const s=sim(__g4,1).score;return s.me.total+":"+s.op.total})()') === '99:57', '带 via 的手记生成对应到这一回合引擎自动生成的同名单位，不重复放'); }
     // 按录像补上漏记的骑士随从指令（第 41 步后）：瑞达尼亚骑士不用手动改，落地 4、每个己方回合结束 +2
     w.eval(`(()=>{const g=JSON.parse(JSON.stringify(__g2));g.id=10021;g.log=g.log.filter(x=>!(x.a==="adj"&&x.c==="瑞达尼亚骑士"));delete g.log.find(x=>x.id==="e47").pw;
       const i=g.log.findIndex(x=>x.id==="e41");g.log.splice(i+1,0,{id:"e201",r:1,who:"me",a:"order",c:"骑士随从",uid:"e34"});window.__g3=g;})()`);

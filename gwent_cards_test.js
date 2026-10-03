@@ -397,12 +397,14 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   const k = P(g, 'me', '瑞达尼亚骑士', 'r'); ok(k.power === 4, '骑士随从：下一个打出的瑞达尼亚骑士落地 4');
   g.endTurn(); ok(k.power === 6, '瑞达尼亚骑士：壁垒 +1 + 骑士随从灌注 +1');
 }
-{ // 雷纳德神赐 12：录像两次没给受到增益的友军 +1（rules.reynardGraceBoost 默认关）；指令照常
+{ // “神赐 X、指令”= 神赐达到后给一次指令机会，不立即结算（用户确认；录像两次雷纳德到 14 时受过增益的科德温骑士没变）
   const g = game(); const kd = P(g, 'me', '科德温骑士', 'm'); g.boost(kd, 3); const r = P(g, 'me', '雷纳德·奥多', 'r');
-  g.boost(r, 5); ok(r.blessFired[12] && kd.power === 8, '雷纳德：神赐 12 触发，但科德温骑士不变');
-  const g2 = new E.Game({ first: 'me', rules: { reynardGraceBoost: true } }); g2.loadData(RAW); g2.loadBehaviors(B); g2.startRound();
-  const kd2 = P(g2, 'me', '科德温骑士', 'm'); g2.boost(kd2, 3); const r2 = P(g2, 'me', '雷纳德·奥多', 'r'); g2.boost(r2, 5);
-  ok(kd2.power === 9, '雷纳德：reynardGraceBoost 打开时神赐给受到增益的友军 +1');
+  ok(!g.canOrder(r) && g.orderBlock(r) === 'grace', '雷纳德：神赐 12 之前没有指令');
+  g.boost(r, 5); ok(r.blessFired[12] && kd.power === 8 && g.orderBlock(r) === 'new', '雷纳德：到 14 神赐触发（只解锁指令），科德温骑士不变；进场当回合下回合才能用');
+  g.endTurn(); g.endTurn(); ok(g.canOrder(r), '雷纳德：下个己方回合可以用指令'); g.order(r.uid); ok(kd.power === 9 && !g.canOrder(r), '雷纳德：指令给受到增益的友军 +1，只有一次');
+  const g2 = game(); const w = P(g2, 'me', '亚特里的温德哈姆', 'r'); g2.damage(w, 1); ok(!w.status.shield, '温德哈姆：护盾挡掉一次');
+  g2.boost(w, 6); ok(w.blessFired[10] && !w.status.shield, '温德哈姆：神赐 10 不立即给护盾');
+  g2.endTurn(); g2.endTurn(); g2.order(w.uid); ok(w.status.shield, '温德哈姆：神赐后的指令获得护盾');
 }
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

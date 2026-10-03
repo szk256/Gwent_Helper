@@ -26,8 +26,7 @@ const B = {};
 // ================= 北方王国 · 用户卡组 =================
 B['雷纳德·奥多'] = {
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self, run: (c, d) => c.boost(d.unit, 1) }],
-  // ASSUME：神赐 12 只算触发（皇家激励刷新、落难的少女第一章），不给其他单位 +1（rules.reynardGraceBoost，录像两次）；指令照常
-  bless: [{ at: 12, run: c => { if (c.g.rules.reynardGraceBoost) boostAllBoosted(c); } }],
+  graceOrder: 12,   // 神赐 12、指令：到 12 才给一次指令机会（不立即增益）
   order: c => boostAllBoosted(c),
 };
 function boostAllBoosted(c) { c.allies().filter(u => c.g.isBoosted(u) && (c.g.rules.reynardSelf || u !== c.self)).forEach(u => c.boost(u, 1)); }
@@ -75,7 +74,7 @@ function bronwen(c) {
     when: (cc, d) => d.unit === cc.self && d.src !== BRONWEN_INF,
     run: (cc, d) => cc.g.boost(cc.self, d.n, BRONWEN_INF) });
 }
-B['“无畏者”布朗温'] = { status: { immune: true }, bless: [{ at: 5, run: bronwen }], order: bronwen };
+B['“无畏者”布朗温'] = { status: { immune: true }, graceOrder: 5, order: bronwen };
 
 B['不朽者'] = {
   status: { shield: true },
@@ -88,7 +87,7 @@ B['不朽者'] = {
 B['亚特里的温德哈姆'] = {
   status: { shield: true },
   abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.status.shield, run: c => c.boost(c.self, 2) }],
-  bless: [{ at: 10, run: c => c.status(c.self, 'shield', true) }],
+  graceOrder: 10,   // 神赐 10、指令：到 10 才给一次指令机会
   order: c => c.status(c.self, 'shield', true),
 };
 
@@ -1058,7 +1057,8 @@ B['格莱尼丝·爱普·洛纳克'] = {};
 B['劳恩法尔的吉劳米'] = {
   deploy: c => { const k = c.g.rowOf(c.self).filter(u => u !== c.self && has(u, '骑士')).length; if (k) c.boost(c.self, k);
     const t = T(c, '吉劳米：敌军', c.enemies()); if (!t) return; const h = Math.floor((c.self.power + t.power) / 2); c.boost(c.self, h); boostEnemy(c, t, h); },
-  order: c => { if (c.self.power < 14) return; const t = T(c, '吉劳米：转移状态', c.enemies()); if (!t) return; for (const [k, v] of Object.entries(t.status)) if (v && k !== 'immune') { c.self.status[k] = v; t.status[k] = k === 'vitality' || k === 'bleed' || k === 'poison' ? 0 : false; } },
+  graceOrder: 14,   // 指令、神赐 14（Order (Grace 14)）：到 14 才能用
+  order: c => { const t = T(c, '吉劳米：转移状态', c.enemies()); if (!t) return; for (const [k, v] of Object.entries(t.status)) if (v && k !== 'immune') { c.self.status[k] = v; t.status[k] = k === 'vitality' || k === 'bleed' || k === 'poison' ? 0 : false; } },
 };
 B['重弩海尔格'] = {
   order: c => { const t = T(c, '海尔格：2 伤害', c.g.units()); if (t) c.damage(t, 2); },
