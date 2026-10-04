@@ -21,6 +21,18 @@ def from_code(txt, cards):
     return out
 
 
+def tactic(spec=None, cards=()):
+    """卡组代码里的战术牌（tac=编号）的牌名；读不到返回 None。"""
+    if spec is None:
+        p = os.path.join(HERE, 'deck.txt')
+        if not os.path.exists(p):
+            return None
+        with open(p, encoding='utf-8') as f:
+            spec = f.read()
+    m = re.search(r'tac=(\d+)', spec)
+    return next((c['name'] for c in cards if m and c.get('id') == int(m.group(1))), None)
+
+
 def from_backup(path, name=None):
     with open(path, encoding='utf-8') as f:
         db = json.load(f)

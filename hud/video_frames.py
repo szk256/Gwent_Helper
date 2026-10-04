@@ -3,6 +3,7 @@
 python hud/video_frames.py 视频 [开始时刻HHMMSS] [--crop=x,y,w,h] [--fps=3]
 
 - 时刻按视频自带的时间戳（丢帧不会漂移）；开始时刻依次取：参数、OBS 默认文件名（2026-10-01 21-13-45.mp4，本地时间）、
+  NVIDIA 录屏文件名（Gwent The Witcher Card Game 2026.10.02 - 23.44.12.06.mp4，本地时间）、
   带 UTC 时间的文件名（20261001-0112-44.6374215.mp4）、iPad 录屏文件名（ScreenRecording_09-30-2026 20-29-17）、
   修改时间 − 时长。
 - 抽帧和 record.py 一样：画面变了至少隔 1/fps 秒存一张；右侧展示框（对方出牌放大，不到 1 秒）出现时每 0.1 秒存一张。
@@ -26,6 +27,8 @@ def start_of(path, cap):
     """视频开始的时刻（本地，当天秒数）。"""
     base = os.path.basename(path)
     m = re.search(r'(\d{4})-(\d\d)-(\d\d)[ _](\d\d)-(\d\d)-(\d\d)', base)          # OBS 默认（本地时间）
+    if not m:
+        m = re.search(r'(\d{4})\.(\d\d)\.(\d\d) - (\d\d)\.(\d\d)\.(\d\d)', base)   # NVIDIA 录屏：2026.10.02 - 23.44.12.06（本地时间）
     if m:
         return int(m.group(4)) * 3600 + int(m.group(5)) * 60 + int(m.group(6))
     m = re.search(r'(\d{8})-(\d\d)(\d\d)-(\d\d(?:\.\d+)?)', base)                # 20261001-0112-44.63（UTC）

@@ -15,6 +15,16 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ACTS = ('play', 'summon', 'spawn', 'leader', 'order')
+_TEXT = None
+
+
+def from_hand_src(name):
+    """卡面“从手牌打出”的来源（马格尼师）：2026-10-03 起对局簿记成带出，之前的手记是单独打出，对照时两边都不看 via。"""
+    global _TEXT
+    if _TEXT is None:
+        with open(os.path.join(HERE, 'cache', 'cards.json'), encoding='utf-8') as f:
+            _TEXT = {c['name']: c.get('text') or '' for c in json.load(f)}
+    return '从手牌打出' in _TEXT.get(name, '')
 
 
 def load_record(path):
@@ -31,7 +41,7 @@ def tokens(g, r, who):
             continue
         c = x.get('c') or ''
         a = {'summon': 'play', 'spawn': 'play'}.get(x['a'], x['a'])
-        tok = f"{a} {c}" + (f"<{x['via']}" if x.get('via') else '')
+        tok = f"{a} {c}" + (f"<{x['via']}" if x.get('via') and not from_hand_src(x['via']) else '')
         tg = []
         for t in x.get('tgts') or []:
             u = ids.get(str(t.get('uid', '')).split('/')[0])
