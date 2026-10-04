@@ -110,6 +110,8 @@ class Game {
     if (d.assimilate) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.spawned || (e.unit && e.unit.origin === 'spawn')), run: c => c.boost(c.self, d.assimilate) });
     // 增兵：己方打出“战争”牌时冷却 -1
     if (d.reinforce) d.abilities.push({ on: 'cardPlayed', when: (c, e) => e.side === c.side && e.unit !== c.self && (e.def.tags || []).includes('战争'), run: c => c.g.reduceCd(c.self, 1, { name: '增兵' }) });
+    // 神赐解锁指令：神赐本身没有效果，只算触发（皇家激励刷新、落难的少女第一章）
+    if (d.graceOrder != null && !(d.bless || []).some(b => b.at === d.graceOrder)) d.bless = [...(d.bless || []), { at: d.graceOrder, run: () => {} }];
     if (!beh && !(data && data.vanilla)) d.unmodeled = true;
     if (!data) d.unknown = true;
     this.cards[name] = d;
@@ -339,6 +341,7 @@ class Game {
     // 只有 1 个候选时不用问（牌组里拉的牌除外）
     if (pick == null && req.kind !== 'deck' && req.from.length === 1 && !req.optional) pick = req.from[0];
     if (pick == null) {
+      if (req.quiet) return [];   // 可有可无的输入（马格尼师带出的牌没记）：不提示
       this.log('待选', { prompt: req.prompt, from: req.from.map(u => u.uid || u), source: req.source }, true);
       return [];
     }
@@ -908,8 +911,11 @@ class Game {
   }
 
   // ---------- 指令 ----------
+  // “神赐 X、指令”（英文 Order (Grace X)）：神赐达到后才给一次指令机会，不是立即结算（用户确认；录像里图标从沙漏变成指令）
+  graceLocked(u) { return u.def.graceOrder != null && !u.blessFired[u.def.graceOrder]; }
   canOrder(u) {
     if (!u.def.order || u.status.lock) return false;
+    if (this.graceLocked(u)) return false;
     if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return false; }
     else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return false;
     // 进场当回合不能用；狂热例外
@@ -919,6 +925,7 @@ class Game {
   orderBlock(u) {
     if (!u.def.order) return 'none';
     if (u.status.lock) return 'lock';
+    if (this.graceLocked(u)) return 'grace';
     if (u.def.cooldown != null) { if ((u.cd || 0) > 0) return 'cd'; }
     else if (u.orderUsed >= (u.def.charges != null ? u.def.charges : 1) + (u.bonusCharges || 0)) return 'used';
     return u.zeal || this.s.turn > u.enteredTurn ? null : 'new';

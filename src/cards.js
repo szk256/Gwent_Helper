@@ -26,7 +26,7 @@ const B = {};
 // ================= 北方王国 · 用户卡组 =================
 B['雷纳德·奥多'] = {
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self, run: (c, d) => c.boost(d.unit, 1) }],
-  bless: [{ at: 12, run: c => boostAllBoosted(c) }],
+  graceOrder: 12,   // 神赐 12、指令：到 12 才给一次指令机会（不立即增益）
   order: c => boostAllBoosted(c),
 };
 function boostAllBoosted(c) { c.allies().filter(u => c.g.isBoosted(u) && (c.g.rules.reynardSelf || u !== c.self)).forEach(u => c.boost(u, 1)); }
@@ -74,7 +74,7 @@ function bronwen(c) {
     when: (cc, d) => d.unit === cc.self && d.src !== BRONWEN_INF,
     run: (cc, d) => cc.g.boost(cc.self, d.n, BRONWEN_INF) });
 }
-B['“无畏者”布朗温'] = { status: { immune: true }, bless: [{ at: 5, run: bronwen }], order: bronwen };
+B['“无畏者”布朗温'] = { status: { immune: true }, graceOrder: 5, order: bronwen };
 
 B['不朽者'] = {
   status: { shield: true },
@@ -87,7 +87,7 @@ B['不朽者'] = {
 B['亚特里的温德哈姆'] = {
   status: { shield: true },
   abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.self.status.shield, run: c => c.boost(c.self, 2) }],
-  bless: [{ at: 10, run: c => c.status(c.self, 'shield', true) }],
+  graceOrder: 10,   // 神赐 10、指令：到 10 才给一次指令机会
   order: c => c.status(c.self, 'shield', true),
 };
 
@@ -412,7 +412,7 @@ B['拉多维德五世'] = { deploy: radovidV, order: radovidV };
 B['拉多维德：审判'] = { order: c => { const n = c.g.s.sides[c.side].vars.leaderUses || 0; const t = T(c, '拉多维德：审判 伤害', c.enemies()); if (t) c.damage(t, n); } };
 B['拉法达的复仇'] = {
   operateMages: true,
-  order: c => { const n = fromDeck(c, '拉法达：从手牌打出的铜色单位'); if (n) c.g.play(c.side, n, c.self.row, posRight(c)); },
+  order: c => { const n = fromDeck(c, '拉法达：从手牌打出的铜色单位'); if (n) { c.g.play(c.side, n, c.self.row, posRight(c)); c.g.draw(c.side, 1, c.self); } },
   abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && c.adjacent().includes(d.unit) && c.operate(), run: c => { const t = R(c, '拉法达：随机 2 伤害', c.enemies()); if (t) c.damage(t, 2); } }],
 };
 B['拉维南·金柏特'] = { deploy: noop };
@@ -1048,7 +1048,7 @@ B['冒牌希里'] = {
   abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side, run: c => c.boost(c.self, 1) }],
   bless: [{ at: 8, run: c => { const to = c.foe; const row = c.g.rowOf(c.self); row.splice(row.indexOf(c.self), 1); c.g._place(c.self, to, c.self.row, null); c.purify(c.self); c.g.log('移到对面', { name: c.self.name }); } }],
 };
-B['费卡特'] = { deploy: noop, abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.special, run: c => { const t = R(c, '费卡特：随机潜伏', c.enemies().filter(u => !u.status.spying)); if (t) c.status(t, 'spying', true); } }] };
+B['费卡特'] = { deploy: c => handPlayDraw('费卡特：从手牌打出的特殊牌')(c), abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && d.special, run: c => { const t = R(c, '费卡特：随机潜伏', c.enemies().filter(u => !u.status.spying)); if (t) c.status(t, 'spying', true); } }] };
 B['佛古斯·瓦·恩瑞斯'] = { deploy: c => c.g.choose({ prompt: '佛古斯：潜伏', from: c.targets(c.enemies()), n: c.devotion() ? 3 : 1, upTo: true, source: c.self.name }).forEach(u => c.status(u, 'spying', true)) };
 B['费恩·瓦·盖内尔'] = { deploy: c => c.spawnPlay('战前准备') };
 B['芙琳吉拉·薇歌'] = { deploy: c => { const n = 1 + c.adjacent().filter(u => has(u, '法师') || has(u, '构造体')).length;
@@ -1057,7 +1057,8 @@ B['格莱尼丝·爱普·洛纳克'] = {};
 B['劳恩法尔的吉劳米'] = {
   deploy: c => { const k = c.g.rowOf(c.self).filter(u => u !== c.self && has(u, '骑士')).length; if (k) c.boost(c.self, k);
     const t = T(c, '吉劳米：敌军', c.enemies()); if (!t) return; const h = Math.floor((c.self.power + t.power) / 2); c.boost(c.self, h); boostEnemy(c, t, h); },
-  order: c => { if (c.self.power < 14) return; const t = T(c, '吉劳米：转移状态', c.enemies()); if (!t) return; for (const [k, v] of Object.entries(t.status)) if (v && k !== 'immune') { c.self.status[k] = v; t.status[k] = k === 'vitality' || k === 'bleed' || k === 'poison' ? 0 : false; } },
+  graceOrder: 14,   // 指令、神赐 14（Order (Grace 14)）：到 14 才能用
+  order: c => { const t = T(c, '吉劳米：转移状态', c.enemies()); if (!t) return; for (const [k, v] of Object.entries(t.status)) if (v && k !== 'immune') { c.self.status[k] = v; t.status[k] = k === 'vitality' || k === 'bleed' || k === 'poison' ? 0 : false; } },
 };
 B['重弩海尔格'] = {
   order: c => { const t = T(c, '海尔格：2 伤害', c.g.units()); if (t) c.damage(t, 2); },
@@ -1224,7 +1225,9 @@ B['法师渗透者'] = {
   deathblow: c => { const to = c.foe; const row = c.g.rowOf(c.self); row.splice(row.indexOf(c.self), 1); c.g._place(c.self, to, c.self.row, null); c.self.status.spying = false; c.g.log('移到对面', { name: c.self.name }); },
 };
 B['法师折磨者'] = { deploy: c => { const t = T(c, '折磨者：潜伏', c.enemies()); if (t) c.status(t, 'spying', true); } };
-B['马格尼师'] = { deploy: noop };
+// 部署“从手牌打出 1 张××牌，随后抽 1 张”：带出的牌按记录（via 这张）单独结算（从手牌 -1），这里补上抽的 1 张，手牌净变化 0；没记带出的牌就不抽
+const handPlayDraw = prompt => c => { if (c.pick({ prompt, kind: 'deck', from: ['?'], quiet: true })) c.g.draw(c.side, 1, c.self); };
+B['马格尼师'] = { deploy: handPlayDraw('马格尼师：从手牌打出的谋略') };
 B['射石机'] = { order: c => { const t = T(c, '射石机：伤害', c.enemies()); if (t) c.damage(t, 1 + c.adjacent(t).filter(u => u.status.spying).length); } };
 B['伪装大师'] = { abilities: [{ on: 'turnEnd', when: (c, d) => d.side === c.side && c.enemies().some(u => u.status.lock), run: c => c.boost(c.self, 1) }] };
 B['傀儡大师'] = { order: c => { const t = T(c, '傀儡大师：抓捕铜色敌军', c.enemies().filter(bronze)); if (!t) return; const row = t.row; c.seize(t);
@@ -1244,7 +1247,8 @@ B['奴隶贩子'] = { deploy: c => { const t = T(c, '奴隶贩子：铜色友军
 B['奴隶猎人'] = { deploy: c => { const t = T(c, '奴隶猎人：伤害', c.enemies()); if (!t) return; c.damage(t, 1 + c.adjacent().filter(u => has(u, '士兵')).length);
   if (c.g.find(t.uid) && t.power === 1) { const u = c.g.spawn(t.name, c.side, c.self.row, posRight(c), c.self); if (u) { u.power = 1; c.lock(u); } } } };
 B['奴隶步兵'] = { deploy: c => { const t = T(c, '奴隶步兵：转变', c.allies().filter(u => u !== c.self)); if (t) c.transform(t, '奴隶步兵'); } };
-B['侦察员'] = { deploy: noop, order: noop };
+// 部署的护甲、指令的活力（铜色士兵改为增益）取决于牌组，用改战力（对局簿打出/指令后直接问）；指令先失去所有护甲
+B['侦察员'] = { deploy: noop, order: c => { const a = c.self.armor; c.self.armor = 0; if (a) c.g.log('失去护甲', { name: c.self.name, n: a }); } };
 B['军旗手'] = { deploy: c => { const n = c.enemies().filter(u => c.g.isBoosted(u)).length; if (n) c.boost(c.self, n); } };
 B['仙尼德变节者'] = {
   deploy: c => { const t = T(c, '变节者：潜伏', c.enemies()); if (t) c.status(t, 'spying', true); },
@@ -1863,7 +1867,7 @@ B['伦芙芮的手下'] = {};
 B['农民民兵'] = { abilities: [{ on: 'unitPlayed', when: (c, d) => own(c, d) && d.unit !== c.self && (d.unit.def.deploy || d.unit.def.deployRow), run: c => c.boost(c.self, 1) }] };
 B['变形怪'] = { deploy: noop };
 B['史帕拉流亡军'] = { deploy: c => c.boost(c.self, 4) };
-B['工兵'] = { deploy: noop, abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('炸弹') && c.self.armor > 0, run: c => { const t = R(c, '工兵：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } }] };
+B['工兵'] = { deploy: c => handPlayDraw('工兵：从手牌打出的炸弹')(c), abilities: [{ on: 'cardPlayed', when: (c, d) => d.side === c.side && (d.def.tags || []).includes('炸弹') && c.self.armor > 0, run: c => { const t = R(c, '工兵：随机 1 伤害', c.enemies()); if (t) c.damage(t, 1); } }] };
 B['巫医'] = { deploy: c => { const t = T(c, '巫医：净化', allUnitsExcept(c)); if (t) c.purify(t); } };
 B['快刀手'] = { deploy: c => { const lim = c.g.cohort(c.self) ? 4 : 2; const t = T(c, '快刀手：摧毁', c.enemies().filter(u => u.power <= lim)); if (t) c.destroy(t); } };
 B['斥候'] = { deploy: c => { const t = T(c, '斥候：移排', allUnitsExcept(c)); if (t) c.move(t, otherRow(t.row)); } };

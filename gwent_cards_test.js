@@ -387,5 +387,24 @@ const P = (g, side, name, row, pos) => g.play(side, name, row, pos, { player: si
   ok(d.name === '瑞达尼亚骑士' && d.power === 2 && d.armor === 2, '杜度：变成瑞达尼亚骑士 2 战力 2 护甲');
   g.endTurn(); ok(d.power === 3, '杜度变成的瑞达尼亚骑士：壁垒回合结束 +1');
 }
+{ // 2026-10-02 对尼弗迦德：侦察员指令先失去所有护甲（之后军营 +1、战前准备 +2 → 3，录像也是 3）
+  const g = game(); const sc = P(g, 'op', '侦察员', 'r'); sc.armor = 6;
+  g.s.active = 'op'; g.endTurn(); g.endTurn(); g.order(sc.uid, { force: true });
+  ok(sc.armor === 0 && sc.power === 3, '侦察员：指令失去所有护甲');
+}
+{ // 骑士随从指令：下一个打出的骑士 +2 并灌注“己方回合结束 +1”（瑞达尼亚骑士落地 4、每回合 +2：壁垒 +1 + 灌注 +1）
+  const g = game(); const sq = P(g, 'me', '骑士随从', 'r'); g.endTurn(); g.endTurn(); g.order(sq.uid);
+  const k = P(g, 'me', '瑞达尼亚骑士', 'r'); ok(k.power === 4, '骑士随从：下一个打出的瑞达尼亚骑士落地 4');
+  g.endTurn(); ok(k.power === 6, '瑞达尼亚骑士：壁垒 +1 + 骑士随从灌注 +1');
+}
+{ // “神赐 X、指令”= 神赐达到后给一次指令机会，不立即结算（用户确认；录像两次雷纳德到 14 时受过增益的科德温骑士没变）
+  const g = game(); const kd = P(g, 'me', '科德温骑士', 'm'); g.boost(kd, 3); const r = P(g, 'me', '雷纳德·奥多', 'r');
+  ok(!g.canOrder(r) && g.orderBlock(r) === 'grace', '雷纳德：神赐 12 之前没有指令');
+  g.boost(r, 5); ok(r.blessFired[12] && kd.power === 8 && g.orderBlock(r) === 'new', '雷纳德：到 14 神赐触发（只解锁指令），科德温骑士不变；进场当回合下回合才能用');
+  g.endTurn(); g.endTurn(); ok(g.canOrder(r), '雷纳德：下个己方回合可以用指令'); g.order(r.uid); ok(kd.power === 9 && !g.canOrder(r), '雷纳德：指令给受到增益的友军 +1，只有一次');
+  const g2 = game(); const w = P(g2, 'me', '亚特里的温德哈姆', 'r'); g2.damage(w, 1); ok(!w.status.shield, '温德哈姆：护盾挡掉一次');
+  g2.boost(w, 6); ok(w.blessFired[10] && !w.status.shield, '温德哈姆：神赐 10 不立即给护盾');
+  g2.endTurn(); g2.endTurn(); g2.order(w.uid); ok(w.status.shield, '温德哈姆：神赐后的指令获得护盾');
+}
 console.log(fails ? `\n${fails} 项失败` : '\n全部通过');
 process.exit(fails ? 1 : 0);

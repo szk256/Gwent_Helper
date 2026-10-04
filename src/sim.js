@@ -62,10 +62,14 @@ function sim(g,r,excl,ov){
   // 已建模的来源：它的“触发效果”记录只提供目标，效果由引擎结算
   const modeled=nm=>{const d=nm&&E.def(nm);return !!(d&&!d.unmodeled);};
   // 只在回合结束时触发的来源：记录到它的效果 = 该方回合已经结束
+  // 神赐解锁指令的来源（布朗温等）：旧记录把它记成“触发效果”（以前神赐自动结算时对局簿这样问），按它的指令推算
+  const graceSrc=nm=>{const d=nm&&E.def(nm);return !!(d&&d.graceOrder!=null);};
   const endOnly=nm=>{const d=E.def(nm);const ab=(d&&d.abilities)||[];return ab.length>0&&ab.every(a=>a.on==="turnEnd")&&!d.bless&&!d.order;};
   // 手动记的召唤/生成（不带 via）晚于引擎自动产生的同名单位（例如朗维德回场后隔了几步才记）：对应到那个单位，不重复放
   const claimed=new Set();
-  const claimAuto=x=>{if(x.via)return false;const sd=x.side||x.who;const u=E.allUnits(sd).find(v=>v.name===x.c&&!claimed.has(v)&&/\/\d+$/.test(u2key.get(v)||""));
+  // 带 via 的（HUD 记的“布朗温 由少女的盾牌带出”，记在皇家激励那条后面）：只对应同一方这一回合里引擎自动产生的单位
+  const claimAuto=x=>{let near=null;if(x.via){const i=log.indexOf(x);near=new Set();for(let j=i-1;j>=0;j--){const y=log[j];if(y.a==="end"||y.a==="pass"||(isTurnAct(y)&&y.who!==x.who))break;near.add(y.id);}}
+    const sd=x.side||x.who;const u=E.allUnits(sd).find(v=>{const k=u2key.get(v)||"";return v.name===x.c&&!claimed.has(v)&&/\/\d+$/.test(k)&&(!near||near.has(k.split("/")[0]));});
     if(!u)return false;claimed.add(u);bind(x.id,u);relocate(u,x.row,x.pos);return true;};
   const relocate=(u,row,pos)=>{const a=E.s.sides[u.side].rows[u.row];const k=a.indexOf(u);if(k<0)return;a.splice(k,1);const b=E.s.sides[u.side].rows[row];u.row=row;b.splice(pos==null||pos>b.length?b.length:pos,0,u);};
   // 上一局的坚韧单位留场（老兵在小局开始时 +1）
@@ -126,14 +130,16 @@ function sim(g,r,excl,ov){
     if(turnAct){effQ={};
       // 往后看到下一个回合行动为止，把已建模来源的触发效果目标先备好
       for(let j=i+1;j<log.length&&!isTurnAct(log[j]);j++){const y=log[j];
-        if(y.a==="effect"&&modeled(y.c)&&!endOnly(y.c)){(effQ[y.c]=effQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);}}}
+        if(y.a==="effect"&&modeled(y.c)&&!endOnly(y.c)&&!graceSrc(y.c)){(effQ[y.c]=effQ[y.c]||[]).push(...(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid));consumed.add(y.id);}}}
     tq=(x.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);
     // 由这张牌带出的后续记录（生成/召唤/从牌组打出）
     const subs=[];for(let j=i+1;j<log.length;j++){const y=log[j];if(y.via&&y.via===x.c&&y.who===x.who&&["spawn","summon","play"].includes(y.a))subs.push(y);else if(!y.via)break;}
+    // 紧跟着的带出特殊牌，via 是场上的剧情神器等（HUD 记的“致幻菌菇 由盖迪尼斯的阴影下带出”，引擎在打出海之新娘这一步自动打出了它）：也拿来对应引擎自动打出的特殊牌
+    const chain=subs.slice();for(let j=i+1;j<log.length;j++){const y=log[j];if(!y.via)break;if(!chain.includes(y)&&y.who===x.who&&["spawn","play"].includes(y.a)&&!consumed.has(y.id)){const d=E.def(y.c);if(d&&d.type==="special")chain.push(y);}}
     dq=subs.map(y=>y.c);
     const before=curBefore=new Set(E.allUnits());const t0=E.trace.length;curPay=x.pay===undefined?null:x.pay;curX=x;
     // 带出的特殊牌记了排（乌鸦眼块茎生成乌鸦的那排）：引擎“生成并打出”时用
-    E.viaRows={};const effSnap={};for(const y of subs){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
+    E.viaRows={};const effSnap={};for(const y of chain){const d=E.def(y.c);if(!d||d.type!=="special")continue;if(y.row)E.viaRows[y.c]=y.row;
       // 它的目标（海之新娘从墓场打出的玛哈坎麦酒 +5 给谁）：引擎自动打出这张时用；没有自动打出就原样留给它自己那条记录
       const ts=(y.tgts||[]).filter(t=>t.uid!=null).map(t=>t.uid);if(ts.length){if(!(y.c in effSnap))effSnap[y.c]=(effQ[y.c]||[]).slice();(effQ[y.c]=effQ[y.c]||[]).push(...ts);}}
     const def=x.c?E.def(x.c):null;
@@ -183,6 +189,8 @@ function sim(g,r,excl,ov){
         if(!x.dur&&HZ[x.c])warns.push({id:x.id,m:"「"+x.c+"」没记持续回合，按 "+HZ[x.c].turns+" 回合算"});
         E.addHazard(x.side,x.row,x.c,x.dur||undefined);break;}
       case "effect":{if(HZ[x.c]){pushHz(x);break;}
+        if(graceSrc(x.c)){const u=(x.uid&&unitByKey(x.uid))||E.allUnits(x.side||side).find(v=>v.name===x.c&&!v.orderUsed)||E.allUnits().find(v=>v.name===x.c);
+          if(u){E.order(u.uid,{force:true});break;}}
         if(!modeled(x.c)){warns.push({id:x.id,m:"效果「"+(x.c||"")+"」未建模，请用改战力修正"});break;}
         (effQ[x.c]=effQ[x.c]||[]).push(...tq);tq=[];
         // 回合结束效果：记录到它时，该方回合已结束
@@ -203,9 +211,9 @@ function sim(g,r,excl,ov){
     E.viaRows=null;
     // 带出的特殊牌引擎已经自动打出了（艾克索部署“生成并打出”乌鸦眼块茎）：那条记录不再重复打出，它带出的生成记录对应到这一步产生的单位
     const autoSp=E.trace.slice(t0).filter(t=>t.type==="打出"&&t.data&&t.data.special).map(t=>t.data.name);const bsubs=subs.slice();
-    for(const y of subs){const d=E.def(y.c);if(y.a==="play"&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
+    for(const y of chain){const d=E.def(y.c);if((y.a==="play"||(y.a==="spawn"&&!subs.includes(y)))&&d&&d.type==="special"&&!consumed.has(y.id)){const k=autoSp.indexOf(y.c);if(k<0)continue;autoSp.splice(k,1);consumed.add(y.id);autoPlayed.add(y.id);
       for(let j=log.indexOf(y)+1;j<log.length;j++){const z=log[j];if(!z.via)break;if(z.via===y.c&&z.who===y.who&&["spawn","summon","play"].includes(z.a))bsubs.push(z);}}}
-    for(const y of subs)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
+    for(const y of chain)if(y.c in effSnap&&!autoPlayed.has(y.id)){effQ[y.c]=effSnap[y.c];delete effSnap[y.c];}
     // 后续记录对应到引擎自动产生的单位；引擎没产生的就按记录手动放
     const fresh=E.allUnits().filter(u=>!before.has(u)&&!u2key.has(u));
     for(const y of bsubs){const k=fresh.findIndex(u=>u.name===y.c);if(k>=0){const u=fresh[k];bind(y.id,u);fresh.splice(k,1);consumed.add(y.id);
@@ -220,9 +228,12 @@ function sim(g,r,excl,ov){
         // 落地时已达到神赐阈值：游戏里进场就触发（引擎“进场已满足立即触发”），自身战力仍以填的为准
         if(up&&E.find(u.uid)){E.checkBless(u);if(E.find(u.uid))u.power=y.pw;}}}
     // 提示：未建模、待选
+    const FL0=(typeof GwentCardFlags!=="undefined"&&GwentCardFlags)||{};
     for(const t of E.trace.slice(t0)){
+      // 已建模、数值不靠手填的牌落地战力和推算不同：多半是前面漏记了指令或效果（2026-10-02 漏记骑士随从指令，瑞达尼亚骑士推算 2、记 4）
+      if(t.type==="录入战力"&&modeled(t.data.name)&&FL0[t.data.name]!=="需手动")warns.push({id:x.id,m:t.data.name+" 落地战力记 "+t.data.to+"，推算 "+t.data.from+"：可能漏记了前面的指令或效果（例如骑士随从的指令），或对方的效果没记"});
       if(t.type==="待选")warns.push({id:x.id,m:"「"+(t.data.prompt||"")+"」没有指定目标",fix:true,src:t.data.source,prompt:t.data.prompt});
-      if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
+      if(t.type==="指令不可用")warns.push({id:x.id,m:t.data.name+({new:" 进场当回合不能用指令（狂热例外）",used:" 指令已用完",cd:" 指令还在冷却",grace:" 神赐还没达到，还没有指令机会",lock:" 已锁定，不能用指令"}[t.data.reason]||" 本回合不能用指令")+"，仍按记录结算"});
       if(t.type==="没有指令")warns.push({id:x.id,m:t.data.name+" 没有指令能力，这条没有结算（触发的效果请记成“效果”，神赐/部署会自动结算）"});
       if(t.type==="排满")warns.push({id:x.id,m:t.data.name+" 放不上：这一排已满 9 张（单位、神器、战术牌都算），检查记录的排"});
       if(t.type==="癫狂没造成伤害，费用能力不触发")warns.push({id:x.id,m:t.data.name+" 有护盾，癫狂没造成伤害，费用能力不触发"});
