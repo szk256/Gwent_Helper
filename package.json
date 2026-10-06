@@ -2,7 +2,7 @@
   "name": "gwent-helper",
   "private": true,
   "license": "MIT",
-  "description": "À¥ÌØÅÆ¶Ô¾Ö²¾ + ¹æÔòÒýÇæ",
+  "description": "æ˜†ç‰¹ç‰Œå¯¹å±€ç°¿ + è§„åˆ™å¼•æ“Ž",
   "scripts": {
     "build": "node build.js",
     "test": "node gwent_engine_test.js && node gwent_cards_test.js && node gwent_numbers_check.js && node gwent_ui_test.js && node gwent_replay_r1.js > /dev/null",
