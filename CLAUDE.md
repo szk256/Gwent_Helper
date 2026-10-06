@@ -11,6 +11,8 @@
 用户卡组：北方王国“北境赤诚骑士少女改”，领袖皇家激励，战术战术优势，25 张，无中立牌（赤诚成立）。
 
 ## 文件
+公开仓库 `szk256/Gwent_Helper`（MIT，`README.md`），`main` 推送后 `.github/workflows/pages.yml` 把 `dist/` 发布到 https://szk256.github.io/Gwent_Helper/ 。提交邮箱用 GitHub noreply（仓库本地 `user.email`）；对局记录 txt、`tools/autoclick.py` 等个人文件在 `.gitignore` 里，不要提交。
+
 源文件在 `src/`，改完运行 `node build.js` 打包成单文件 `dist/gwent_tracker.html`（读源文件时统一成 LF，Windows 检出的 CRLF 也和 CI 构建号一致）（用户主要在**电脑网页**上用，也兼容手机）。`src/index.html` 可直接在浏览器打开调试。
 - `src/engine.js`：底层引擎，不含任何具体卡牌。浏览器里是 `window.GwentEngine`，Node 里 `require`。
 - `src/cards.js`：卡牌行为（只写“做什么”），`window.GwentCards.behaviors`。数值来自 `RAW`。

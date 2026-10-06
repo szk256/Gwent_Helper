@@ -1,2 +1,7 @@
 node_modules/
 .claude/settings.local.json
+
+# 个人文件，不公开
+对局_*.txt
+改正后的对局_*.txt
+tools/autoclick.py
