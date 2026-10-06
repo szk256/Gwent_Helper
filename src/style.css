@@ -337,6 +337,7 @@ input.vt{width:108px;padding:6px 8px;font-size:13px}
 /* 键盘选中的搜牌结果 */
 #resBox .kb{outline:2px solid var(--gold);outline-offset:2px}
 #verInfo{font-size:11px;opacity:.7;margin-top:2px}
+#fanNote,.fanNote{font-size:11px;line-height:1.4;opacity:.7;margin-top:8px;text-align:center}
 
 /* ===================== 可切换主题（html[data-theme]，默认“经典”不设属性） =====================
  * 每套主题只换变量；下面的覆盖规则对所有非经典主题通用。对比度都 ≥ 5.6:1（正文、次要文字、选中按钮文字）。
